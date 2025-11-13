@@ -25,7 +25,8 @@ class UsageTracker {
     }
     
     /// Get baseline time
-    func getBaselineTime() -> TimeInterval {
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    nonisolated func getBaselineTime() -> TimeInterval {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return 0.0
         }
@@ -36,76 +37,30 @@ class UsageTracker {
     
     /// Get current consumed minutes from Monitor Extension (via App Group)
     /// This is written by Monitor Extension when thresholds are reached
+    /// NOTE: No synchronize() - not needed and can block main thread
     func getConsumedMinutes() -> Double {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return 0.0
         }
         
-        userDefaults.synchronize()
         return userDefaults.double(forKey: "consumedMinutes")
     }
     
-    /// Calculate current time spent with simulation between thresholds
-    /// IMPORTANT: Only simulates if we have actual threshold data (real usage detected)
-    func getCurrentTimeSpent() -> TimeInterval {
+    /// Get current time spent from the last threshold event
+    /// Uses smart threshold distribution: 1-min early, 5-min regular, 1-min final
+    /// Max undercount: ≤5 minutes globally, ≤1 minute in early/final windows
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    nonisolated func getCurrentTimeSpent() -> TimeInterval {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            NSLog("MARKERS UsageTracker: ❌ Could not access App Group")
             return 0.0
         }
         
-        userDefaults.synchronize()
-        
-        // Read all relevant values
+        // Read consumed minutes from last threshold event (no synchronize() - not needed and can block)
         let consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
-        let consumedMinutesTimestamp = userDefaults.double(forKey: "consumedMinutesTimestamp")
-        let lastThresholdTime = userDefaults.double(forKey: "lastThresholdTimestamp")
-        let lastThresholdEvent = userDefaults.string(forKey: "lastThresholdEvent") ?? "none"
         
-        // Multiple logging methods to ensure visibility
-        NSLog("MARKERS UsageTracker: 📊 Reading App Group data:")
-        print("MARKERS UsageTracker: 📊 Reading App Group data:")
-        logger.info("MARKERS UsageTracker: 📊 Reading App Group data:")
-        
-        NSLog("MARKERS   - consumedMinutes: %.2f", consumedMinutes)
-        print("MARKERS   - consumedMinutes: \(consumedMinutes)")
-        
-        NSLog("MARKERS   - lastThresholdTime: %.0f", lastThresholdTime)
-        print("MARKERS   - lastThresholdTime: \(lastThresholdTime)")
-        
-        NSLog("MARKERS   - lastThresholdEvent: %@", lastThresholdEvent)
-        print("MARKERS   - lastThresholdEvent: \(lastThresholdEvent)")
-        fflush(stdout)
-        
-        // CRITICAL: Only simulate if we have actual threshold data (real usage detected)
-        // If lastThresholdTime is 0, no threshold events have fired yet = no real usage
-        if lastThresholdTime > 0 && consumedMinutes > 0 {
-            // We have real threshold data - simulate progress since last event
-            let timeSinceLastThreshold = Date().timeIntervalSince1970 - lastThresholdTime
-            let minutesSinceLastThreshold = timeSinceLastThreshold / 60.0
-            
-            // Only simulate if we're within a reasonable window (don't simulate forever)
-            // Cap simulation at 2 minutes past last threshold (prevents runaway simulation)
-            let cappedSimulation = min(minutesSinceLastThreshold, 2.0)
-            let simulatedMinutes = consumedMinutes + cappedSimulation
-            
-            NSLog("MARKERS UsageTracker: ✅ Real usage detected - simulating: %.2f (consumed) + %.2f (since threshold) = %.2f minutes",
-                  consumedMinutes, cappedSimulation, simulatedMinutes)
-            print("MARKERS UsageTracker: ✅ Real usage detected - simulating: \(consumedMinutes) + \(cappedSimulation) = \(simulatedMinutes) minutes")
-            fflush(stdout)
-            
-            return simulatedMinutes * 60.0 // Convert to seconds
-        }
-        
-        // No threshold data yet - return 0 (no real usage detected)
-        if consumedMinutes == 0 && lastThresholdTime == 0 {
-            NSLog("MARKERS UsageTracker: ⚠️ No threshold events fired yet - no real usage detected")
-            print("MARKERS UsageTracker: ⚠️ No threshold events fired yet - no real usage detected")
-            NSLog("MARKERS UsageTracker: 💡 Make sure you're actually USING the selected apps!")
-            print("MARKERS UsageTracker: 💡 Make sure you're actually USING the selected apps!")
-            fflush(stdout)
-        }
-        
-        return consumedMinutes * 60.0 // Convert to seconds (will be 0 if no events)
+        // Return consumed minutes directly (no simulation)
+        // With smart threshold distribution: max undercount ≤5 min (≤1 min in early/final windows)
+        return consumedMinutes * 60.0 // Convert to seconds
     }
     
     /// Check if monitoring is active

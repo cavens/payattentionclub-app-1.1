@@ -32,7 +32,13 @@ struct AuthorizationView: View {
                     Text("Next deadline")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    CountdownView(model: model)
+                    if let countdownModel = model.countdownModel {
+                        CountdownView(model: countdownModel)
+                    } else {
+                        Text("00:00:00:00")
+                            .font(.system(size: 32, weight: .bold, design: .monospaced))
+                            .monospacedDigit()
+                    }
                 }
                 .padding()
                 
@@ -82,14 +88,46 @@ struct AuthorizationView: View {
         // Store baseline in App Group
         UsageTracker.shared.storeBaselineTime(0.0)
         
-        // Start monitoring to trigger Monitor Extension
+        // Ensure thresholds are prepared before starting
         if #available(iOS 16.0, *) {
-            MonitoringManager.shared.startMonitoring(selection: model.selectedApps)
+            // Check if thresholds are ready, if not prepare them now
+            if !MonitoringManager.shared.thresholdsAreReady(for: model.selectedApps) {
+                NSLog("MARKERS AuthorizationView: ⚠️ Thresholds not ready, preparing now...")
+                fflush(stdout)
+                await MonitoringManager.shared.prepareThresholds(
+                    selection: model.selectedApps,
+                    limitMinutes: Int(model.limitMinutes)
+                )
+            }
         }
         
-        // Navigate to monitor view - Yield to ensure scene is active
+        // Set loading state before navigation
+        await MainActor.run {
+            model.isStartingMonitoring = true
+        }
+        
+        // Navigate immediately (don't wait for monitoring to start)
         await MainActor.run {
             model.navigateAfterYield(.monitor)
+        }
+        
+        // Small delay to let UI settle after navigation
+        try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+        
+        // Start monitoring in background (after navigation and delay)
+        // Uses cached thresholds if available (prepared after "Commit" button or above)
+        if #available(iOS 16.0, *) {
+            Task {
+                await MonitoringManager.shared.startMonitoring(
+                    selection: model.selectedApps,
+                    limitMinutes: Int(model.limitMinutes)
+                )
+                
+                // Clear loading state after monitoring starts
+                await MainActor.run {
+                    model.isStartingMonitoring = false
+                }
+            }
         }
     }
 }

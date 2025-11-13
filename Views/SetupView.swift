@@ -14,13 +14,19 @@ struct SetupView: View {
                         Text("Next deadline")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        CountdownView(model: model)
+                        if let countdownModel = model.countdownModel {
+                            CountdownView(model: countdownModel)
+                        } else {
+                            Text("00:00:00:00")
+                                .font(.system(size: 32, weight: .bold, design: .monospaced))
+                                .monospacedDigit()
+                        }
                     }
                     .padding(.top, 20)
                     
                     // Time Limit Slider
                     VStack(alignment: .leading, spacing: 15) {
-                        Text("Daily Time Limit")
+                        Text(formatDeadlineLabel())
                             .font(.headline)
                         
                         Text(formatTime(model.limitMinutes))
@@ -42,6 +48,16 @@ struct SetupView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        
+                        // Testing button to set limit to 1 minute
+                        Button(action: {
+                            model.limitMinutes = 1.0
+                        }) {
+                            Text("Set to 1 min (testing)")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                        .padding(.top, 4)
                     }
                     .padding()
                     .background(Color.gray.opacity(0.1))
@@ -92,6 +108,18 @@ struct SetupView: View {
                     // Commit Button
                     Button(action: {
                         model.savePersistedValues()
+                        
+                        // Start preparing thresholds asynchronously (non-blocking)
+                        // This happens in background while user goes through ScreenTime access and authorization
+                        if #available(iOS 16.0, *) {
+                            Task {
+                                await MonitoringManager.shared.prepareThresholds(
+                                    selection: model.selectedApps,
+                                    limitMinutes: Int(model.limitMinutes)
+                                )
+                            }
+                        }
+                        
                         model.navigate(.screenTimeAccess)
                     }) {
                         Text("Commit")
@@ -119,6 +147,21 @@ struct SetupView: View {
         } else {
             return "\(mins)m"
         }
+    }
+    
+    private func formatDeadlineLabel() -> String {
+        let deadlineEST = nextMondayNoonEST()
+        let localDeadline = deadlineEST // Date automatically converts to local timezone when formatted
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HHmm" // 24-hour format: 1400
+        formatter.timeZone = TimeZone.current // Use device's local timezone
+        
+        let timeString = formatter.string(from: localDeadline)
+        // Format as "1400h" (add 'h' at the end)
+        let formattedTime = "\(timeString)h"
+        
+        return "Time limit till next Monday \(formattedTime)"
     }
 }
 

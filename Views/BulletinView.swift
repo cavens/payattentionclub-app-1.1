@@ -12,7 +12,13 @@ struct BulletinView: View {
                         Text("Next deadline")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        CountdownView(model: model)
+                        if let countdownModel = model.countdownModel {
+                            CountdownView(model: countdownModel)
+                        } else {
+                            Text("00:00:00:00")
+                                .font(.system(size: 32, weight: .bold, design: .monospaced))
+                                .monospacedDigit()
+                        }
                     }
                     .padding(.top, 20)
                     
@@ -71,6 +77,25 @@ struct BulletinView: View {
             }
             .navigationTitle("Bulletin")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                // Update usage when view appears to show current values
+                updateUsage()
+            }
+        }
+    }
+    
+    private func updateUsage() {
+        // Read from App Group in background (non-blocking)
+        Task.detached(priority: .userInitiated) {
+            let currentTotal = UsageTracker.shared.getCurrentTimeSpent()
+            let baseline = UsageTracker.shared.getBaselineTime()
+            let usageSeconds = Int(currentTotal) - Int(baseline)
+            
+            // Update UI on main thread
+            await MainActor.run {
+                model.currentUsageSeconds = usageSeconds
+                model.updateCurrentPenalty()
+            }
         }
     }
     

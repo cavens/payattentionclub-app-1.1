@@ -55,3 +55,4 @@ This makes both locations point to the same files. More complex but no copying n
 If you prefer to keep the outer directory as a "source of truth" for documentation, use **Option 1** (auto-sync script).
 
 
+

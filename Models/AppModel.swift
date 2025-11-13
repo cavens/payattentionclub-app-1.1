@@ -21,21 +21,73 @@ final class AppModel: ObservableObject {
     @Published var baselineUsageSeconds: Int = 0 // Snapshot when "Lock in" is pressed
     @Published var currentUsageSeconds: Int = 0 // Updated from Monitor Extension via App Group
     @Published var currentPenalty: Double = 0.0 // Calculated from excess usage
+    @Published var isStartingMonitoring: Bool = false // Loading state during startMonitoring()
+    
+    // Countdown model for smooth countdown timer (lazy initialization)
+    @Published var countdownModel: CountdownModel?
+    
+    // Cached deadline date (recalculated only when needed)
+    private var cachedNextMondayNoonEST: Date?
+    private var cachedDeadlineDate: Date?
+    
+    // Flag to track if initialization is complete
+    private var isInitialized = false
     
     init() {
-        NSLog("MARKERS AppModel: init() called")
-        print("MARKERS AppModel: init() called")
-        fflush(stdout)
+        // Minimal initialization - just set defaults
+        // Heavy work deferred to finishInitialization() which is called after UI renders
+    }
+    
+    /// Finish initialization after UI has rendered (called from LoadingView.onAppear)
+    func finishInitialization() {
+        guard !isInitialized else { return }
+        isInitialized = true
+        
+        // Initialize countdown model (deferred to avoid blocking startup)
+        let deadline = nextMondayNoonEST()
+        countdownModel = CountdownModel(deadline: deadline)
         
         // Load persisted values from App Group
         loadPersistedValues()
         
-        // Auto-navigate to setup after brief delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            NSLog("MARKERS AppModel: Navigating to setup")
-            print("MARKERS AppModel: Navigating to setup")
-            fflush(stdout)
-            self.navigate(.setup)
+        // Cache deadline date (now that countdownModel exists)
+        refreshCachedDeadline()
+        
+        // Check if monitoring is already active - if so, navigate to monitor screen
+        // Otherwise navigate to setup
+        Task { @MainActor in
+            // Small delay to let UI render
+            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+            
+            // Check if monitoring is active (don't reset, just check)
+            let isActive = await UsageTracker.shared.isMonitoringActive()
+            
+            if isActive {
+                // Monitoring is active - navigate to monitor screen
+                // Also refresh usage data from App Group
+                await refreshUsageFromAppGroup()
+                self.navigate(.monitor)
+            } else {
+                // No active monitoring - navigate to setup
+                self.navigate(.setup)
+            }
+        }
+    }
+    
+    /// Refresh usage data from App Group (called when reopening app with active monitoring)
+    private func refreshUsageFromAppGroup() async {
+        Task.detached(priority: .userInitiated) {
+            // Access UsageTracker.shared on main actor, then call nonisolated methods
+            let tracker = await MainActor.run { UsageTracker.shared }
+            let currentTotal = tracker.getCurrentTimeSpent()
+            let baseline = tracker.getBaselineTime()
+            let usageSeconds = Int(currentTotal) - Int(baseline)
+            
+            // Update UI on main thread
+            await MainActor.run {
+                self.currentUsageSeconds = usageSeconds
+                self.updateCurrentPenalty()
+            }
         }
     }
     
@@ -81,8 +133,37 @@ final class AppModel: ObservableObject {
     
     // MARK: - Date Utilities
     
-    /// Get next Monday noon EST
+    /// Refresh cached deadline date (call when deadline might have changed)
+    func refreshCachedDeadline() {
+        // Only recalculate if cache is empty or expired
+        let newDeadline: Date
+        if let cached = cachedNextMondayNoonEST, cached > Date() {
+            newDeadline = cached
+        } else {
+            newDeadline = nextMondayNoonEST()
+        }
+        
+        cachedNextMondayNoonEST = newDeadline
+        cachedDeadlineDate = newDeadline
+        // Update countdown model with new deadline (if it exists)
+        countdownModel?.updateDeadline(newDeadline)
+    }
+    
+    /// Get next Monday noon EST (uses cached value if available)
     func getNextMondayNoonEST() -> Date {
+        // Return cached value if available and still valid (not past)
+        if let cached = cachedNextMondayNoonEST, cached > Date() {
+            return cached
+        }
+        
+        // Recalculate and cache
+        let calculated = calculateNextMondayNoonEST()
+        cachedNextMondayNoonEST = calculated
+        return calculated
+    }
+    
+    /// Calculate next Monday noon EST (expensive operation - should be cached)
+    private func calculateNextMondayNoonEST() -> Date {
         let calendar = Calendar.current
         var estCalendar = calendar
         estCalendar.timeZone = TimeZone(identifier: "America/New_York")!
@@ -112,12 +193,15 @@ final class AppModel: ObservableObject {
     }
     
     /// Format countdown timer (DD:HH:MM:SS)
+    /// Uses cached deadline date for fast calculation
     func formatCountdown() -> String {
         let now = Date()
         let nextMondayNoon = getNextMondayNoonEST()
         let timeInterval = nextMondayNoon.timeIntervalSince(now)
         
         if timeInterval <= 0 {
+            // Deadline passed - refresh cache for next deadline
+            refreshCachedDeadline()
             return "00:00:00:00"
         }
         

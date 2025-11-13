@@ -6,15 +6,22 @@ struct MonitorView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 24) {
-                // Countdown to next deadline
-                VStack(spacing: 8) {
-                    Text("Next deadline")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    CountdownView(model: model)
-                }
-                .padding(.top, 20)
+            ZStack {
+                VStack(spacing: 24) {
+                    // Countdown to next deadline
+                    VStack(spacing: 8) {
+                        Text("Next deadline")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if let countdownModel = model.countdownModel {
+                        CountdownView(model: countdownModel)
+                    } else {
+                        Text("00:00:00:00")
+                            .font(.system(size: 32, weight: .bold, design: .monospaced))
+                            .monospacedDigit()
+                    }
+                    }
+                    .padding(.top, 20)
                 
                 // Progress Bar
                 VStack(alignment: .leading, spacing: 15) {
@@ -88,6 +95,26 @@ struct MonitorView: View {
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 40)
+                }
+                
+                // Loading overlay during startMonitoring()
+                if model.isStartingMonitoring {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        
+                        Text("Starting monitoring...")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    .padding(24)
+                    .background(Color.black.opacity(0.7))
+                    .cornerRadius(12)
+                }
             }
             .navigationTitle("Monitor")
             .navigationBarTitleDisplayMode(.inline)
@@ -111,34 +138,18 @@ struct MonitorView: View {
     }
     
     private func updateUsage() {
-        // Read consumed time from App Group (written by Monitor Extension)
-        let currentTotal = UsageTracker.shared.getCurrentTimeSpent()
-        
-        // Subtract baseline to get time since "Lock in" was pressed
-        let baseline = UsageTracker.shared.getBaselineTime()
-        let previousUsage = model.currentUsageSeconds
-        model.currentUsageSeconds = Int(currentTotal) - Int(baseline)
-        model.updateCurrentPenalty()
-        
-        NSLog("MARKERS MonitorView: 🔄 updateUsage() - currentTotal: %.0f, baseline: %.0f, usage: %d seconds (was: %d)",
-              currentTotal, baseline, model.currentUsageSeconds, previousUsage)
-        print("MARKERS MonitorView: 🔄 updateUsage() - currentTotal: \(currentTotal), baseline: \(baseline), usage: \(model.currentUsageSeconds) seconds (was: \(previousUsage))")
-        fflush(stdout)
-        
-        // Check if we have real threshold data
-        let isActive = UsageTracker.shared.isMonitoringActive()
-        NSLog("MARKERS MonitorView: Monitoring active: %@", isActive ? "YES ✅" : "NO ❌")
-        print("MARKERS MonitorView: Monitoring active: \(isActive ? "YES ✅" : "NO ❌")")
-        fflush(stdout)
-        
-        if model.currentUsageSeconds == 0 && isActive {
-            NSLog("MARKERS MonitorView: ⚠️ Usage is 0 but monitoring is active")
-            print("MARKERS MonitorView: ⚠️ Usage is 0 but monitoring is active")
-            NSLog("MARKERS MonitorView: 💡 Make sure you're actually USING the selected apps!")
-            print("MARKERS MonitorView: 💡 Make sure you're actually USING the selected apps!")
-            NSLog("MARKERS MonitorView: 💡 Check Console.app for 'MARKERS MonitorExtension' logs")
-            print("MARKERS MonitorView: 💡 Check Console.app for 'MARKERS MonitorExtension' logs")
-            fflush(stdout)
+        // Read from App Group in background (non-blocking)
+        // This prevents blocking the main thread and countdown timer
+        Task.detached(priority: .userInitiated) {
+            let currentTotal = UsageTracker.shared.getCurrentTimeSpent()
+            let baseline = UsageTracker.shared.getBaselineTime()
+            let usageSeconds = Int(currentTotal) - Int(baseline)
+            
+            // Update UI on main thread
+            await MainActor.run {
+                model.currentUsageSeconds = usageSeconds
+                model.updateCurrentPenalty()
+            }
         }
     }
     

@@ -32,7 +32,13 @@ struct AuthorizationView: View {
                     Text("Next deadline")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    CountdownView(model: model)
+                    if let countdownModel = model.countdownModel {
+                        CountdownView(model: countdownModel)
+                    } else {
+                        Text("00:00:00:00")
+                            .font(.system(size: 32, weight: .bold, design: .monospaced))
+                            .monospacedDigit()
+                    }
                 }
                 .padding()
                 
@@ -71,10 +77,6 @@ struct AuthorizationView: View {
     }
     
     private func lockInAndStartMonitoring() async {
-        NSLog("MARKERS AuthorizationView: 🔒 Lock in button pressed")
-        print("MARKERS AuthorizationView: 🔒 Lock in button pressed")
-        fflush(stdout)
-        
         // Store baseline time (0 when "Lock in" is pressed)
         await MainActor.run {
             model.baselineUsageSeconds = 0
@@ -85,33 +87,47 @@ struct AuthorizationView: View {
         
         // Store baseline in App Group
         UsageTracker.shared.storeBaselineTime(0.0)
-        NSLog("MARKERS AuthorizationView: Stored baseline time: 0 seconds")
-        print("MARKERS AuthorizationView: Stored baseline time: 0 seconds")
-        fflush(stdout)
         
-        // Start monitoring to trigger Monitor Extension
+        // Ensure thresholds are prepared before starting
         if #available(iOS 16.0, *) {
-            NSLog("MARKERS AuthorizationView: 🚀 Calling MonitoringManager.startMonitoring()...")
-            print("MARKERS AuthorizationView: 🚀 Calling MonitoringManager.startMonitoring()...")
-            fflush(stdout)
-            MonitoringManager.shared.startMonitoring(selection: model.selectedApps)
-            NSLog("MARKERS AuthorizationView: ✅ Monitoring started - Monitor Extension will track usage")
-            print("MARKERS AuthorizationView: ✅ Monitoring started - Monitor Extension will track usage")
-            NSLog("MARKERS AuthorizationView: ⚠️ IMPORTANT: You must USE the selected apps for threshold events to fire!")
-            print("MARKERS AuthorizationView: ⚠️ IMPORTANT: You must USE the selected apps for threshold events to fire!")
-            fflush(stdout)
-        } else {
-            NSLog("MARKERS AuthorizationView: ❌ iOS 16.0+ required for monitoring")
-            print("MARKERS AuthorizationView: ❌ iOS 16.0+ required for monitoring")
-            fflush(stdout)
+            // Check if thresholds are ready, if not prepare them now
+            if !MonitoringManager.shared.thresholdsAreReady(for: model.selectedApps) {
+                NSLog("MARKERS AuthorizationView: ⚠️ Thresholds not ready, preparing now...")
+                fflush(stdout)
+                await MonitoringManager.shared.prepareThresholds(
+                    selection: model.selectedApps,
+                    limitMinutes: Int(model.limitMinutes)
+                )
+            }
         }
         
-        // Navigate to monitor view - Yield to ensure scene is active
+        // Set loading state before navigation
         await MainActor.run {
-            NSLog("MARKERS AuthorizationView: System operations complete, using navigateAfterYield")
-            print("MARKERS AuthorizationView: System operations complete, using navigateAfterYield")
-            fflush(stdout)
+            model.isStartingMonitoring = true
+        }
+        
+        // Navigate immediately (don't wait for monitoring to start)
+        await MainActor.run {
             model.navigateAfterYield(.monitor)
+        }
+        
+        // Small delay to let UI settle after navigation
+        try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+        
+        // Start monitoring in background (after navigation and delay)
+        // Uses cached thresholds if available (prepared after "Commit" button or above)
+        if #available(iOS 16.0, *) {
+            Task {
+                await MonitoringManager.shared.startMonitoring(
+                    selection: model.selectedApps,
+                    limitMinutes: Int(model.limitMinutes)
+                )
+                
+                // Clear loading state after monitoring starts
+                await MainActor.run {
+                    model.isStartingMonitoring = false
+                }
+            }
         }
     }
 }

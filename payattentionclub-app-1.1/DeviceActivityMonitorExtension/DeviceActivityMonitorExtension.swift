@@ -1,21 +1,20 @@
 import DeviceActivity
 import Foundation
-import os.log
 
 /// DeviceActivityMonitorExtension receives callbacks when usage thresholds are reached
 /// Writes usage data to App Group so main app can read it
 @available(iOS 16.0, *)
 class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     private let appGroupIdentifier = "group.com.payattentionclub.app"
-    private let logger = Logger(subsystem: "com.payattentionclub.app.monitor", category: "MonitorExtension")
     
     override func intervalDidStart(for activity: DeviceActivityName) {
         super.intervalDidStart(for: activity)
         
         NSLog("MARKERS MonitorExtension: 🟢 intervalDidStart for %@", activity.rawValue)
-        print("MARKERS MonitorExtension: 🟢 intervalDidStart for \(activity.rawValue)")
-        logger.info("MARKERS MonitorExtension: 🟢 intervalDidStart for \(activity.rawValue)")
         fflush(stdout)
+        
+        // Reset sequence tracking when interval starts
+        resetSequenceTracking()
         
         // Store interval start time in App Group
         storeIntervalStart(activity: activity)
@@ -28,7 +27,6 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         super.intervalDidEnd(for: activity)
         
         NSLog("MARKERS MonitorExtension: 🔴 intervalDidEnd for %@", activity.rawValue)
-        print("MARKERS MonitorExtension: 🔴 intervalDidEnd for \(activity.rawValue)")
         fflush(stdout)
         
         // Store interval end time
@@ -38,22 +36,27 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     override func eventDidReachThreshold(_ event: DeviceActivityEvent.Name, activity: DeviceActivityName) {
         super.eventDidReachThreshold(event, activity: activity)
         
-        NSLog("MARKERS MonitorExtension: ⚠️⚠️⚠️ THRESHOLD REACHED!")
-        print("MARKERS MonitorExtension: ⚠️⚠️⚠️ THRESHOLD REACHED!")
-        logger.critical("MARKERS MonitorExtension: ⚠️⚠️⚠️ THRESHOLD REACHED!")
+        // Extract seconds from event name
+        let seconds = extractSecondsFromEvent(event.rawValue)
+        let consumedMinutes = Double(seconds) / 60.0
         
-        NSLog("MARKERS MonitorExtension: Event: %@", event.rawValue)
-        print("MARKERS MonitorExtension: Event: \(event.rawValue)")
+        // Get last threshold seconds to detect gaps
+        let lastSeconds = getLastThresholdSeconds()
         
-        NSLog("MARKERS MonitorExtension: Activity: %@", activity.rawValue)
-        print("MARKERS MonitorExtension: Activity: \(activity.rawValue)")
-        fflush(stdout)
+        // Detect gaps (with new variable intervals, gaps can be up to 5 minutes)
+        if lastSeconds > 0 && seconds > lastSeconds {
+            let gapSeconds = seconds - lastSeconds
+            // With new strategy: gaps can be up to 5 minutes (300 seconds) in middle, 1 minute (60 seconds) at start/end
+            if gapSeconds > 300 {
+                NSLog("MARKERS MonitorExtension: ⚠️⚠️⚠️ LARGE GAP DETECTED! Last threshold: %d sec, current: %d sec. Gap: %d seconds (%.1f minutes)", 
+                      lastSeconds, seconds, gapSeconds, Double(gapSeconds) / 60.0)
+                fflush(stdout)
+            }
+        }
         
-        // Extract minutes from event name (e.g., "5min", "10min", "15min")
-        let consumedMinutes = extractMinutesFromEvent(event.rawValue)
-        
-        NSLog("MARKERS MonitorExtension: Extracted minutes: %.1f", consumedMinutes)
-        print("MARKERS MonitorExtension: Extracted minutes: \(consumedMinutes)")
+        // Log threshold
+        NSLog("MARKERS MonitorExtension: 🔔 Threshold: %@ (%d seconds = %.1f minutes)", 
+              event.rawValue, seconds, consumedMinutes)
         fflush(stdout)
         
         // Store consumed minutes in App Group
@@ -61,10 +64,10 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         storeConsumedMinutes(consumedMinutes)
         storeLastThresholdEvent(event.rawValue)
         storeLastThresholdTimestamp(timestamp)
+        storeLastThresholdSeconds(seconds)
         
-        NSLog("MARKERS MonitorExtension: ✅ Stored in App Group: consumedMinutes=%.1f, timestamp=%.0f", consumedMinutes, timestamp)
-        print("MARKERS MonitorExtension: ✅ Stored in App Group: consumedMinutes=\(consumedMinutes), timestamp=\(timestamp)")
-        logger.info("MARKERS MonitorExtension: ✅ Stored in App Group: consumedMinutes=\(consumedMinutes)")
+        NSLog("MARKERS MonitorExtension: ✅ Stored: consumedMinutes=%.1f, seconds=%d, timestamp=%.0f", 
+              consumedMinutes, seconds, timestamp)
         fflush(stdout)
     }
     
@@ -113,18 +116,60 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         userDefaults.synchronize()
     }
     
+    private func storeLastThresholdSeconds(_ seconds: Int) {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        userDefaults.set(seconds, forKey: "lastThresholdSeconds")
+        userDefaults.synchronize()
+    }
+    
+    private func getLastThresholdSeconds() -> Int {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return 0
+        }
+        return userDefaults.integer(forKey: "lastThresholdSeconds")
+    }
+    
+    private func resetSequenceTracking() {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        userDefaults.removeObject(forKey: "lastThresholdSeconds")
+        userDefaults.synchronize()
+    }
+    
     // MARK: - Helpers
     
-    private func extractMinutesFromEvent(_ eventName: String) -> Double {
-        // Extract number from event name (e.g., "5min" -> 5.0, "10min" -> 10.0)
-        let pattern = #"(\d+)"#
-        if let regex = try? NSRegularExpression(pattern: pattern),
+    private func extractSecondsFromEvent(_ eventName: String) -> Int {
+        // Extract seconds from event name
+        // New format: "t_60s", "t_300s", etc.
+        // Old format (for compatibility): "30sec", "60sec", etc.
+        
+        // Try new format first: "t_60s" or "t_300s"
+        let newPattern = #"t_(\d+)s"#
+        if let regex = try? NSRegularExpression(pattern: newPattern),
            let match = regex.firstMatch(in: eventName, range: NSRange(eventName.startIndex..., in: eventName)),
            let range = Range(match.range(at: 1), in: eventName),
-           let minutes = Double(eventName[range]) {
-            return minutes
+           let seconds = Int(eventName[range]) {
+            return seconds
         }
-        return 0.0
+        
+        // Fallback to old format: "30sec" or "36000sec"
+        let oldPattern = #"(\d+)sec"#
+        if let regex = try? NSRegularExpression(pattern: oldPattern),
+           let match = regex.firstMatch(in: eventName, range: NSRange(eventName.startIndex..., in: eventName)),
+           let range = Range(match.range(at: 1), in: eventName),
+           let seconds = Int(eventName[range]) {
+            return seconds
+        }
+        
+        return 0
+    }
+    
+    private func extractMinutesFromEvent(_ eventName: String) -> Double {
+        // Extract minutes from event name (for backward compatibility)
+        let seconds = extractSecondsFromEvent(eventName)
+        return Double(seconds) / 60.0
     }
 }
-
