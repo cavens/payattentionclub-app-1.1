@@ -1,4 +1,4 @@
-# PayAttentionClub 1.1 - Fresh Start
+# PayAttentionClub 1.1
 
 ## Architecture Briefing
 
