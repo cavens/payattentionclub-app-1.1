@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import FamilyControls
 
 struct ScreenTimeAccessView: View {
@@ -57,6 +58,23 @@ struct ScreenTimeAccessView: View {
             }
             .navigationTitle("Screen Time Access")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                // Check if authorization is already granted when view appears
+                Task { @MainActor in
+                    let status = authorizationCenter.authorizationStatus
+                    NSLog("MARKERS ScreenTimeAccessView: Authorization status on appear: %@", String(describing: status))
+                    print("MARKERS ScreenTimeAccessView: Authorization status on appear: \(status)")
+                    fflush(stdout)
+                    
+                    if status == .approved {
+                        // Skip this view and go directly to authorization
+                        NSLog("MARKERS ScreenTimeAccessView: Already approved, skipping to authorization")
+                        print("MARKERS ScreenTimeAccessView: Already approved, skipping to authorization")
+                        fflush(stdout)
+                        model.navigateAfterYield(.authorization)
+                    }
+                }
+            }
         }
     }
 }

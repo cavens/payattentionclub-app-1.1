@@ -88,6 +88,25 @@ struct AuthorizationView: View {
         // Store baseline in App Group
         UsageTracker.shared.storeBaselineTime(0.0)
         
+        // Store commitment deadline (next Monday noon EST) - do this synchronously on main thread
+        let deadline = await MainActor.run { model.getNextMondayNoonEST() }
+        NSLog("RESET AuthorizationView: 🔒 Storing commitment deadline: %@", String(describing: deadline))
+        print("RESET AuthorizationView: 🔒 Storing commitment deadline: \(deadline)")
+        fflush(stdout)
+        UsageTracker.shared.storeCommitmentDeadline(deadline)
+        
+        // Verify deadline was stored
+        let storedDeadline = await UsageTracker.shared.getCommitmentDeadline()
+        if let storedDeadline = storedDeadline {
+            NSLog("RESET AuthorizationView: ✅ Deadline stored successfully: %@", String(describing: storedDeadline))
+            print("RESET AuthorizationView: ✅ Deadline stored successfully: \(storedDeadline)")
+            fflush(stdout)
+        } else {
+            NSLog("RESET AuthorizationView: ❌ ERROR: Deadline was NOT stored!")
+            print("RESET AuthorizationView: ❌ ERROR: Deadline was NOT stored!")
+            fflush(stdout)
+        }
+        
         // Ensure thresholds are prepared before starting
         if #available(iOS 16.0, *) {
             // Check if thresholds are ready, if not prepare them now

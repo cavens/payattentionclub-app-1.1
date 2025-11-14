@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 struct MonitorView: View {
     @EnvironmentObject var model: AppModel
@@ -83,7 +84,14 @@ struct MonitorView: View {
                 
                 // Skip Button (temporary)
                 Button(action: {
-                    model.navigate(.bulletin)
+                    // Clear expired monitoring state when skipping to deadline
+                    Task { @MainActor in
+                        NSLog("RESET MonitorView: ⏭️ Skip to deadline clicked - clearing monitoring state")
+                        print("RESET MonitorView: ⏭️ Skip to deadline clicked - clearing monitoring state")
+                        fflush(stdout)
+                        UsageTracker.shared.clearExpiredMonitoringState()
+                        model.navigate(.bulletin)
+                    }
                 }) {
                     Text("Skip to next deadline")
                         .font(.headline)

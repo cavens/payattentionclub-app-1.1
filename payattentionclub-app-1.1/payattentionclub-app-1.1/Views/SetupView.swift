@@ -1,9 +1,45 @@
 import SwiftUI
+import Foundation
 import FamilyControls
 
 struct SetupView: View {
     @EnvironmentObject var model: AppModel
     @State private var showAppPicker = false
+    
+    // Convert slider position (0.0-1.0) to penalty value ($0.01-$5.00) with $0.10 in the middle
+    private func positionToPenalty(_ position: Double) -> Double {
+        let minPenalty = 0.01
+        let midPenalty = 0.10
+        let maxPenalty = 5.00
+        
+        if position <= 0.5 {
+            // First half: linear from $0.01 to $0.10
+            return minPenalty + (midPenalty - minPenalty) * (position / 0.5)
+        } else {
+            // Second half: logarithmic from $0.10 to $5.00
+            let ratio = (position - 0.5) / 0.5 // 0.0 to 1.0
+            let logRatio = log(midPenalty / minPenalty) + ratio * log(maxPenalty / midPenalty)
+            return minPenalty * exp(logRatio)
+        }
+    }
+    
+    // Convert penalty value ($0.01-$5.00) to slider position (0.0-1.0)
+    private func penaltyToPosition(_ penalty: Double) -> Double {
+        let minPenalty = 0.01
+        let midPenalty = 0.10
+        let maxPenalty = 5.00
+        
+        if penalty <= midPenalty {
+            // First half: linear from $0.01 to $0.10
+            return 0.5 * (penalty - minPenalty) / (midPenalty - minPenalty)
+        } else {
+            // Second half: logarithmic from $0.10 to $5.00
+            let logRatio = log(penalty / minPenalty)
+            let totalLogRange = log(maxPenalty / minPenalty)
+            let firstHalfLogRange = log(midPenalty / minPenalty)
+            return 0.5 + 0.5 * (logRatio - firstHalfLogRange) / (totalLogRange - firstHalfLogRange)
+        }
+    }
     
     var body: some View {
         NavigationView {
@@ -73,7 +109,16 @@ struct SetupView: View {
                             .font(.title2)
                             .fontWeight(.semibold)
                         
-                        Slider(value: $model.penaltyPerMinute, in: 0.01...5.00, step: 0.01)
+                        Slider(
+                            value: Binding(
+                                get: { penaltyToPosition(model.penaltyPerMinute) },
+                                set: { newPosition in
+                                    model.penaltyPerMinute = positionToPenalty(newPosition)
+                                }
+                            ),
+                            in: 0.0...1.0,
+                            step: 0.001
+                        )
                         
                         HStack {
                             Text("$0.01")
@@ -120,7 +165,28 @@ struct SetupView: View {
                             }
                         }
                         
-                        model.navigate(.screenTimeAccess)
+                        // Check if ScreenTime access is already granted
+                        Task { @MainActor in
+                            let authorizationCenter = AuthorizationCenter.shared
+                            let status = authorizationCenter.authorizationStatus
+                            NSLog("MARKERS SetupView: Authorization status: %@", String(describing: status))
+                            print("MARKERS SetupView: Authorization status: \(status)")
+                            fflush(stdout)
+                            
+                            if status == .approved {
+                                // Skip ScreenTime access view, go directly to authorization
+                                NSLog("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
+                                print("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
+                                fflush(stdout)
+                                model.navigate(.authorization)
+                            } else {
+                                // Need to request ScreenTime access
+                                NSLog("MARKERS SetupView: ScreenTime not approved, showing access screen")
+                                print("MARKERS SetupView: ScreenTime not approved, showing access screen")
+                                fflush(stdout)
+                                model.navigate(.screenTimeAccess)
+                            }
+                        }
                     }) {
                         Text("Commit")
                             .font(.headline)
@@ -162,6 +228,35 @@ struct SetupView: View {
         let formattedTime = "\(timeString)h"
         
         return "Time limit till next Monday \(formattedTime)"
+    }
+    
+    private func nextMondayNoonEST() -> Date {
+        let calendar = Calendar.current
+        var estCalendar = calendar
+        estCalendar.timeZone = TimeZone(identifier: "America/New_York")!
+        
+        let now = Date()
+        var components = estCalendar.dateComponents([.year, .month, .day, .weekday, .hour], from: now)
+        
+        // Find next Monday
+        if let weekday = components.weekday {
+            let daysUntilMonday = (9 - weekday) % 7
+            if daysUntilMonday == 0 && (components.hour ?? 0) < 12 {
+                // Today is Monday and before noon, use today
+                components.hour = 12
+                components.minute = 0
+                components.second = 0
+            } else {
+                // Find next Monday
+                let daysToAdd = daysUntilMonday == 0 ? 7 : daysUntilMonday
+                components.day = (components.day ?? 0) + daysToAdd
+                components.hour = 12
+                components.minute = 0
+                components.second = 0
+            }
+        }
+        
+        return estCalendar.date(from: components) ?? now.addingTimeInterval(7 * 24 * 60 * 60)
     }
 }
 

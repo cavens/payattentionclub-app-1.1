@@ -11,6 +11,8 @@
 		CD43B0642EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CD43B0592EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CD43B06A2EC405B300BCDBB9 /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD43B05B2EC4049D00BCDBB9 /* DeviceActivity.framework */; };
 		CD43B06C2EC405B900BCDBB9 /* FamilyControls.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD43B06B2EC405B900BCDBB9 /* FamilyControls.framework */; };
+		CD43B08E2EC7B6A000BCDBB9 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B08D2EC7B6A000BCDBB9 /* Auth */; };
+		CD43B0902EC7B6A000BCDBB9 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B08F2EC7B6A000BCDBB9 /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,8 +77,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CD43B0902EC7B6A000BCDBB9 /* Supabase in Frameworks */,
 				CD43B06C2EC405B900BCDBB9 /* FamilyControls.framework in Frameworks */,
 				CD43B06A2EC405B300BCDBB9 /* DeviceActivity.framework in Frameworks */,
+				CD43B08E2EC7B6A000BCDBB9 /* Auth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -141,6 +145,8 @@
 			);
 			name = "payattentionclub-app-1.1";
 			packageProductDependencies = (
+				CD43B08D2EC7B6A000BCDBB9 /* Auth */,
+				CD43B08F2EC7B6A000BCDBB9 /* Supabase */,
 			);
 			productName = "payattentionclub-app-1.1";
 			productReference = CD43B0462EC4044A00BCDBB9 /* payattentionclub-app-1.1.app */;
@@ -196,6 +202,9 @@
 			);
 			mainGroup = CD43B03D2EC4044A00BCDBB9;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CD43B08C2EC7B4E400BCDBB9 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CD43B0472EC4044A00BCDBB9 /* Products */;
 			projectDirPath = "";
@@ -533,6 +542,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CD43B08C2EC7B4E400BCDBB9 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CD43B08D2EC7B6A000BCDBB9 /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CD43B08C2EC7B4E400BCDBB9 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Auth;
+		};
+		CD43B08F2EC7B6A000BCDBB9 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CD43B08C2EC7B4E400BCDBB9 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CD43B03E2EC4044A00BCDBB9 /* Project object */;
 }

@@ -44,7 +44,7 @@ final class AppModel: ObservableObject {
         isInitialized = true
         
         // Initialize countdown model (deferred to avoid blocking startup)
-        let deadline = nextMondayNoonEST()
+        let deadline = getNextMondayNoonEST()
         countdownModel = CountdownModel(deadline: deadline)
         
         // Load persisted values from App Group
@@ -59,16 +59,41 @@ final class AppModel: ObservableObject {
             // Small delay to let UI render
             try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
             
-            // Check if monitoring is active (don't reset, just check)
+            // Explicitly check deadline first (before checking monitoring status)
+            let storedDeadline = await UsageTracker.shared.getCommitmentDeadline()
+            let monitoringFlagSet = await UsageTracker.shared.isMonitoringFlagSet()
+            
+            NSLog("RESET AppModel: 📋 Initial check - Deadline exists: %@, Monitoring flag: %@", 
+                  storedDeadline != nil ? "YES" : "NO",
+                  monitoringFlagSet ? "SET" : "NOT SET")
+            print("RESET AppModel: 📋 Initial check - Deadline exists: \(storedDeadline != nil ? "YES" : "NO"), Monitoring flag: \(monitoringFlagSet ? "SET" : "NOT SET")")
+            fflush(stdout)
+            
+            if let deadline = storedDeadline {
+                let now = Date()
+                let passed = now >= deadline
+                NSLog("RESET AppModel: 📅 Stored deadline: %@, Current: %@, Passed: %@", 
+                      String(describing: deadline), 
+                      String(describing: now),
+                      passed ? "YES" : "NO")
+                print("RESET AppModel: 📅 Stored deadline: \(deadline), Current: \(now), Passed: \(passed)")
+                fflush(stdout)
+            }
+            
+            // Check if monitoring is active (also checks if deadline has passed)
             let isActive = await UsageTracker.shared.isMonitoringActive()
             
+            NSLog("RESET AppModel: 🎯 Final decision - Monitoring active: %@", isActive ? "YES → Monitor" : "NO → Setup")
+            print("RESET AppModel: 🎯 Final decision - Monitoring active: \(isActive ? "YES → Monitor" : "NO → Setup")")
+            fflush(stdout)
+            
             if isActive {
-                // Monitoring is active - navigate to monitor screen
+                // Monitoring is active and deadline hasn't passed - navigate to monitor screen
                 // Also refresh usage data from App Group
                 await refreshUsageFromAppGroup()
                 self.navigate(.monitor)
             } else {
-                // No active monitoring - navigate to setup
+                // No active monitoring (either not started or deadline passed) - navigate to setup
                 self.navigate(.setup)
             }
         }
@@ -140,7 +165,7 @@ final class AppModel: ObservableObject {
         if let cached = cachedNextMondayNoonEST, cached > Date() {
             newDeadline = cached
         } else {
-            newDeadline = nextMondayNoonEST()
+            newDeadline = getNextMondayNoonEST()
         }
         
         cachedNextMondayNoonEST = newDeadline
@@ -230,14 +255,26 @@ final class AppModel: ObservableObject {
             return
         }
         
-        limitMinutes = userDefaults.double(forKey: "limitMinutes")
-        if limitMinutes == 0 {
-            limitMinutes = 21 * 60 // Default
+        // Load limitMinutes - use default only if not previously saved
+        if userDefaults.object(forKey: "limitMinutes") != nil {
+            limitMinutes = userDefaults.double(forKey: "limitMinutes")
+        } else {
+            limitMinutes = 21 * 60 // Default 21 hours for first-time users
         }
         
-        penaltyPerMinute = userDefaults.double(forKey: "penaltyPerMinute")
-        if penaltyPerMinute == 0 {
-            penaltyPerMinute = 0.10 // Default
+        // Load penaltyPerMinute - use default only if not previously saved
+        if userDefaults.object(forKey: "penaltyPerMinute") != nil {
+            penaltyPerMinute = userDefaults.double(forKey: "penaltyPerMinute")
+        } else {
+            penaltyPerMinute = 0.10 // Default $0.10 for first-time users
+        }
+        
+        // Load selectedApps - restore previous commit's selection
+        if let data = userDefaults.data(forKey: "selectedApps"),
+           let decoded = try? JSONDecoder().decode(FamilyActivitySelection.self, from: data) {
+            selectedApps = decoded
+        } else {
+            selectedApps = FamilyActivitySelection() // Default: 0 apps for first-time users
         }
         
         baselineUsageSeconds = userDefaults.integer(forKey: "baselineUsageSeconds")
@@ -252,6 +289,12 @@ final class AppModel: ObservableObject {
         userDefaults.set(limitMinutes, forKey: "limitMinutes")
         userDefaults.set(penaltyPerMinute, forKey: "penaltyPerMinute")
         userDefaults.set(baselineUsageSeconds, forKey: "baselineUsageSeconds")
+        
+        // Save selectedApps - persist for next commit
+        if let encoded = try? JSONEncoder().encode(selectedApps) {
+            userDefaults.set(encoded, forKey: "selectedApps")
+        }
+        
         userDefaults.synchronize()
     }
 }
