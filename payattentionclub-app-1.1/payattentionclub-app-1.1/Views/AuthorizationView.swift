@@ -96,7 +96,7 @@ struct AuthorizationView: View {
         UsageTracker.shared.storeCommitmentDeadline(deadline)
         
         // Verify deadline was stored
-        let storedDeadline = await UsageTracker.shared.getCommitmentDeadline()
+        let storedDeadline = UsageTracker.shared.getCommitmentDeadline()
         if let storedDeadline = storedDeadline {
             NSLog("RESET AuthorizationView: ✅ Deadline stored successfully: %@", String(describing: storedDeadline))
             print("RESET AuthorizationView: ✅ Deadline stored successfully: \(storedDeadline)")

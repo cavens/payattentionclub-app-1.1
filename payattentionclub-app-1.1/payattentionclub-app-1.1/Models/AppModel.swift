@@ -60,8 +60,8 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
             
             // Explicitly check deadline first (before checking monitoring status)
-            let storedDeadline = await UsageTracker.shared.getCommitmentDeadline()
-            let monitoringFlagSet = await UsageTracker.shared.isMonitoringFlagSet()
+            let storedDeadline = UsageTracker.shared.getCommitmentDeadline()
+            let monitoringFlagSet = UsageTracker.shared.isMonitoringFlagSet()
             
             NSLog("RESET AppModel: 📋 Initial check - Deadline exists: %@, Monitoring flag: %@", 
                   storedDeadline != nil ? "YES" : "NO",
@@ -81,7 +81,7 @@ final class AppModel: ObservableObject {
             }
             
             // Check if monitoring is active (also checks if deadline has passed)
-            let isActive = await UsageTracker.shared.isMonitoringActive()
+            let isActive = UsageTracker.shared.isMonitoringActive()
             
             NSLog("RESET AppModel: 🎯 Final decision - Monitoring active: %@", isActive ? "YES → Monitor" : "NO → Setup")
             print("RESET AppModel: 🎯 Final decision - Monitoring active: \(isActive ? "YES → Monitor" : "NO → Setup")")
@@ -306,5 +306,6 @@ enum AppScreen {
     case authorization
     case monitor
     case bulletin
+    case backendTest // TEMPORARY: Remove after testing
 }
 

@@ -55,6 +55,8 @@ struct RootRouterView: View {
                 MonitorView()
             case .bulletin:
                 BulletinView()
+            case .backendTest:
+                BackendTestView() // TEMPORARY: Remove after testing
             }
         }
         .id(model.currentScreen) // Force identity change

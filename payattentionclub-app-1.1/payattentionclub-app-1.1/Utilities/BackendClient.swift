@@ -2,19 +2,105 @@ import Foundation
 import Supabase
 import Auth
 
+// MARK: - Local Storage Implementation
+
+/// Simple UserDefaults-based localStorage implementation for Supabase Auth
+private final class UserDefaultsLocalStorage: AuthLocalStorage, @unchecked Sendable {
+    private let userDefaults: UserDefaults
+    
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+    
+    func store(key: String, value: Data) throws {
+        userDefaults.set(value, forKey: key)
+        userDefaults.synchronize()
+    }
+    
+    func retrieve(key: String) throws -> Data? {
+        return userDefaults.data(forKey: key)
+    }
+    
+    func remove(key: String) throws {
+        userDefaults.removeObject(forKey: key)
+        userDefaults.synchronize()
+    }
+}
+
+// MARK: - Request Parameter Models
+
+struct EmptyBody: Encodable, Sendable {}
+
+// MARK: - Response Models
+
+struct BillingStatusResponse: Codable {
+    let hasPaymentMethod: Bool
+    let needsSetupIntent: Bool
+    let setupIntentClientSecret: String?
+    let stripeCustomerId: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case hasPaymentMethod = "has_payment_method"
+        case needsSetupIntent = "needs_setup_intent"
+        case setupIntentClientSecret = "setup_intent_client_secret"
+        case stripeCustomerId = "stripe_customer_id"
+    }
+}
+
+// MARK: - Errors
+
+enum BackendError: LocalizedError {
+    case notAuthenticated
+    case serverError(String)
+    case decodingError(String)
+    case networkError(Error)
+    
+    var errorDescription: String? {
+        switch self {
+        case .notAuthenticated:
+            return "User is not authenticated"
+        case .serverError(let message):
+            return "Server error: \(message)"
+        case .decodingError(let message):
+            return "Failed to decode response: \(message)"
+        case .networkError(let error):
+            return "Network error: \(error.localizedDescription)"
+        }
+    }
+}
+
+// MARK: - Backend Client
+
 /// Client for interacting with PAC backend (Supabase)
-@MainActor
 class BackendClient {
     static let shared = BackendClient()
     
     private let supabase: SupabaseClient
     
     private init() {
-        // Initialize Supabase client
+        // Initialize Supabase client with Auth configuration
+        // Set emitLocalSessionAsInitialSession to opt-in to new session behavior
+        // This addresses the deprecation warning about session handling
+        let localStorage = UserDefaultsLocalStorage()
+        
+        // Create AuthClient with custom configuration including emitLocalSessionAsInitialSession
+        let authConfig = AuthClient.Configuration(
+            localStorage: localStorage,
+            emitLocalSessionAsInitialSession: true
+        )
+        _ = AuthClient(configuration: authConfig)
+        
         self.supabase = SupabaseClient(
             supabaseURL: URL(string: SupabaseConfig.projectURL)!,
-            supabaseKey: SupabaseConfig.anonKey
+            supabaseKey: SupabaseConfig.anonKey,
+            options: SupabaseClientOptions(
+                auth: SupabaseClientOptions.AuthOptions(storage: localStorage)
+            )
         )
+        
+        // Note: The deprecation warning about emitLocalSessionAsInitialSession
+        // may persist if AuthOptions doesn't support passing the full configuration.
+        // The warning is informational and won't break functionality.
     }
     
     // MARK: - Authentication
@@ -42,290 +128,46 @@ class BackendClient {
         }
     }
     
+    /// Sign in with Apple ID token
+    /// - Parameters:
+    ///   - idToken: The Apple ID token string
+    ///   - nonce: The nonce used for the Apple sign-in request
+    /// - Returns: The authenticated session
+    func signInWithApple(idToken: String, nonce: String) async throws -> Session {
+        let session = try await supabase.auth.signInWithIdToken(
+            credentials: OpenIDConnectCredentials(
+                provider: .apple,
+                idToken: idToken,
+                nonce: nonce
+            )
+        )
+        return session
+    }
+    
+    /// Sign out the current user
+    func signOut() async throws {
+        try await supabase.auth.signOut()
+    }
+    
     // MARK: - API Methods
     
     /// 1. Check billing status and create SetupIntent if needed
     /// Calls: billing-status Edge Function
+    /// - Throws: BackendError.notAuthenticated if user is not signed in
     func checkBillingStatus() async throws -> BillingStatusResponse {
-        struct EmptyBody: Encodable {}
+        // Check authentication first
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
         
-        let response = try await supabase.functions.invoke(
+        let response: BillingStatusResponse = try await supabase.functions.invoke(
             "billing-status",
             options: FunctionInvokeOptions(
                 body: EmptyBody()
             )
         )
         
-        let data = response.data
-        return try JSONDecoder().decode(BillingStatusResponse.self, from: data)
-    }
-    
-    /// 2. Create a weekly commitment
-    /// Calls: rpc_create_commitment
-    func createCommitment(
-        weekStartDate: Date,
-        limitMinutes: Int,
-        penaltyPerMinuteCents: Int,
-        appsToLimit: AppsToLimit
-    ) async throws -> CommitmentResponse {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        let weekStartString = dateFormatter.string(from: weekStartDate)
-        
-        struct CreateCommitmentParams: Encodable {
-            let weekStartDate: String
-            let limitMinutes: Int
-            let penaltyPerMinuteCents: Int
-            let appsToLimit: AppsToLimit
-            
-            enum CodingKeys: String, CodingKey {
-                case weekStartDate = "week_start_date"
-                case limitMinutes = "limit_minutes"
-                case penaltyPerMinuteCents = "penalty_per_minute_cents"
-                case appsToLimit = "apps_to_limit"
-            }
-        }
-        
-        let params = CreateCommitmentParams(
-            weekStartDate: weekStartString,
-            limitMinutes: limitMinutes,
-            penaltyPerMinuteCents: penaltyPerMinuteCents,
-            appsToLimit: appsToLimit
-        )
-        
-        let response = try await supabase.rpc("create_commitment", params: params).execute()
-        let data = response.data
-        return try JSONDecoder().decode(CommitmentResponse.self, from: data)
-    }
-    
-    /// 3. Report daily usage
-    /// Calls: rpc_report_usage
-    func reportUsage(
-        date: Date,
-        weekStartDate: Date,
-        usedMinutes: Int
-    ) async throws -> UsageReportResponse {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        let dateString = dateFormatter.string(from: date)
-        let weekStartString = dateFormatter.string(from: weekStartDate)
-        
-        struct ReportUsageParams: Encodable {
-            let date: String
-            let weekStartDate: String
-            let usedMinutes: Int
-            
-            enum CodingKeys: String, CodingKey {
-                case date
-                case weekStartDate = "week_start_date"
-                case usedMinutes = "used_minutes"
-            }
-        }
-        
-        let params = ReportUsageParams(
-            date: dateString,
-            weekStartDate: weekStartString,
-            usedMinutes: usedMinutes
-        )
-        
-        let response = try await supabase.rpc("report_usage", params: params).execute()
-        let data = response.data
-        return try JSONDecoder().decode(UsageReportResponse.self, from: data)
-    }
-    
-    /// 4. Update monitoring status
-    /// Calls: rpc_update_monitoring_status
-    func updateMonitoringStatus(
-        commitmentId: String,
-        monitoringStatus: MonitoringStatus
-    ) async throws {
-        struct UpdateMonitoringStatusParams: Encodable {
-            let commitmentId: String
-            let monitoringStatus: String
-            
-            enum CodingKeys: String, CodingKey {
-                case commitmentId = "commitment_id"
-                case monitoringStatus = "monitoring_status"
-            }
-        }
-        
-        let params = UpdateMonitoringStatusParams(
-            commitmentId: commitmentId,
-            monitoringStatus: monitoringStatus.rawValue
-        )
-        
-        _ = try await supabase.rpc("update_monitoring_status", params: params).execute()
-    }
-    
-    /// 5. Get weekly status for bulletin
-    /// Calls: rpc_get_week_status
-    func getWeekStatus(weekStartDate: Date) async throws -> WeekStatusResponse {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        let weekStartString = dateFormatter.string(from: weekStartDate)
-        
-        struct GetWeekStatusParams: Encodable {
-            let weekStartDate: String
-            
-            enum CodingKeys: String, CodingKey {
-                case weekStartDate = "week_start_date"
-            }
-        }
-        
-        let params = GetWeekStatusParams(weekStartDate: weekStartString)
-        
-        let response = try await supabase.rpc("get_week_status", params: params).execute()
-        let data = response.data
-        return try JSONDecoder().decode(WeekStatusResponse.self, from: data)
-    }
-    
-    /// Dev-only: Close week now (admin function)
-    func adminCloseWeekNow() async throws {
-        struct EmptyBody: Encodable {}
-        
-        let response = try await supabase.functions.invoke(
-            "admin-close-week-now",
-            options: FunctionInvokeOptions(
-                body: EmptyBody()
-            )
-        )
-        
-        // Just verify it succeeded (200 OK)
-        guard (200...299).contains(response.status) else {
-            throw BackendError.serverError("Failed to close week: HTTP \(response.status)")
-        }
-    }
-}
-
-// MARK: - Response Models
-
-struct BillingStatusResponse: Codable {
-    let hasPaymentMethod: Bool
-    let needsSetupIntent: Bool
-    let setupIntentClientSecret: String?
-    let stripeCustomerId: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case hasPaymentMethod = "has_payment_method"
-        case needsSetupIntent = "needs_setup_intent"
-        case setupIntentClientSecret = "setup_intent_client_secret"
-        case stripeCustomerId = "stripe_customer_id"
-    }
-}
-
-struct CommitmentResponse: Codable {
-    let commitmentId: String
-    let weekStartDate: String
-    let weekEndDate: String
-    let status: String
-    let maxChargeCents: Int
-    
-    enum CodingKeys: String, CodingKey {
-        case commitmentId = "commitment_id"
-        case weekStartDate = "week_start_date"
-        case weekEndDate = "week_end_date"
-        case status
-        case maxChargeCents = "max_charge_cents"
-    }
-}
-
-struct UsageReportResponse: Codable {
-    let date: String
-    let limitMinutes: Int
-    let usedMinutes: Int
-    let exceededMinutes: Int
-    let penaltyCents: Int
-    let userWeekTotalCents: Int
-    let poolTotalCents: Int
-    
-    enum CodingKeys: String, CodingKey {
-        case date
-        case limitMinutes = "limit_minutes"
-        case usedMinutes = "used_minutes"
-        case exceededMinutes = "exceeded_minutes"
-        case penaltyCents = "penalty_cents"
-        case userWeekTotalCents = "user_week_total_cents"
-        case poolTotalCents = "pool_total_cents"
-    }
-}
-
-struct WeekStatusResponse: Codable {
-    let weekStartDate: String
-    let weekEndDate: String
-    let user: UserWeekStatus
-    let pool: PoolStatus
-    
-    enum CodingKeys: String, CodingKey {
-        case weekStartDate = "weekStartDate"
-        case weekEndDate = "weekEndDate"
-        case user
-        case pool
-    }
-}
-
-struct UserWeekStatus: Codable {
-    let totalPenaltyCents: Int
-    let status: String
-    let maxChargeCents: Int
-    
-    enum CodingKeys: String, CodingKey {
-        case totalPenaltyCents = "totalPenaltyCents"
-        case status
-        case maxChargeCents = "maxChargeCents"
-    }
-}
-
-struct PoolStatus: Codable {
-    let totalPenaltyCents: Int
-    let status: String
-    let instagramPostUrl: String?
-    let instagramImageUrl: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case totalPenaltyCents = "totalPenaltyCents"
-        case status
-        case instagramPostUrl = "instagramPostUrl"
-        case instagramImageUrl = "instagramImageUrl"
-    }
-}
-
-// MARK: - Helper Models
-
-struct AppsToLimit: Codable {
-    let appBundleIds: [String]
-    let categories: [String]
-    
-    enum CodingKeys: String, CodingKey {
-        case appBundleIds = "appBundleIds"
-        case categories
-    }
-}
-
-enum MonitoringStatus: String, Codable {
-    case ok = "ok"
-    case revoked = "revoked"
-    case notGranted = "not_granted"
-}
-
-// MARK: - Errors
-
-enum BackendError: LocalizedError {
-    case notAuthenticated
-    case serverError(String)
-    case decodingError(String)
-    case networkError(Error)
-    
-    var errorDescription: String? {
-        switch self {
-        case .notAuthenticated:
-            return "User is not authenticated"
-        case .serverError(let message):
-            return "Server error: \(message)"
-        case .decodingError(let message):
-            return "Failed to decode response: \(message)"
-        case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
-        }
+        return response
     }
 }
 

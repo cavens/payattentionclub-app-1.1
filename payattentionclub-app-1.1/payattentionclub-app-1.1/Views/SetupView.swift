@@ -1,10 +1,13 @@
 import SwiftUI
 import Foundation
 import FamilyControls
+import Auth
 
 struct SetupView: View {
     @EnvironmentObject var model: AppModel
     @State private var showAppPicker = false
+    @State private var isAuthenticating = false
+    @State private var authenticationError: String?
     
     // Convert slider position (0.0-1.0) to penalty value ($0.01-$5.00) with $0.10 in the middle
     private func positionToPenalty(_ position: Double) -> Double {
@@ -150,52 +153,48 @@ struct SetupView: View {
                     .padding(.horizontal)
                     .familyActivityPicker(isPresented: $showAppPicker, selection: $model.selectedApps)
                     
-                    // Commit Button
+                    // TEMPORARY: Backend Test Button (Remove after testing)
                     Button(action: {
-                        model.savePersistedValues()
-                        
-                        // Start preparing thresholds asynchronously (non-blocking)
-                        // This happens in background while user goes through ScreenTime access and authorization
-                        if #available(iOS 16.0, *) {
-                            Task {
-                                await MonitoringManager.shared.prepareThresholds(
-                                    selection: model.selectedApps,
-                                    limitMinutes: Int(model.limitMinutes)
-                                )
-                            }
-                        }
-                        
-                        // Check if ScreenTime access is already granted
-                        Task { @MainActor in
-                            let authorizationCenter = AuthorizationCenter.shared
-                            let status = authorizationCenter.authorizationStatus
-                            NSLog("MARKERS SetupView: Authorization status: %@", String(describing: status))
-                            print("MARKERS SetupView: Authorization status: \(status)")
-                            fflush(stdout)
-                            
-                            if status == .approved {
-                                // Skip ScreenTime access view, go directly to authorization
-                                NSLog("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
-                                print("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
-                                fflush(stdout)
-                                model.navigate(.authorization)
-                            } else {
-                                // Need to request ScreenTime access
-                                NSLog("MARKERS SetupView: ScreenTime not approved, showing access screen")
-                                print("MARKERS SetupView: ScreenTime not approved, showing access screen")
-                                fflush(stdout)
-                                model.navigate(.screenTimeAccess)
-                            }
-                        }
+                        model.navigate(.backendTest)
                     }) {
-                        Text("Commit")
-                            .font(.headline)
-                            .foregroundColor(.white)
+                        Text("🧪 Test Backend (Temporary)")
+                            .font(.subheadline)
+                            .foregroundColor(.orange)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(Color.pink)
-                            .cornerRadius(12)
+                            .background(Color.orange.opacity(0.1))
+                            .cornerRadius(8)
                     }
+                    .padding(.horizontal)
+                    
+                    // Authentication Error Display
+                    if let error = authenticationError {
+                        Text("Authentication Error: \(error)")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .padding(.horizontal)
+                    }
+                    
+                    // Commit Button
+                    Button(action: {
+                        handleCommit()
+                    }) {
+                        HStack {
+                            if isAuthenticating {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .padding(.trailing, 8)
+                            }
+                            Text(isAuthenticating ? "Signing in..." : "Commit")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(isAuthenticating ? Color.gray : Color.pink)
+                        .cornerRadius(12)
+                    }
+                    .disabled(isAuthenticating)
                     .padding(.horizontal)
                     .padding(.bottom, 40)
                 }
@@ -257,6 +256,77 @@ struct SetupView: View {
         }
         
         return estCalendar.date(from: components) ?? now.addingTimeInterval(7 * 24 * 60 * 60)
+    }
+    
+    private func handleCommit() {
+        model.savePersistedValues()
+        authenticationError = nil
+        
+        // Start preparing thresholds asynchronously (non-blocking)
+        // This happens in background while user goes through authentication and ScreenTime access
+        if #available(iOS 16.0, *) {
+            Task {
+                await MonitoringManager.shared.prepareThresholds(
+                    selection: model.selectedApps,
+                    limitMinutes: Int(model.limitMinutes)
+                )
+            }
+        }
+        
+        // Handle authentication and navigation
+        Task { @MainActor in
+            await ensureAuthenticatedAndNavigate()
+        }
+    }
+    
+    private func ensureAuthenticatedAndNavigate() async {
+        // Check if already authenticated
+        let isAuth = await BackendClient.shared.isAuthenticated
+        
+        if !isAuth {
+            // Need to sign in with Apple
+            isAuthenticating = true
+            NSLog("AUTH SetupView: Starting Sign in with Apple")
+            
+            do {
+                let session = try await AuthenticationManager.shared.signInWithApple()
+                NSLog("AUTH SetupView: ✅ Successfully authenticated: \(session.user.id)")
+                isAuthenticating = false
+                
+                // Continue with navigation after successful authentication
+                await navigateToNextScreen()
+            } catch {
+                NSLog("AUTH SetupView: ❌ Authentication failed: \(error.localizedDescription)")
+                isAuthenticating = false
+                authenticationError = error.localizedDescription
+            }
+        } else {
+            NSLog("AUTH SetupView: Already authenticated, proceeding")
+            await navigateToNextScreen()
+        }
+    }
+    
+    private func navigateToNextScreen() async {
+        // Check if ScreenTime access is already granted
+        let authorizationCenter = AuthorizationCenter.shared
+        let status = authorizationCenter.authorizationStatus
+        NSLog("MARKERS SetupView: Authorization status: %@", String(describing: status))
+        print("MARKERS SetupView: Authorization status: \(status)")
+        fflush(stdout)
+        
+        if status == .approved {
+            // Skip ScreenTime access view, go directly to authorization
+            NSLog("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
+            print("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
+            fflush(stdout)
+            model.navigate(.authorization)
+        } else {
+            // Need to request ScreenTime access
+            NSLog("MARKERS SetupView: ScreenTime not approved, showing access screen")
+            print("MARKERS SetupView: ScreenTime not approved, showing access screen")
+            fflush(stdout)
+            model.navigate(.screenTimeAccess)
+        }
     }
 }
 

@@ -4,7 +4,7 @@ import Foundation
 struct SupabaseConfig {
     // TODO: Replace with your actual Supabase project URL
     // Format: https://xxxxx.supabase.co
-    static let projectURL = "https://whdftvcrtrsnefhprebj.supabase.com"
+    static let projectURL = "https://whdftvcrtrsnefhprebj.supabase.co"
     
     // TODO: Replace with your actual Supabase anon key
     // This is the public anon key from Supabase Dashboard → Settings → API
