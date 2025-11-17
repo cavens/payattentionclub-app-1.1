@@ -1,24 +1,6 @@
--- RPC Function: rpc_report_usage
--- Purpose: Store daily usage and recompute penalties
--- 
--- Inputs:
---   p_date: The date for this usage report (YYYY-MM-DD)
---   p_week_start_date: The week start date (deadline) for the commitment
---   p_used_minutes: Total minutes used today
---
--- Returns: JSON with daily penalty, weekly total, and pool total
-
-DROP FUNCTION IF EXISTS public.rpc_report_usage(date, date, integer);
-
-CREATE OR REPLACE FUNCTION public.rpc_report_usage(
-  p_date date,
-  p_week_start_date date,
-  p_used_minutes integer
-)
-RETURNS json
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
+CREATE OR REPLACE FUNCTION public."rpc_report_usage"("p_date" date, "p_week_start_date" date, "p_used_minutes" integer) RETURNS json
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
 DECLARE
   v_user_id uuid := auth.uid();
   v_commitment_id uuid;
@@ -36,6 +18,7 @@ BEGIN
   END IF;
 
   -- 2) Find the active commitment for this user and week
+  -- FIX: Match by week_end_date (deadline), not week_start_date
   -- Note: week_end_date in commitments table is actually the deadline (next Monday)
   -- So we match where the deadline (week_end_date) equals p_week_start_date
   SELECT 
@@ -48,7 +31,7 @@ BEGIN
     v_penalty_per_minute_cents
   FROM public.commitments c
   WHERE c.user_id = v_user_id
-    AND c.week_end_date = p_week_start_date  -- week_end_date is the deadline
+    AND c.week_end_date = p_week_start_date  -- FIX: Changed from week_start_date to week_end_date
     AND c.status IN ('pending', 'active')
   ORDER BY c.created_at DESC
   LIMIT 1;
@@ -71,6 +54,7 @@ BEGIN
     limit_minutes,
     exceeded_minutes,
     penalty_cents,
+    is_estimated,
     reported_at,
     source
   )
@@ -82,14 +66,17 @@ BEGIN
     v_limit_minutes,
     v_exceeded_minutes,
     v_penalty_cents,
+    false,
     NOW(),
     'ios_app'
   )
   ON CONFLICT (user_id, date, commitment_id)
   DO UPDATE SET
     used_minutes = EXCLUDED.used_minutes,
+    limit_minutes = EXCLUDED.limit_minutes,
     exceeded_minutes = EXCLUDED.exceeded_minutes,
     penalty_cents = EXCLUDED.penalty_cents,
+    is_estimated = EXCLUDED.is_estimated,
     reported_at = NOW(),
     source = EXCLUDED.source;
 
@@ -114,14 +101,14 @@ BEGIN
   -- Upsert user_week_penalties
   INSERT INTO public.user_week_penalties (
     user_id,
-    week_start_date,
+    week_start_date,  -- Actually stores the deadline
     total_penalty_cents,
     status,
     last_updated
   )
   VALUES (
     v_user_id,
-    p_week_start_date,
+    p_week_start_date,  -- Deadline (next Monday)
     v_user_week_total_cents,
     'pending',
     NOW()
@@ -132,6 +119,7 @@ BEGIN
     last_updated = NOW();
 
   -- 7) Recalculate weekly_pools
+  -- FIX: Changed from UPDATE to INSERT ... ON CONFLICT to create if missing
   -- Note: In weekly_pools, week_start_date is the deadline (Monday before noon)
   -- All users with the same deadline share the same pool
   SELECT COALESCE(SUM(total_penalty_cents), 0)
@@ -139,25 +127,25 @@ BEGIN
   FROM public.user_week_penalties
   WHERE week_start_date = p_week_start_date;
 
-  -- Upsert weekly_pools
-  -- week_start_date in pools table is the deadline (next Monday)
+  -- Upsert weekly_pools (creates if doesn't exist, updates if exists)
   INSERT INTO public.weekly_pools (
-    week_start_date,
-    week_end_date,
+    week_start_date,  -- Deadline (next Monday) - used as pool identifier
+    week_end_date,    -- Same as start (deadline is the pool identifier)
     total_penalty_cents,
     status
   )
   VALUES (
-    p_week_start_date,  -- Deadline (next Monday) - used as pool identifier
+    p_week_start_date,  -- Deadline (next Monday)
     p_week_start_date,  -- Same as start (deadline is the pool identifier)
     v_pool_total_cents,
     'open'
   )
-  ON CONFLICT (week_start_date)
+  ON CONFLICT (week_start_date)  -- FIX: Changed from UPDATE to INSERT ... ON CONFLICT
   DO UPDATE SET
     total_penalty_cents = EXCLUDED.total_penalty_cents;
 
   -- 8) Return result as JSON
+  -- FIX: Changed from RETURN; to RETURN json_build_object(...)
   SELECT json_build_object(
     'date', p_date::text,
     'limit_minutes', v_limit_minutes,
@@ -173,3 +161,5 @@ BEGIN
 END;
 $$;
 
+
+ALTER FUNCTION public."rpc_report_usage"("p_date" date, "p_week_start_date" date, "p_used_minutes" integer) OWNER TO "postgres";
