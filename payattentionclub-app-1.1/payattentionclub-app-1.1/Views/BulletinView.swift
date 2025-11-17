@@ -77,6 +77,7 @@ struct BulletinView: View {
             }
             .navigationTitle("Bulletin")
             .navigationBarTitleDisplayMode(.inline)
+            .withLogoutButton()
             .onAppear {
                 // Update usage when view appears to show current values
                 updateUsage()

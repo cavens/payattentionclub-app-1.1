@@ -1,6 +1,8 @@
 import SwiftUI
 import DeviceActivity
 import FamilyControls
+import Stripe
+import StripePaymentSheet
 
 @main
 struct payattentionclub_app_1_1App: App {
@@ -9,6 +11,10 @@ struct payattentionclub_app_1_1App: App {
         NSLog("MARKERS App: 🚀🚀🚀 App init() called - NEW CODE IS RUNNING")
         print("MARKERS App: 🚀🚀🚀 App init() called - NEW CODE IS RUNNING")
         fflush(stdout)
+        
+        // Initialize Stripe SDK with publishable key
+        StripeAPI.defaultPublishableKey = StripeConfig.publishableKey
+        NSLog("STRIPE App: Stripe SDK initialized with publishable key: \(StripeConfig.publishableKey.prefix(20))...")
     }
     
     @StateObject private var model = AppModel()

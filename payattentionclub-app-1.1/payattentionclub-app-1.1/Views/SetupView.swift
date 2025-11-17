@@ -186,13 +186,13 @@ struct SetupView: View {
                                     .padding(.trailing, 8)
                             }
                             Text(isAuthenticating ? "Signing in..." : "Commit")
-                                .font(.headline)
-                                .foregroundColor(.white)
+                            .font(.headline)
+                            .foregroundColor(.white)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding()
+                            .frame(maxWidth: .infinity)
+                            .padding()
                         .background(isAuthenticating ? Color.gray : Color.pink)
-                        .cornerRadius(12)
+                            .cornerRadius(12)
                     }
                     .disabled(isAuthenticating)
                     .padding(.horizontal)
@@ -307,7 +307,7 @@ struct SetupView: View {
     }
     
     private func navigateToNextScreen() async {
-        // Check if ScreenTime access is already granted
+        // Navigate to next screen based on ScreenTime authorization status
         let authorizationCenter = AuthorizationCenter.shared
         let status = authorizationCenter.authorizationStatus
         NSLog("MARKERS SetupView: Authorization status: %@", String(describing: status))
@@ -319,13 +319,17 @@ struct SetupView: View {
             NSLog("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
             print("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
             fflush(stdout)
-            model.navigate(.authorization)
+            await MainActor.run {
+                model.navigate(.authorization)
+            }
         } else {
             // Need to request ScreenTime access
             NSLog("MARKERS SetupView: ScreenTime not approved, showing access screen")
             print("MARKERS SetupView: ScreenTime not approved, showing access screen")
             fflush(stdout)
-            model.navigate(.screenTimeAccess)
+            await MainActor.run {
+                model.navigate(.screenTimeAccess)
+            }
         }
     }
 }

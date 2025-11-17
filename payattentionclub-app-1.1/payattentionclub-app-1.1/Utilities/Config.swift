@@ -18,3 +18,17 @@ struct SupabaseConfig {
     #endif
 }
 
+/// Configuration for Stripe payment processing
+struct StripeConfig {
+    // TODO: Replace with your Stripe publishable key
+    // Get this from Stripe Dashboard → Developers → API Keys → Publishable key
+    // Test mode key starts with pk_test_, production starts with pk_live_
+    static let publishableKey = "pk_test_51SPVFLQcfZnqDqya4lgxkORQJQv9RAEeDfyPCs7ETZokdO8fe5k3HI84Gfpb2tpKRig3dcoBSPYVzKMpFXp048g400CCNcLahR" // Replace with actual key
+    
+    #if DEBUG
+    static let environment = "test"
+    #else
+    static let environment = "production"
+    #endif
+}
+

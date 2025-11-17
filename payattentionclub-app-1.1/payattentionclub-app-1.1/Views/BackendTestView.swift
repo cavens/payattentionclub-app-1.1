@@ -70,6 +70,7 @@ struct BackendTestView: View {
             }
             .padding()
             .navigationTitle("Backend Test")
+            .withLogoutButton()
         }
     }
     

@@ -16,16 +16,16 @@ struct CountdownView: View {
                     .font(.system(size: 32, weight: .bold, design: .monospaced))
                 TimeUnit(value: components.minutes, label: "M")
                 Text(":")
-                    .font(.system(size: 32, weight: .bold, design: .monospaced))
+                .font(.system(size: 32, weight: .bold, design: .monospaced))
                 TimeUnit(value: components.seconds, label: "S")
             }
-            .onChange(of: scenePhase) { newPhase in
-                if newPhase == .active {
-                    // one-shot resync: nudge model so we re-render immediately
-                    // (TimelineView will tick anyway, this just snaps after resume)
-                    model.resync()
+                .onChange(of: scenePhase) { newPhase in
+                    if newPhase == .active {
+                        // one-shot resync: nudge model so we re-render immediately
+                        // (TimelineView will tick anyway, this just snaps after resume)
+                        model.resync()
+                    }
                 }
-            }
         }
         // Optional: also listen to model.nowSnapshot to trigger an immediate refresh
         // in case TimelineView coalesces; usually not necessary, but harmless:

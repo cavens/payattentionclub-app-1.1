@@ -1,6 +1,7 @@
 import Foundation
 import Supabase
 import Auth
+import FamilyControls
 
 // MARK: - Local Storage Implementation
 
@@ -31,6 +32,65 @@ private final class UserDefaultsLocalStorage: AuthLocalStorage, @unchecked Senda
 
 struct EmptyBody: Encodable, Sendable {}
 
+struct AppsToLimit: Codable, Sendable {
+    let appBundleIds: [String]
+    let categories: [String]
+    
+    enum CodingKeys: String, CodingKey {
+        case appBundleIds = "app_bundle_ids"
+        case categories
+    }
+}
+
+struct CreateCommitmentParams: Encodable, Sendable {
+    let weekStartDate: String  // ISO date string (YYYY-MM-DD)
+    let limitMinutes: Int
+    let penaltyPerMinuteCents: Int
+    let appsToLimit: AppsToLimit
+    
+    enum CodingKeys: String, CodingKey {
+        // Backend RPC function expects parameters with p_ prefix
+        case weekStartDate = "p_week_start_date"
+        case limitMinutes = "p_limit_minutes"
+        case penaltyPerMinuteCents = "p_penalty_per_minute_cents"
+        case appsToLimit = "p_apps_to_limit"
+    }
+    
+    // Explicitly mark encoding as nonisolated to avoid MainActor inference
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(weekStartDate, forKey: .weekStartDate)
+        try container.encode(limitMinutes, forKey: .limitMinutes)
+        try container.encode(penaltyPerMinuteCents, forKey: .penaltyPerMinuteCents)
+        try container.encode(appsToLimit, forKey: .appsToLimit)
+    }
+}
+
+struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
+    /// The deadline date (next Monday before noon) - when the commitment ends
+    /// Note: The commitment actually starts when the user commits (current_date in backend)
+    let weekStartDate: String  // Kept as weekStartDate to match Edge Function API
+    let limitMinutes: Int
+    let penaltyPerMinuteCents: Int
+    let appsToLimit: AppsToLimit
+    
+    // Explicitly implement encoding to ensure nonisolated conformance
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(weekStartDate, forKey: .weekStartDate)
+        try container.encode(limitMinutes, forKey: .limitMinutes)
+        try container.encode(penaltyPerMinuteCents, forKey: .penaltyPerMinuteCents)
+        try container.encode(appsToLimit, forKey: .appsToLimit)
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case weekStartDate
+        case limitMinutes
+        case penaltyPerMinuteCents
+        case appsToLimit
+    }
+}
+
 // MARK: - Response Models
 
 struct BillingStatusResponse: Codable {
@@ -44,6 +104,59 @@ struct BillingStatusResponse: Codable {
         case needsSetupIntent = "needs_setup_intent"
         case setupIntentClientSecret = "setup_intent_client_secret"
         case stripeCustomerId = "stripe_customer_id"
+    }
+    
+    // Custom decoder to handle missing fields gracefully
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Try to decode fields, use defaults if missing
+        hasPaymentMethod = try container.decodeIfPresent(Bool.self, forKey: .hasPaymentMethod) ?? false
+        needsSetupIntent = try container.decodeIfPresent(Bool.self, forKey: .needsSetupIntent) ?? false
+        setupIntentClientSecret = try container.decodeIfPresent(String.self, forKey: .setupIntentClientSecret)
+        stripeCustomerId = try container.decodeIfPresent(String.self, forKey: .stripeCustomerId)
+    }
+}
+
+struct ConfirmSetupIntentResponse: Codable, Sendable {
+    let success: Bool
+    let setupIntentId: String?
+    let paymentMethodId: String?
+    let alreadyConfirmed: Bool?
+}
+
+struct CommitmentResponse: Codable, Sendable {
+    let commitmentId: String
+    /// The date when the commitment actually started (when user committed)
+    /// Maps to `week_start_date` column in database (legacy naming)
+    let startDate: String
+    /// The deadline when the commitment ends (next Monday before noon)
+    /// Maps to `week_end_date` column in database (legacy naming)
+    let deadlineDate: String
+    let status: String
+    let maxChargeCents: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case commitmentId = "id"  // RPC function returns 'id' from commitments table
+        case startDate = "week_start_date"  // Database column name (legacy)
+        case deadlineDate = "week_end_date"  // Database column name (legacy)
+        case status
+        case maxChargeCents = "max_charge_cents"
+    }
+    
+    // Explicit nonisolated decoder to avoid MainActor isolation issues in Swift 6
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Try to decode as UUID first (PostgreSQL UUID type), then convert to String
+        if let uuid = try? container.decode(UUID.self, forKey: .commitmentId) {
+            commitmentId = uuid.uuidString
+        } else {
+            commitmentId = try container.decode(String.self, forKey: .commitmentId)
+        }
+        startDate = try container.decode(String.self, forKey: .startDate)
+        deadlineDate = try container.decode(String.self, forKey: .deadlineDate)
+        status = try container.decode(String.self, forKey: .status)
+        maxChargeCents = try container.decode(Int.self, forKey: .maxChargeCents)
     }
 }
 
@@ -72,6 +185,19 @@ enum BackendError: LocalizedError {
 // MARK: - Backend Client
 
 /// Client for interacting with PAC backend (Supabase)
+/// 
+/// Supabase Function Names Reference:
+/// RPC Functions:
+///   - rpc_create_commitment
+///   - rpc_report_usage
+///   - rpc_update_monitoring_status
+///   - rpc_get_week_status
+///   - call_weekly_close
+/// Edge Functions:
+///   - billing-status
+///   - weekly-close
+///   - stripe-webhook
+///   - admin-close-week-now
 class BackendClient {
     static let shared = BackendClient()
     
@@ -160,14 +286,322 @@ class BackendClient {
             throw BackendError.notAuthenticated
         }
         
-        let response: BillingStatusResponse = try await supabase.functions.invoke(
-            "billing-status",
-            options: FunctionInvokeOptions(
-                body: EmptyBody()
+        NSLog("BILLING BackendClient: Calling billing-status Edge Function...")
+        
+        do {
+            // Note: supabase.functions.invoke() directly decodes, so we can't easily see raw JSON
+            // But the custom decoder will handle missing fields gracefully
+            let response: BillingStatusResponse = try await supabase.functions.invoke(
+                "billing-status",
+                options: FunctionInvokeOptions(
+                    body: EmptyBody()
+                )
             )
+            
+            NSLog("BILLING BackendClient: ✅ Successfully decoded BillingStatusResponse")
+            NSLog("BILLING BackendClient: hasPaymentMethod: \(response.hasPaymentMethod) (may be default false if missing)")
+            NSLog("BILLING BackendClient: needsSetupIntent: \(response.needsSetupIntent) (may be default false if missing)")
+            NSLog("BILLING BackendClient: setupIntentClientSecret: \(response.setupIntentClientSecret ?? "nil")")
+            NSLog("BILLING BackendClient: stripeCustomerId: \(response.stripeCustomerId ?? "nil")")
+            
+            return response
+        } catch {
+            NSLog("BILLING BackendClient: ❌ Failed to decode BillingStatusResponse: \(error)")
+            if let decodingError = error as? DecodingError {
+                switch decodingError {
+                case .keyNotFound(let key, let context):
+                    NSLog("BILLING BackendClient: Missing key: \(key.stringValue)")
+                    NSLog("BILLING BackendClient: Context: \(context.debugDescription)")
+                case .typeMismatch(let type, let context):
+                    NSLog("BILLING BackendClient: Type mismatch: \(type)")
+                    NSLog("BILLING BackendClient: Context: \(context.debugDescription)")
+                case .valueNotFound(let type, let context):
+                    NSLog("BILLING BackendClient: Value not found: \(type)")
+                    NSLog("BILLING BackendClient: Context: \(context.debugDescription)")
+                case .dataCorrupted(let context):
+                    NSLog("BILLING BackendClient: Data corrupted: \(context.debugDescription)")
+                @unknown default:
+                    NSLog("BILLING BackendClient: Unknown decoding error: \(decodingError)")
+                }
+            }
+            throw error
+        }
+    }
+    
+    /// 1.5. Confirm SetupIntent with Apple Pay PaymentMethod
+    /// Calls: rapid-service Edge Function (Supabase auto-renamed from confirm-setup-intent)
+    /// - Parameters:
+    ///   - clientSecret: The SetupIntent client secret
+    ///   - paymentMethodId: Stripe PaymentMethod ID (created from Apple Pay token)
+    /// - Returns: `true` if confirmation successful
+    /// - Throws: BackendError if confirmation fails
+    nonisolated func confirmSetupIntentWithApplePay(
+        clientSecret: String,
+        paymentMethodId: String
+    ) async throws -> Bool {
+        // Check authentication first
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
+        
+        NSLog("APPLEPAY BackendClient: Confirming SetupIntent with PaymentMethod ID: \(paymentMethodId)")
+        
+        struct ConfirmSetupIntentBody: Encodable, Sendable {
+            let clientSecret: String
+            let paymentMethodId: String
+        }
+        
+        let requestBody = ConfirmSetupIntentBody(
+            clientSecret: clientSecret,
+            paymentMethodId: paymentMethodId
         )
         
-        return response
+        return try await Task.detached(priority: .userInitiated) { [supabase] in
+            do {
+                // Call Edge Function to confirm SetupIntent
+                // Note: Function name is "rapid-service" (Supabase auto-renamed it)
+                let response: ConfirmSetupIntentResponse = try await supabase.functions.invoke(
+                    "rapid-service",
+                    options: FunctionInvokeOptions(
+                        body: requestBody
+                    )
+                )
+                
+                NSLog("APPLEPAY BackendClient: ✅ SetupIntent confirmation result: \(response.success)")
+                return response.success
+            } catch let error as FunctionsError {
+                NSLog("APPLEPAY BackendClient: ❌ Edge Function call failed: \(error)")
+                
+                // Extract detailed error message from httpError
+                var errorMessage = error.localizedDescription
+                let mirror = Mirror(reflecting: error)
+                for child in mirror.children {
+                    if child.label == "httpError" {
+                        let httpErrorMirror = Mirror(reflecting: child.value)
+                        var httpErrorChildren = Array(httpErrorMirror.children)
+                        for (index, httpChild) in httpErrorChildren.enumerated() {
+                            if let data = httpChild.value as? Data {
+                                NSLog("APPLEPAY BackendClient: Found error Data at index \(index), size: \(data.count) bytes")
+                                if let errorString = String(data: data, encoding: .utf8) {
+                                    NSLog("APPLEPAY BackendClient: Error response body: \(errorString)")
+                                    // Try to parse as JSON
+                                    if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                        if let message = errorJson["error"] as? String {
+                                            errorMessage = message
+                                        } else if let details = errorJson["details"] as? String {
+                                            errorMessage = details
+                                        }
+                                        // Log full error details
+                                        if let detailsJson = errorJson["details"] as? String,
+                                           let detailsData = detailsJson.data(using: .utf8),
+                                           let detailsDict = try? JSONSerialization.jsonObject(with: detailsData) as? [String: Any] {
+                                            NSLog("APPLEPAY BackendClient: Stripe error details: \(detailsDict)")
+                                        }
+                                    } else {
+                                        errorMessage = errorString
+                                    }
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                throw BackendError.serverError("Failed to confirm payment setup: \(errorMessage)")
+            } catch {
+                NSLog("APPLEPAY BackendClient: ❌ Unexpected error: \(error)")
+                throw BackendError.serverError("Failed to confirm payment setup: \(error.localizedDescription)")
+            }
+        }.value
+    }
+    
+    /// 2. Create a commitment
+    /// Calls: Edge Function which calls rpc_create_commitment RPC function
+    /// - Parameters:
+    ///   - weekStartDate: The deadline date (next Monday before noon) when the commitment ends
+    ///                    Note: The commitment actually starts NOW (when user commits), not on this date
+    ///   - limitMinutes: Daily time limit in minutes
+    ///   - penaltyPerMinuteCents: Penalty per minute in cents (e.g., 10 = $0.10)
+    ///   - selectedApps: FamilyActivitySelection containing apps and categories to limit
+    /// - Returns: CommitmentResponse with commitment details
+    /// - Throws: BackendError.notAuthenticated if user is not signed in
+    nonisolated func createCommitment(
+        weekStartDate: Date,  // Actually the deadline, not the start date
+        limitMinutes: Int,
+        penaltyPerMinuteCents: Int,
+        selectedApps: FamilyActivitySelection
+    ) async throws -> CommitmentResponse {
+        // Check authentication first
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
+        
+        // Format date as ISO string (YYYY-MM-DD)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(identifier: "America/New_York") // EST
+        let weekStartDateString = dateFormatter.string(from: weekStartDate)
+        
+        // Call Edge Function instead of RPC to avoid Supabase SDK auto-decoding issues
+        // The Edge Function calls the RPC function and returns JSON properly
+        let task = Task.detached(priority: .userInitiated) { [supabase, weekStartDateString, limitMinutes, penaltyPerMinuteCents] in
+            // Create AppsToLimit inside detached task (nonisolated)
+            // Backend expects apps_to_limit as JSONB object with app_bundle_ids and categories arrays
+            let appsToLimit = AppsToLimit(
+                appBundleIds: [], // Cannot extract bundle IDs from opaque tokens
+                categories: []    // Cannot extract category identifiers from opaque tokens
+            )
+            
+            // Create request body for Edge Function
+            let requestBody = CreateCommitmentEdgeFunctionBody(
+                weekStartDate: weekStartDateString,
+                limitMinutes: limitMinutes,
+                penaltyPerMinuteCents: penaltyPerMinuteCents,
+                appsToLimit: appsToLimit
+            )
+            
+            // Log the params being sent for debugging
+            // Encoding happens in nonisolated context (Task.detached)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let paramsData = try? encoder.encode(requestBody)
+            if let paramsData = paramsData,
+               let paramsString = String(data: paramsData, encoding: .utf8) {
+                NSLog("COMMITMENT BackendClient: Calling Edge Function with params: \(paramsString)")
+            }
+            
+            // Call Edge Function via Functions API
+            // Note: Function name is "super-service" (Supabase auto-renamed it)
+            do {
+                // Try to invoke and decode directly
+                // requestBody is created in nonisolated context (Task.detached)
+                let response: CommitmentResponse = try await supabase.functions.invoke(
+                    "super-service",
+                    options: FunctionInvokeOptions(
+                        body: requestBody
+                    )
+                )
+                
+                NSLog("COMMITMENT BackendClient: ✅ Successfully decoded CommitmentResponse from Edge Function")
+                return response
+            } catch let error as FunctionsError {
+                NSLog("COMMITMENT BackendClient: ❌ Edge Function call failed: \(error)")
+                NSLog("COMMITMENT BackendClient: FunctionsError description: \(error.localizedDescription)")
+                
+                // Extract error message from httpError property
+                var errorMessage = error.localizedDescription
+                let mirror = Mirror(reflecting: error)
+                for child in mirror.children {
+                    if child.label == "httpError" {
+                        NSLog("COMMITMENT BackendClient: Found httpError property")
+                        // httpError is a tuple (code: Int, data: Data?)
+                        let httpErrorMirror = Mirror(reflecting: child.value)
+                        let httpErrorChildren = Array(httpErrorMirror.children)
+                        NSLog("COMMITMENT BackendClient: httpError has \(httpErrorChildren.count) children")
+                        // Try to find the data element
+                        for (index, httpChild) in httpErrorChildren.enumerated() {
+                            NSLog("COMMITMENT BackendClient: httpError[\(index)]: label=\(httpChild.label ?? "nil"), type=\(type(of: httpChild.value))")
+                            if let data = httpChild.value as? Data {
+                                NSLog("COMMITMENT BackendClient: Found Data at index \(index), size: \(data.count) bytes")
+                                if let errorString = String(data: data, encoding: .utf8) {
+                                    NSLog("COMMITMENT BackendClient: Error response body: \(errorString)")
+                                    // Try to parse as JSON
+                                    if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                                       let message = errorJson["error"] as? String {
+                                        errorMessage = message
+                                    } else {
+                                        errorMessage = errorString
+                                    }
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                throw BackendError.serverError("Edge Function error: \(errorMessage)")
+            } catch {
+                NSLog("COMMITMENT BackendClient: ❌ Unexpected error: \(error)")
+                NSLog("COMMITMENT BackendClient: Error type: \(type(of: error))")
+                throw BackendError.serverError("Edge Function call failed: \(error.localizedDescription)")
+            }
+        }
+        return try await task.value
+    }
+    
+    /// 3. Report daily usage
+    /// Calls: RPC function rpc_report_usage (or Edge Function if needed)
+    /// - Parameters:
+    ///   - date: The date for this usage report (typically today)
+    ///   - weekStartDate: The week start date (deadline) for the commitment
+    ///   - usedMinutes: Total minutes used today (currentUsageSeconds - baselineUsageSeconds) / 60
+    /// - Returns: UsageReportResponse with daily penalty, weekly total, and pool total
+    /// - Throws: BackendError if reporting fails
+    nonisolated func reportUsage(
+        date: Date,
+        weekStartDate: Date,
+        usedMinutes: Int
+    ) async throws -> UsageReportResponse {
+        // Check authentication first
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
+        
+        NSLog("USAGE BackendClient: Reporting usage - date: \(date), weekStartDate: \(weekStartDate), usedMinutes: \(usedMinutes)")
+        
+        // Format dates as ISO strings (YYYY-MM-DD)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(identifier: "America/New_York") // EST
+        let dateString = dateFormatter.string(from: date)
+        let weekStartDateString = dateFormatter.string(from: weekStartDate)
+        
+        return try await Task.detached(priority: .userInitiated) { [supabase, dateString, weekStartDateString, usedMinutes] in
+            // For now, we'll call RPC directly
+            // If we encounter decoding issues, we can switch to Edge Function like createCommitment
+            struct ReportUsageParams: Encodable, Sendable {
+                let p_date: String
+                let p_week_start_date: String
+                let p_used_minutes: Int
+            }
+            
+            let params = ReportUsageParams(
+                p_date: dateString,
+                p_week_start_date: weekStartDateString,
+                p_used_minutes: usedMinutes
+            )
+            
+            do {
+                let response: UsageReportResponse = try await supabase.rpc("rpc_report_usage", params: params)
+                NSLog("USAGE BackendClient: ✅ Successfully reported usage")
+                return response
+            } catch {
+                NSLog("USAGE BackendClient: ❌ Failed to report usage: \(error)")
+                throw BackendError.serverError("Failed to report usage: \(error.localizedDescription)")
+            }
+        }.value
+    }
+}
+
+// MARK: - Usage Report Response Model
+
+struct UsageReportResponse: Codable, Sendable {
+    let date: String
+    let limitMinutes: Int
+    let usedMinutes: Int
+    let exceededMinutes: Int
+    let penaltyCents: Int
+    let userWeekTotalCents: Int
+    let poolTotalCents: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case date
+        case limitMinutes = "limit_minutes"
+        case usedMinutes = "used_minutes"
+        case exceededMinutes = "exceeded_minutes"
+        case penaltyCents = "penalty_cents"
+        case userWeekTotalCents = "user_week_total_cents"
+        case poolTotalCents = "pool_total_cents"
     }
 }
 

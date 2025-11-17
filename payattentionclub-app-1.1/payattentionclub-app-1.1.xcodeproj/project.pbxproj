@@ -13,6 +13,8 @@
 		CD43B06C2EC405B900BCDBB9 /* FamilyControls.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD43B06B2EC405B900BCDBB9 /* FamilyControls.framework */; };
 		CD43B15C2EC7C75900BCDBB9 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B15B2EC7C75900BCDBB9 /* Auth */; };
 		CD43B15E2EC7C75900BCDBB9 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B15D2EC7C75900BCDBB9 /* Supabase */; };
+		CD43B1C32EC9081D00BCDBB9 /* StripePaymentSheet in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B1C22EC9081D00BCDBB9 /* StripePaymentSheet */; };
+		CD43B1C72EC912EE00BCDBB9 /* Stripe in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B1C62EC912EE00BCDBB9 /* Stripe */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +83,8 @@
 				CD43B06C2EC405B900BCDBB9 /* FamilyControls.framework in Frameworks */,
 				CD43B06A2EC405B300BCDBB9 /* DeviceActivity.framework in Frameworks */,
 				CD43B15C2EC7C75900BCDBB9 /* Auth in Frameworks */,
+				CD43B1C32EC9081D00BCDBB9 /* StripePaymentSheet in Frameworks */,
+				CD43B1C72EC912EE00BCDBB9 /* Stripe in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -147,6 +151,8 @@
 			packageProductDependencies = (
 				CD43B15B2EC7C75900BCDBB9 /* Auth */,
 				CD43B15D2EC7C75900BCDBB9 /* Supabase */,
+				CD43B1C22EC9081D00BCDBB9 /* StripePaymentSheet */,
+				CD43B1C62EC912EE00BCDBB9 /* Stripe */,
 			);
 			productName = "payattentionclub-app-1.1";
 			productReference = CD43B0462EC4044A00BCDBB9 /* payattentionclub-app-1.1.app */;
@@ -204,6 +210,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				CD43B15A2EC7C75900BCDBB9 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				CD43B1C12EC9081D00BCDBB9 /* XCRemoteSwiftPackageReference "stripe-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CD43B0472EC4044A00BCDBB9 /* Products */;
@@ -386,6 +393,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "payattentionclub-app-1.1/payattentionclub-app-1.1.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = WV7L7Q728Z;
@@ -404,6 +412,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.payattentionclub.payattentionclub-app-1-1";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -420,6 +429,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "payattentionclub-app-1.1/payattentionclub-app-1.1.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = WV7L7Q728Z;
@@ -438,6 +448,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.payattentionclub.payattentionclub-app-1-1";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -552,6 +563,14 @@
 				minimumVersion = 2.5.1;
 			};
 		};
+		CD43B1C12EC9081D00BCDBB9 /* XCRemoteSwiftPackageReference "stripe-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stripe/stripe-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 25.0.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -564,6 +583,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = CD43B15A2EC7C75900BCDBB9 /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		CD43B1C22EC9081D00BCDBB9 /* StripePaymentSheet */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CD43B1C12EC9081D00BCDBB9 /* XCRemoteSwiftPackageReference "stripe-ios" */;
+			productName = StripePaymentSheet;
+		};
+		CD43B1C62EC912EE00BCDBB9 /* Stripe */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CD43B1C12EC9081D00BCDBB9 /* XCRemoteSwiftPackageReference "stripe-ios" */;
+			productName = Stripe;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

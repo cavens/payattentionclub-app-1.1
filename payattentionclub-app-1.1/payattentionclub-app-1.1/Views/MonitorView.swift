@@ -4,6 +4,8 @@ import Foundation
 struct MonitorView: View {
     @EnvironmentObject var model: AppModel
     @State private var timer: Timer?
+    @State private var showingUsageReportAlert = false
+    @State private var usageReportMessage = ""
     
     var body: some View {
         NavigationView {
@@ -82,6 +84,23 @@ struct MonitorView: View {
                 
                 Spacer()
                 
+                // Test Usage Report Button (temporary for testing)
+                Button(action: {
+                    Task { @MainActor in
+                        await testReportUsage()
+                    }
+                }) {
+                    Text("🧪 Test Report Usage")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .cornerRadius(12)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+                
                 // Skip Button (temporary)
                 Button(action: {
                     // Clear expired monitoring state when skipping to deadline
@@ -126,12 +145,61 @@ struct MonitorView: View {
             }
             .navigationTitle("Monitor")
             .navigationBarTitleDisplayMode(.inline)
+            .withLogoutButton()
             .onAppear {
                 startTimer()
             }
             .onDisappear {
                 stopTimer()
             }
+            .alert("Usage Report Result", isPresented: $showingUsageReportAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(usageReportMessage)
+            }
+        }
+    }
+    
+    private func testReportUsage() async {
+        // Calculate used minutes
+        let usedSeconds = model.currentUsageSeconds - model.baselineUsageSeconds
+        let usedMinutes = max(0, Int(Double(usedSeconds) / 60.0))
+        
+        // Get today's date
+        let today = Date()
+        
+        // Get the deadline (weekStartDate) from the commitment
+        guard let deadline = UsageTracker.shared.getCommitmentDeadline() else {
+            usageReportMessage = "❌ No commitment deadline found. Please create a commitment first."
+            showingUsageReportAlert = true
+            return
+        }
+        
+        NSLog("USAGE MonitorView: Testing usage report - usedMinutes: \(usedMinutes), today: \(today), deadline: \(deadline)")
+        
+        do {
+            let response = try await BackendClient.shared.reportUsage(
+                date: today,
+                weekStartDate: deadline,
+                usedMinutes: usedMinutes
+            )
+            
+            usageReportMessage = """
+            ✅ Usage reported successfully!
+            
+            Date: \(response.date)
+            Used: \(response.usedMinutes) min
+            Limit: \(response.limitMinutes) min
+            Exceeded: \(response.exceededMinutes) min
+            Daily Penalty: $\(Double(response.penaltyCents) / 100.0)
+            Your Week Total: $\(Double(response.userWeekTotalCents) / 100.0)
+            Pool Total: $\(Double(response.poolTotalCents) / 100.0)
+            """
+            showingUsageReportAlert = true
+        } catch {
+            NSLog("USAGE MonitorView: ❌ Failed to report usage: \(error)")
+            usageReportMessage = "❌ Failed to report usage: \(error.localizedDescription)"
+            showingUsageReportAlert = true
         }
     }
     
