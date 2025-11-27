@@ -18,3 +18,5 @@ WHERE proname = 'call_weekly_close'
   AND pronamespace = 'public'::regnamespace;
 
 
+
+

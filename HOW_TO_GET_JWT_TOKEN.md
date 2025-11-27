@@ -208,3 +208,5 @@ In your app, tokens are stored in:
 The Supabase client automatically refreshes tokens when they expire (if refresh token is valid).
 
 
+
+

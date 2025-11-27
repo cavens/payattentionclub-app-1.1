@@ -42,3 +42,5 @@ echo "Downloaded functions:"
 ls -la supabase/functions/ 2>/dev/null || echo "No functions directory found"
 
 
+
+

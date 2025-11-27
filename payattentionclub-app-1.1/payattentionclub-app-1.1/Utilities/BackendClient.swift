@@ -123,6 +123,22 @@ struct ConfirmSetupIntentResponse: Codable, Sendable {
     let setupIntentId: String?
     let paymentMethodId: String?
     let alreadyConfirmed: Bool?
+    
+    // Explicit nonisolated decoder to avoid MainActor isolation issues in Swift 6
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        success = try container.decode(Bool.self, forKey: .success)
+        setupIntentId = try container.decodeIfPresent(String.self, forKey: .setupIntentId)
+        paymentMethodId = try container.decodeIfPresent(String.self, forKey: .paymentMethodId)
+        alreadyConfirmed = try container.decodeIfPresent(Bool.self, forKey: .alreadyConfirmed)
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case success
+        case setupIntentId
+        case paymentMethodId
+        case alreadyConfirmed
+    }
 }
 
 struct CommitmentResponse: Codable, Sendable {
@@ -281,8 +297,22 @@ class BackendClient {
     /// Calls: billing-status Edge Function
     /// - Throws: BackendError.notAuthenticated if user is not signed in
     func checkBillingStatus() async throws -> BillingStatusResponse {
-        // Check authentication first
+        // Check authentication first and refresh session if needed
         guard await isAuthenticated else {
+            NSLog("BILLING BackendClient: ❌ Not authenticated")
+            throw BackendError.notAuthenticated
+        }
+        
+        // Explicitly refresh session to ensure we have a valid token for Edge Function call
+        do {
+            let session = try await supabase.auth.session
+            NSLog("BILLING BackendClient: Session exists, access token length: \(session.accessToken.count)")
+            // Always refresh to ensure we have a fresh token (safe even if not expired)
+            NSLog("BILLING BackendClient: Refreshing session to ensure valid token...")
+            _ = try await supabase.auth.refreshSession()
+            NSLog("BILLING BackendClient: ✅ Session refreshed")
+        } catch {
+            NSLog("BILLING BackendClient: ❌ Failed to get/refresh session: \(error)")
             throw BackendError.notAuthenticated
         }
         
@@ -305,6 +335,35 @@ class BackendClient {
             NSLog("BILLING BackendClient: stripeCustomerId: \(response.stripeCustomerId ?? "nil")")
             
             return response
+        } catch let error as FunctionsError {
+            NSLog("BILLING BackendClient: ❌ Edge Function call failed: \(error)")
+            // Extract detailed error message from httpError
+            var errorMessage = error.localizedDescription
+            let mirror = Mirror(reflecting: error)
+            for child in mirror.children {
+                if child.label == "httpError" {
+                    let httpErrorMirror = Mirror(reflecting: child.value)
+                    let httpErrorChildren = Array(httpErrorMirror.children)
+                    for (index, httpChild) in httpErrorChildren.enumerated() {
+                        if let data = httpChild.value as? Data {
+                            NSLog("BILLING BackendClient: Found error Data at index \(index), size: \(data.count) bytes")
+                            if let errorString = String(data: data, encoding: .utf8) {
+                                NSLog("BILLING BackendClient: Error response body: \(errorString)")
+                                // Try to parse as JSON
+                                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                    if let message = errorJson["error"] as? String {
+                                        errorMessage = message
+                                    }
+                                } else {
+                                    errorMessage = errorString
+                                }
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+            throw BackendError.serverError("Failed to check billing status: \(errorMessage)")
         } catch {
             NSLog("BILLING BackendClient: ❌ Failed to decode BillingStatusResponse: \(error)")
             if let decodingError = error as? DecodingError {
@@ -378,7 +437,7 @@ class BackendClient {
                 for child in mirror.children {
                     if child.label == "httpError" {
                         let httpErrorMirror = Mirror(reflecting: child.value)
-                        var httpErrorChildren = Array(httpErrorMirror.children)
+                        let httpErrorChildren = Array(httpErrorMirror.children)
                         for (index, httpChild) in httpErrorChildren.enumerated() {
                             if let data = httpChild.value as? Data {
                                 NSLog("APPLEPAY BackendClient: Found error Data at index \(index), size: \(data.count) bytes")
@@ -556,7 +615,7 @@ class BackendClient {
         let dateString = dateFormatter.string(from: date)
         let weekStartDateString = dateFormatter.string(from: weekStartDate)
         
-        return try await Task.detached(priority: .userInitiated) { [supabase, dateString, weekStartDateString, usedMinutes] in
+        let task = Task.detached(priority: .userInitiated) { [supabase, dateString, weekStartDateString, usedMinutes] in
             // For now, we'll call RPC directly
             // If we encounter decoding issues, we can switch to Edge Function like createCommitment
             struct ReportUsageParams: Encodable, Sendable {
@@ -572,14 +631,19 @@ class BackendClient {
             )
             
             do {
-                let response: UsageReportResponse = try await supabase.rpc("rpc_report_usage", params: params)
+                let response = try await supabase.rpc("rpc_report_usage", params: params).execute()
+                // PostgrestResponse has a .data property that contains the response data
+                let data = response.data
+                let decoder = JSONDecoder()
+                let usageReport: UsageReportResponse = try decoder.decode(UsageReportResponse.self, from: data)
                 NSLog("USAGE BackendClient: ✅ Successfully reported usage")
-                return response
+                return usageReport
             } catch {
                 NSLog("USAGE BackendClient: ❌ Failed to report usage: \(error)")
                 throw BackendError.serverError("Failed to report usage: \(error.localizedDescription)")
             }
-        }.value
+        }
+        return try await task.value
     }
 }
 
@@ -602,6 +666,18 @@ struct UsageReportResponse: Codable, Sendable {
         case penaltyCents = "penalty_cents"
         case userWeekTotalCents = "user_week_total_cents"
         case poolTotalCents = "pool_total_cents"
+    }
+    
+    // Explicit nonisolated decoder to avoid MainActor isolation issues in Swift 6
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decode(String.self, forKey: .date)
+        limitMinutes = try container.decode(Int.self, forKey: .limitMinutes)
+        usedMinutes = try container.decode(Int.self, forKey: .usedMinutes)
+        exceededMinutes = try container.decode(Int.self, forKey: .exceededMinutes)
+        penaltyCents = try container.decode(Int.self, forKey: .penaltyCents)
+        userWeekTotalCents = try container.decode(Int.self, forKey: .userWeekTotalCents)
+        poolTotalCents = try container.decode(Int.self, forKey: .poolTotalCents)
     }
 }
 

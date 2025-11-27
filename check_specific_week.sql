@@ -44,3 +44,5 @@ FROM public.weekly_pools
 WHERE week_start_date = '2025-11-17';
 
 
+
+

@@ -25,3 +25,5 @@ FROM cron.job
 WHERE command LIKE '%weekly-close%';
 
 
+
+

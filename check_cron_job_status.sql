@@ -18,3 +18,5 @@ WHERE jobname = 'pac_weekly_close_job';
 -- If active = true, the cron job exists and is enabled
 
 
+
+
