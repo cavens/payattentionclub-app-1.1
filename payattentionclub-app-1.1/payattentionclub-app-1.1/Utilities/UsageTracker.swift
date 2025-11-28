@@ -104,7 +104,42 @@ class UsageTracker {
         }
         userDefaults.removeObject(forKey: "monitoringSelectionSet")
         userDefaults.removeObject(forKey: "commitmentDeadline")
+        userDefaults.removeObject(forKey: "commitmentId")
         userDefaults.synchronize()
+    }
+    
+    // MARK: - Commitment ID Storage
+    
+    /// Store commitment ID when commitment is created
+    /// Used by extension to identify which commitment to report usage for
+    func storeCommitmentId(_ id: String) {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            NSLog("EXTENSION UsageTracker: ❌ Failed to access App Group for storing commitment ID")
+            return
+        }
+        userDefaults.set(id, forKey: "commitmentId")
+        userDefaults.synchronize()
+        NSLog("EXTENSION UsageTracker: ✅ Stored commitment ID: \(id)")
+    }
+    
+    /// Get commitment ID
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    /// Used by extension to identify which commitment to report usage for
+    nonisolated func getCommitmentId() -> String? {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return nil
+        }
+        return userDefaults.string(forKey: "commitmentId")
+    }
+    
+    /// Clear commitment ID (called when monitoring ends or commitment expires)
+    func clearCommitmentId() {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        userDefaults.removeObject(forKey: "commitmentId")
+        userDefaults.synchronize()
+        NSLog("EXTENSION UsageTracker: ✅ Cleared commitment ID")
     }
     
     /// Check if monitoring flag is set (without checking deadline)

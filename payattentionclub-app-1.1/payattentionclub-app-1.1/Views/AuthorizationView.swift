@@ -229,6 +229,9 @@ struct AuthorizationView: View {
             NSLog("LOCKIN AuthorizationView: commitmentId: \(commitmentResponse.commitmentId)")
             NSLog("LOCKIN AuthorizationView: maxChargeCents: \(commitmentResponse.maxChargeCents)")
             
+            // Store commitment ID in App Group for extension to use
+            UsageTracker.shared.storeCommitmentId(commitmentResponse.commitmentId)
+            
             // Step 3: Store baseline time (0 when "Lock in" is pressed)
         await MainActor.run {
             model.baselineUsageSeconds = 0

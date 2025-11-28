@@ -135,9 +135,9 @@ struct ConfirmSetupIntentResponse: Codable, Sendable {
     
     enum CodingKeys: String, CodingKey {
         case success
-        case setupIntentId
-        case paymentMethodId
-        case alreadyConfirmed
+        case setupIntentId = "setup_intent_id"
+        case paymentMethodId = "payment_method_id"
+        case alreadyConfirmed = "already_confirmed"
     }
 }
 
@@ -283,7 +283,33 @@ class BackendClient {
                 nonce: nonce
             )
         )
+        
+        // Store auth token in App Group for extension to use
+        await storeAuthTokenInAppGroup()
+        
         return session
+    }
+    
+    /// Store current auth token in App Group for extension to use
+    /// Called after successful authentication or session refresh
+    func storeAuthTokenInAppGroup() async {
+        do {
+            let session = try await supabase.auth.session
+            let accessToken = session.accessToken
+            
+            guard let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub.app") else {
+                NSLog("EXTENSION BackendClient: ❌ Failed to access App Group")
+                return
+            }
+            
+            userDefaults.set(accessToken, forKey: "supabaseAccessToken")
+            userDefaults.set(Date().timeIntervalSince1970, forKey: "supabaseAccessTokenTimestamp")
+            userDefaults.synchronize()
+            
+            NSLog("EXTENSION BackendClient: ✅ Stored auth token in App Group")
+        } catch {
+            NSLog("EXTENSION BackendClient: ❌ Failed to store auth token: \(error)")
+        }
     }
     
     /// Sign out the current user
@@ -297,22 +323,8 @@ class BackendClient {
     /// Calls: billing-status Edge Function
     /// - Throws: BackendError.notAuthenticated if user is not signed in
     func checkBillingStatus() async throws -> BillingStatusResponse {
-        // Check authentication first and refresh session if needed
+        // Check authentication first
         guard await isAuthenticated else {
-            NSLog("BILLING BackendClient: ❌ Not authenticated")
-            throw BackendError.notAuthenticated
-        }
-        
-        // Explicitly refresh session to ensure we have a valid token for Edge Function call
-        do {
-            let session = try await supabase.auth.session
-            NSLog("BILLING BackendClient: Session exists, access token length: \(session.accessToken.count)")
-            // Always refresh to ensure we have a fresh token (safe even if not expired)
-            NSLog("BILLING BackendClient: Refreshing session to ensure valid token...")
-            _ = try await supabase.auth.refreshSession()
-            NSLog("BILLING BackendClient: ✅ Session refreshed")
-        } catch {
-            NSLog("BILLING BackendClient: ❌ Failed to get/refresh session: \(error)")
             throw BackendError.notAuthenticated
         }
         
@@ -334,36 +346,10 @@ class BackendClient {
             NSLog("BILLING BackendClient: setupIntentClientSecret: \(response.setupIntentClientSecret ?? "nil")")
             NSLog("BILLING BackendClient: stripeCustomerId: \(response.stripeCustomerId ?? "nil")")
             
+            // Store auth token in App Group after successful API call (session might be refreshed)
+            await storeAuthTokenInAppGroup()
+            
             return response
-        } catch let error as FunctionsError {
-            NSLog("BILLING BackendClient: ❌ Edge Function call failed: \(error)")
-            // Extract detailed error message from httpError
-            var errorMessage = error.localizedDescription
-            let mirror = Mirror(reflecting: error)
-            for child in mirror.children {
-                if child.label == "httpError" {
-                    let httpErrorMirror = Mirror(reflecting: child.value)
-                    let httpErrorChildren = Array(httpErrorMirror.children)
-                    for (index, httpChild) in httpErrorChildren.enumerated() {
-                        if let data = httpChild.value as? Data {
-                            NSLog("BILLING BackendClient: Found error Data at index \(index), size: \(data.count) bytes")
-                            if let errorString = String(data: data, encoding: .utf8) {
-                                NSLog("BILLING BackendClient: Error response body: \(errorString)")
-                                // Try to parse as JSON
-                                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                                    if let message = errorJson["error"] as? String {
-                                        errorMessage = message
-                                    }
-                                } else {
-                                    errorMessage = errorString
-                                }
-                                break
-                            }
-                        }
-                    }
-                }
-            }
-            throw BackendError.serverError("Failed to check billing status: \(errorMessage)")
         } catch {
             NSLog("BILLING BackendClient: ❌ Failed to decode BillingStatusResponse: \(error)")
             if let decodingError = error as? DecodingError {
@@ -615,35 +601,37 @@ class BackendClient {
         let dateString = dateFormatter.string(from: date)
         let weekStartDateString = dateFormatter.string(from: weekStartDate)
         
-        let task = Task.detached(priority: .userInitiated) { [supabase, dateString, weekStartDateString, usedMinutes] in
-            // For now, we'll call RPC directly
-            // If we encounter decoding issues, we can switch to Edge Function like createCommitment
-            struct ReportUsageParams: Encodable, Sendable {
-                let p_date: String
-                let p_week_start_date: String
-                let p_used_minutes: Int
-            }
-            
-            let params = ReportUsageParams(
-                p_date: dateString,
-                p_week_start_date: weekStartDateString,
-                p_used_minutes: usedMinutes
-            )
-            
+        struct ReportUsageParams: Encodable, Sendable {
+            let p_date: String
+            let p_week_start_date: String
+            let p_used_minutes: Int
+        }
+        
+        let params = ReportUsageParams(
+            p_date: dateString,
+            p_week_start_date: weekStartDateString,
+            p_used_minutes: usedMinutes
+        )
+        
+        return try await Task.detached(priority: .userInitiated) { [supabase, params] in
             do {
+                // Call RPC and execute to get PostgrestResponse
                 let response = try await supabase.rpc("rpc_report_usage", params: params).execute()
-                // PostgrestResponse has a .data property that contains the response data
+                
+                // Extract data and decode manually
+                // response.data is Data (non-optional) when RPC call succeeds
                 let data = response.data
+                
                 let decoder = JSONDecoder()
-                let usageReport: UsageReportResponse = try decoder.decode(UsageReportResponse.self, from: data)
+                let usageResponse = try decoder.decode(UsageReportResponse.self, from: data)
+                
                 NSLog("USAGE BackendClient: ✅ Successfully reported usage")
-                return usageReport
+                return usageResponse
             } catch {
                 NSLog("USAGE BackendClient: ❌ Failed to report usage: \(error)")
                 throw BackendError.serverError("Failed to report usage: \(error.localizedDescription)")
             }
-        }
-        return try await task.value
+        }.value
     }
 }
 

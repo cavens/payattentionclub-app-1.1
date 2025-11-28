@@ -39,12 +39,11 @@ class StripePaymentManager {
         request.currencyCode = "USD"
         
         // For SetupIntent, we show the authorization amount (not charging, just authorizing)
-        // Apple Pay requires amounts to be rounded to 2 decimal places (cents)
-        // Round to 2 decimal places to avoid invalid amounts like 40.9195
+        // Round amount to 2 decimal places for USD (Apple Pay requirement)
         let roundedAmount = round(amount * 100) / 100.0
-        let amountDecimal = NSDecimalNumber(value: roundedAmount)
+        let amountInCents = NSDecimalNumber(value: roundedAmount)
         request.paymentSummaryItems = [
-            PKPaymentSummaryItem(label: "Pay Attention Club", amount: amountDecimal)
+            PKPaymentSummaryItem(label: "Pay Attention Club", amount: amountInCents)
         ]
         
         // Create payment authorization controller
