@@ -46,7 +46,37 @@ class UsageTracker {
         return userDefaults.double(forKey: "consumedMinutes")
     }
     
-    /// Get current time spent from the last threshold event
+    /// Get today's daily usage entry from App Group
+    /// Returns nil if no entry exists for today
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    nonisolated func getTodayUsageEntry() -> DailyUsageEntry? {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return nil
+        }
+        
+        // Get today's date string (YYYY-MM-DD format)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone.current
+        let today = dateFormatter.string(from: Date())
+        
+        // Read today's daily usage entry
+        let entryKey = "daily_usage_\(today)"
+        guard let data = userDefaults.data(forKey: entryKey) else {
+            return nil
+        }
+        
+        do {
+            let entry = try JSONDecoder().decode(DailyUsageEntry.self, from: data)
+            return entry
+        } catch {
+            NSLog("UsageTracker: ❌ Failed to decode today's daily usage entry: \(error)")
+            return nil
+        }
+    }
+    
+    /// Get current time spent from today's daily usage entry
+    /// Falls back to consumedMinutes for backward compatibility if no daily usage entry exists
     /// Uses smart threshold distribution: 1-min early, 5-min regular, 1-min final
     /// Max undercount: ≤5 minutes globally, ≤1 minute in early/final windows
     /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
@@ -55,11 +85,14 @@ class UsageTracker {
             return 0.0
         }
         
-        // Read consumed minutes from last threshold event (no synchronize() - not needed and can block)
-        let consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
+        // Try to read from today's daily usage entry first (new Phase 2 architecture)
+        if let todayEntry = getTodayUsageEntry() {
+            // Return total minutes from daily usage entry (already includes all threshold updates)
+            return todayEntry.totalMinutes * 60.0 // Convert to seconds
+        }
         
-        // Return consumed minutes directly (no simulation)
-        // With smart threshold distribution: max undercount ≤5 min (≤1 min in early/final windows)
+        // Fallback to consumedMinutes for backward compatibility (old architecture)
+        let consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
         return consumedMinutes * 60.0 // Convert to seconds
     }
     
