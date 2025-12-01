@@ -215,3 +215,4 @@ After running tests, we'll know:
 - ✅ If simple GET works → Focus on POST/RPC specifics
 - ❌ If simple GET fails → Focus on network/entitlements
 
+

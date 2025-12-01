@@ -153,50 +153,369 @@ func syncDailyUsage(_ entries: [DailyUsageEntry]) async throws -> SyncResponse
 
 ---
 
-### Phase 6: Backend Settlement Rules ✅ ADD
+### Phase 6: Authorization-Based Settlement Rules ✅ ADD
 
-**File:** `supabase/functions/weekly-close/index.ts`
+**Approach:** Authorization charge at commitment start + 24-hour grace period + email notification + retroactive settlement with refunds
 
-**Update logic:**
+**Core Principle:**
+- Authorization amount (worst-case) is calculated and held when commitment is created
+- User has 24 hours after week end date to sync data
+- Email notification sent at week end date reminding user to sync
+- If user doesn't sync within 24h → Authorization is charged
+- If user syncs later → Calculate actual penalty and refund difference (or charge additional)
 
-**Option A: Settlement Only When Synced (Strict/Fair)**
-- Only settle weeks where we have synced usage data
-- Missing weeks remain "pending" until sync
-- Retroactively apply penalties when data arrives
+---
 
-**Option B: No Sync = Worst Case (Punitive)**
-- If no sync by deadline: Assume max overuse
-- Charge maximum penalty
-- No adjustment when real data arrives
+#### 6.1 Database Schema Changes
 
-**Option C: Estimate Then Reconcile (Complex)**
-- Estimate missing usage (historical pattern or worst-case)
-- Settle based on estimate
-- Reconcile when real data arrives (adjust next week)
+**Add to `commitments` table:**
+```sql
+ALTER TABLE commitments ADD COLUMN IF NOT EXISTS authorization_amount_cents INTEGER;
+ALTER TABLE commitments ADD COLUMN IF NOT EXISTS authorization_charged_at TIMESTAMP;
+ALTER TABLE commitments ADD COLUMN IF NOT EXISTS authorization_payment_intent_id TEXT;
+ALTER TABLE commitments ADD COLUMN IF NOT EXISTS grace_period_ends_at TIMESTAMP;
+```
 
-**Recommendation:** Option B (worst-case) - Simple, clear, motivating
+**Add to `user_week_penalties` table:**
+```sql
+ALTER TABLE user_week_penalties ADD COLUMN IF NOT EXISTS authorization_amount_cents INTEGER;
+ALTER TABLE user_week_penalties ADD COLUMN IF NOT EXISTS actual_penalty_cents INTEGER;
+ALTER TABLE user_week_penalties ADD COLUMN IF NOT EXISTS refund_amount_cents INTEGER;
+ALTER TABLE user_week_penalties ADD COLUMN IF NOT EXISTS refund_payment_intent_id TEXT;
+ALTER TABLE user_week_penalties ADD COLUMN IF NOT EXISTS settlement_status TEXT; 
+-- Values: 'pending', 'authorization_charged', 'settled', 'refunded'
+```
 
-**Implementation:**
+**Add to `payments` table:**
+```sql
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_type TEXT; 
+-- Values: 'authorization', 'penalty', 'refund'
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS related_payment_intent_id TEXT; 
+-- For refunds, link to original charge
+```
+
+---
+
+#### 6.2 Authorization Hold Creation
+
+**File:** `BackendClient.createCommitment()` + Backend RPC function
+
+**Update `createCommitment` to:**
+- Calculate authorization amount (worst-case penalty)
+- Create Stripe PaymentIntent with `capture_method: 'manual'` (authorization hold)
+- Store `authorization_payment_intent_id` in commitment
+- Calculate `grace_period_ends_at` = `week_end_date + 24 hours`
+- Return authorization amount and PaymentIntent ID
+
+**Stripe Flow:**
 ```typescript
-// In weekly-close function
-for (const commitment of commitments) {
-  const usageData = await getDailyUsageForWeek(commitment);
+const paymentIntent = await stripe.paymentIntents.create({
+  amount: authorizationAmountCents,
+  currency: 'usd',
+  customer: stripeCustomerId,
+  capture_method: 'manual',  // Authorization hold (not captured yet)
+  description: `Authorization for commitment week ending ${weekEndDate}`,
+  metadata: {
+    commitment_id: commitmentId,
+    type: 'authorization',
+    week_end_date: weekEndDate
+  }
+});
+```
+
+---
+
+#### 6.3 Grace Period Logic
+
+**File:** `supabase/functions/charge-authorization-after-grace-period/index.ts` (NEW)
+
+**Purpose:** Charge authorization amount if user hasn't synced within 24 hours
+
+**Scheduled:** Hourly cron job
+
+**Logic:**
+```typescript
+// Find commitments where:
+// - grace_period_ends_at < NOW()
+// - authorization_charged_at IS NULL (not charged yet)
+// - No daily_usage entries exist for this week
+
+const expiredCommitments = await findExpiredGracePeriods();
+
+for (const commitment of expiredCommitments) {
+  const hasSynced = await checkIfSynced(commitment);
   
-  if (usageData.length === 0) {
-    // No sync received
-    if (settlementRule === 'worst-case') {
-      // Assume max overuse
-      await chargeMaxPenalty(commitment);
-    } else if (settlementRule === 'pending') {
-      // Skip settlement, wait for sync
-      await markAsPending(commitment);
-    }
-  } else {
-    // Normal settlement with real data
-    await calculateAndChargePenalty(commitment, usageData);
+  if (!hasSynced) {
+    // Charge the authorization
+    const paymentIntent = await stripe.paymentIntents.capture(
+      commitment.authorization_payment_intent_id
+    );
+    
+    await updateCommitment({
+      authorization_charged_at: NOW(),
+      status: 'authorization_charged'
+    });
+    
+    await createUserWeekPenalties({
+      authorization_amount_cents: commitment.authorization_amount_cents,
+      actual_penalty_cents: null,  // Not synced yet
+      settlement_status: 'authorization_charged'
+    });
   }
 }
 ```
+
+---
+
+#### 6.4 Email Notification System
+
+**File:** `supabase/functions/send-week-end-notification/index.ts` (NEW)
+
+**Purpose:** Send email at week end date reminding user to sync
+
+**Scheduled:** Hourly cron job
+
+**Email Template:**
+```
+Subject: "Your PayAttentionClub week ended - Check your results!"
+
+Hi [User Name],
+
+Your commitment week ending [Week End Date] has ended!
+
+📊 Check your results:
+- Attention Score: [Score]
+- Penalty Amount: [Amount]
+- Weekly Pool: [Pool Amount]
+
+⏰ Important: You have 24 hours to open the app and sync your data.
+After 24 hours, we'll charge the authorization amount.
+
+[Open App Button]
+
+Thanks,
+PayAttentionClub Team
+```
+
+**Logic:**
+```typescript
+// Find commitments where week_end_date = TODAY
+const endedCommitments = await findEndedCommitments();
+
+for (const commitment of endedCommitments) {
+  const hasSynced = await checkIfSynced(commitment);
+  
+  if (!hasSynced) {
+    await sendEmail({
+      to: user.email,
+      template: 'week_end_notification',
+      data: {
+        userName: user.name,
+        weekEndDate: commitment.week_end_date,
+        gracePeriodEndsAt: commitment.grace_period_ends_at
+      }
+    });
+  }
+}
+```
+
+**Email Service:** Supabase Edge Function + Resend/SendGrid/SES
+
+---
+
+#### 6.5 Late Sync Handling
+
+**File:** `rpc_sync_daily_usage.sql` (UPDATE)
+
+**New Logic After Sync:**
+1. Sync daily usage entries (existing)
+2. Check if this week's commitment has authorization charged
+3. Calculate actual penalty from synced data
+4. Compare actual penalty vs authorization amount
+5. If authorization was charged:
+   - If actual < authorization → Refund difference
+   - If actual > authorization → Charge additional amount
+6. Update `user_week_penalties` with actual penalty and refund info
+
+**Refund Logic:**
+```typescript
+if (authorizationCharged && actualPenalty < authorizationAmount) {
+  const refundAmount = authorizationAmount - actualPenalty;
+  
+  const refund = await stripe.refunds.create({
+    payment_intent: authorizationPaymentIntentId,
+    amount: refundAmount,  // Partial refund
+    reason: 'requested_by_customer',
+    metadata: {
+      commitment_id: commitmentId,
+      week_end_date: weekEndDate,
+      actual_penalty: actualPenalty,
+      authorization_amount: authorizationAmount
+    }
+  });
+  
+  await updateUserWeekPenalties({
+    actual_penalty_cents: actualPenalty,
+    refund_amount_cents: refundAmount,
+    refund_payment_intent_id: refund.id,
+    settlement_status: 'refunded'
+  });
+}
+```
+
+---
+
+#### 6.6 Weekly-Close Function Updates
+
+**File:** `supabase/functions/weekly-close/index.ts` (UPDATE)
+
+**Remove:** Option B code (no sync = worst case) - lines 101-167
+
+**Add:** Authorization vs actual penalty logic
+
+**New Logic:**
+```typescript
+for (const commitment of commitments) {
+  // Check if authorization was charged
+  if (commitment.authorization_charged_at) {
+    // Authorization was charged (user didn't sync in 24h)
+    const actualPenalty = await calculateActualPenalty(commitment);
+    
+    if (actualPenalty !== null) {
+      // User synced later - handle refund/additional charge
+      await handleLateSyncSettlement(commitment, actualPenalty);
+    } else {
+      // User never synced - keep authorization charge
+      await finalizeAuthorizationCharge(commitment);
+    }
+  } else {
+    // Authorization not charged (user synced within 24h)
+    const actualPenalty = await calculateActualPenalty(commitment);
+    await chargeActualPenalty(commitment, actualPenalty);
+  }
+}
+```
+
+---
+
+#### 6.7 Frontend Updates
+
+**File:** `Views/AuthorizationView.swift` (UPDATE)
+
+**Add Clear Messaging:**
+- "This amount will be held as authorization. If you don't sync within 24 hours after your week ends, this amount will be charged. If you sync, you'll only pay your actual penalty."
+- Show grace period end date
+- Show what happens if they sync vs don't sync
+
+**File:** `Views/SettlementStatusView.swift` (NEW)
+
+**Show Settlement Status:**
+- Authorization amount
+- Whether authorization was charged
+- Actual penalty (if synced)
+- Refund amount (if applicable)
+- Status: "Pending", "Authorization Charged", "Settled", "Refunded"
+
+**File:** Sync Flow (UPDATE)
+
+**After sync completes:**
+- Check if authorization was charged
+- If yes, show: "We've calculated your actual penalty. You'll receive a refund of $X.XX"
+- If no, show: "Your penalty has been calculated and charged."
+
+---
+
+#### 6.8 Scheduled Jobs (Cron)
+
+**Email Notification Job:**
+- Schedule: Every hour
+- Function: `send_week_end_notifications`
+- Logic: Find commitments where `week_end_date = TODAY` and send emails
+
+**Authorization Charge Job:**
+- Schedule: Every hour
+- Function: `charge_authorization_after_grace_period`
+- Logic: Find commitments where `grace_period_ends_at < NOW()` and `authorization_charged_at IS NULL`, then charge
+
+**Weekly-Close Job:**
+- Schedule: Every Monday at 12:00 EST (existing)
+- Function: `weekly-close`
+- Updates: Now handles authorization vs actual penalty logic
+
+---
+
+#### 6.9 Key Design Decisions
+
+**1. Authorization Hold vs Immediate Charge**
+- ✅ **Use Authorization Hold** (`capture_method: 'manual'`)
+- Hold funds, capture after 24h if no sync
+- No refund needed if user doesn't sync
+
+**2. User Syncs During Grace Period**
+- ✅ **Cancel authorization, charge actual penalty immediately**
+- If user syncs within 24h, cancel authorization hold and charge actual penalty
+
+**3. Partial Week Sync**
+- ✅ **Settle synced days, wait for rest**
+- Charge for synced days, wait for missing days
+
+**4. Multiple Weeks Pending**
+- ✅ **Settle all when user syncs (batch)**
+- When user syncs, settle all pending weeks at once
+
+**5. Email Timing**
+- ✅ **Send at `week_end_date + 1 hour`**
+- Give system time to process, then send notification
+
+---
+
+#### 6.10 Testing Scenarios
+
+**Scenario 1: User Syncs Within 24h (Happy Path)**
+1. User creates commitment → Authorization hold created
+2. Week ends → Email sent
+3. User opens app within 24h → Syncs data
+4. Authorization hold cancelled → Actual penalty charged
+5. ✅ User pays actual penalty only
+
+**Scenario 2: User Doesn't Sync (Authorization Charged)**
+1. User creates commitment → Authorization hold created
+2. Week ends → Email sent
+3. User doesn't open app → 24h passes
+4. Authorization hold captured → User charged authorization amount
+5. ✅ User pays authorization amount (worst-case)
+
+**Scenario 3: User Syncs Late (Refund)**
+1. Authorization charged after 24h
+2. User opens app 3 days later → Syncs data
+3. Actual penalty calculated → Refund issued (if actual < authorization)
+4. ✅ User pays actual penalty, gets refund for difference
+
+**Scenario 4: User Syncs Late (Additional Charge)**
+1. Authorization charged after 24h
+2. User opens app 3 days later → Syncs data
+3. Actual penalty calculated → Additional charge (if actual > authorization)
+4. ✅ User pays authorization + additional charge = actual penalty
+
+---
+
+#### 6.11 Edge Cases
+
+**User Syncs Before Grace Period Ends:**
+- Cancel authorization hold, charge actual penalty immediately
+- Check in `rpc_sync_daily_usage` if `grace_period_ends_at > NOW()`
+
+**User Never Syncs:**
+- Authorization charge stays (no refund)
+- By design - user had 24h warning
+
+**Authorization Hold Expires:**
+- Create new PaymentIntent and charge immediately
+- Handle in `charge_authorization_after_grace_period`
+
+**User Changes Payment Method:**
+- Create new authorization hold with new payment method
+- Handle in payment method update flow
 
 ---
 
@@ -233,19 +552,25 @@ App Opens → Read Unsynced Usage → Upload to Backend → Mark as Synced
 
 ### Settlement (Backend)
 ```
-Weekly Close → Check for Synced Data → 
-  If synced: Calculate penalty
-  If not synced: Apply "no sync rule" (worst-case/pending/estimate)
+Commitment Created → Authorization Hold Created → 
+Week Ends → Email Notification Sent →
+  If user syncs within 24h: Cancel authorization, charge actual penalty
+  If user doesn't sync: Charge authorization after 24h →
+    If user syncs later: Calculate actual penalty, refund difference (or charge additional)
 ```
 
 ---
 
 ## Files to Create
 
-1. `Utilities/UsageSyncManager.swift` - Sync manager for main app
-2. `Models/DailyUsageEntry.swift` - Data model for daily usage entries
-3. `supabase/migrations/rpc_sync_daily_usage.sql` - Backend RPC function
+1. `Utilities/UsageSyncManager.swift` - Sync manager for main app ✅ DONE
+2. `Models/DailyUsageEntry.swift` - Data model for daily usage entries ✅ DONE
+3. `supabase/migrations/rpc_sync_daily_usage.sql` - Backend RPC function ✅ DONE
 4. `supabase/functions/sync-usage/index.ts` - Edge function (optional)
+5. `supabase/migrations/add_authorization_fields.sql` - Database schema for authorization fields
+6. `supabase/functions/charge-authorization-after-grace-period/index.ts` - Charge authorization after 24h
+7. `supabase/functions/send-week-end-notification/index.ts` - Email notification at week end
+8. `Views/SettlementStatusView.swift` - Show settlement status to users
 
 ---
 

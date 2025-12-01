@@ -33,6 +33,7 @@ struct payattentionclub_app_1_1App: App {
 // This pattern ensures SwiftUI re-evaluates when model.currentScreen changes
 struct RootRouterView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     
     init() {
         NSLog("MARKERS RootRouterView: init() called")
@@ -63,9 +64,29 @@ struct RootRouterView: View {
                 BulletinView()
             case .backendTest:
                 BackendTestView() // TEMPORARY: Remove after testing
+            case .dailyUsageTest:
+                DailyUsageTestView() // TEMPORARY: Phase 2 testing
             }
         }
         .id(model.currentScreen) // Force identity change
+        .onChange(of: scenePhase) { newPhase in
+            // Sync when app comes to foreground (becomes active)
+            if newPhase == .active {
+                NSLog("SYNC RootRouterView: 🔄 App became active, syncing usage data...")
+                print("SYNC RootRouterView: 🔄 App became active, syncing usage data...")
+                Task {
+                    do {
+                        try await UsageSyncManager.shared.syncToBackend()
+                        NSLog("SYNC RootRouterView: ✅ Foreground sync completed")
+                        print("SYNC RootRouterView: ✅ Foreground sync completed")
+                    } catch {
+                        NSLog("SYNC RootRouterView: ⚠️ Foreground sync failed: \(error)")
+                        print("SYNC RootRouterView: ⚠️ Foreground sync failed: \(error)")
+                        // Don't show error to user, just log it (happens in background)
+                    }
+                }
+            }
+        }
     }
 }
 

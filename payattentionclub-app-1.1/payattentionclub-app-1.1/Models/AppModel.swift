@@ -40,8 +40,17 @@ final class AppModel: ObservableObject {
     
     /// Finish initialization after UI has rendered (called from LoadingView.onAppear)
     func finishInitialization() {
-        guard !isInitialized else { return }
+        NSLog("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
+        print("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
+        fflush(stdout)
+        guard !isInitialized else { 
+            NSLog("SYNC AppModel: ⏸️ Already initialized, skipping")
+            return 
+        }
         isInitialized = true
+        NSLog("SYNC AppModel: ✅ Setting isInitialized = true")
+        print("SYNC AppModel: ✅ Setting isInitialized = true")
+        fflush(stdout)
         
         // Initialize countdown model (deferred to avoid blocking startup)
         let deadline = getNextMondayNoonEST()
@@ -52,6 +61,24 @@ final class AppModel: ObservableObject {
         
         // Cache deadline date (now that countdownModel exists)
         refreshCachedDeadline()
+        
+        // Phase 3: Sync unsynced usage entries on app launch
+        Task { @MainActor in
+            NSLog("SYNC AppModel: 🚀 Starting sync task on app launch")
+            print("SYNC AppModel: 🚀 Starting sync task on app launch")
+            fflush(stdout)
+            do {
+                try await UsageSyncManager.shared.syncToBackend()
+                NSLog("SYNC AppModel: ✅ Sync completed successfully")
+                print("SYNC AppModel: ✅ Sync completed successfully")
+                fflush(stdout)
+            } catch {
+                NSLog("SYNC AppModel: ⚠️ Failed to sync usage on launch: \(error)")
+                print("SYNC AppModel: ⚠️ Failed to sync usage on launch: \(error)")
+                fflush(stdout)
+                // Don't block app startup if sync fails
+            }
+        }
         
         // Check if monitoring is already active - if so, navigate to monitor screen
         // Otherwise navigate to setup
@@ -307,5 +334,6 @@ enum AppScreen {
     case monitor
     case bulletin
     case backendTest // TEMPORARY: Remove after testing
+    case dailyUsageTest // TEMPORARY: Phase 2 testing
 }
 

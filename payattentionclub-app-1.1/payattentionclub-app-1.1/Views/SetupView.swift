@@ -8,6 +8,7 @@ struct SetupView: View {
     @State private var showAppPicker = false
     @State private var isAuthenticating = false
     @State private var authenticationError: String?
+    @State private var showAuthorizationAlert = false
     
     // Convert slider position (0.0-1.0) to penalty value ($0.01-$5.00) with $0.10 in the middle
     private func positionToPenalty(_ position: Double) -> Double {
@@ -140,7 +141,38 @@ struct SetupView: View {
                     
                     // App Selector
                     Button(action: {
-                        showAppPicker = true
+                        Task { @MainActor in
+                            // Check authorization status
+                            let status = await AuthorizationCenter.shared.authorizationStatus
+                            NSLog("SETUP SetupView: Authorization status: \(status.rawValue)")
+                            
+                            if status == .approved {
+                                // Already approved, show picker directly
+                                NSLog("SETUP SetupView: Authorization approved, showing picker")
+                                showAppPicker = true
+                            } else {
+                                // Not approved - request authorization first
+                                NSLog("SETUP SetupView: Authorization not approved (\(status.rawValue)), requesting...")
+                                do {
+                                    try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+                                    let newStatus = await AuthorizationCenter.shared.authorizationStatus
+                                    NSLog("SETUP SetupView: Authorization request completed, new status: \(newStatus.rawValue)")
+                                    
+                                    if newStatus == .approved {
+                                        // Now approved, show picker
+                                        NSLog("SETUP SetupView: Authorization granted, showing picker")
+                                        showAppPicker = true
+                                    } else {
+                                        // Still not approved, show alert
+                                        NSLog("SETUP SetupView: Authorization still not granted, showing alert")
+                                        showAuthorizationAlert = true
+                                    }
+                                } catch {
+                                    NSLog("SETUP SetupView: ❌ Failed to request authorization: \(error)")
+                                    showAuthorizationAlert = true
+                                }
+                            }
+                        }
                     }) {
                         Label("Select Apps to Limit (\(model.selectedApps.applicationTokens.count + model.selectedApps.categoryTokens.count))", systemImage: "app.fill")
                             .font(.headline)
@@ -152,6 +184,19 @@ struct SetupView: View {
                     }
                     .padding(.horizontal)
                     .familyActivityPicker(isPresented: $showAppPicker, selection: $model.selectedApps)
+                    .alert("Screen Time Access Required", isPresented: $showAuthorizationAlert) {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                        Button("Cancel", role: .cancel) { }
+                    } message: {
+                        Text("Screen Time access is required to select apps to limit. Please grant access in Settings → Screen Time → [Your App].")
+                    }
+                    .onChange(of: model.selectedApps) { newSelection in
+                        NSLog("SETUP SetupView: selectedApps changed! Apps: \(newSelection.applicationTokens.count), Categories: \(newSelection.categoryTokens.count)")
+                    }
                     
                     // TEMPORARY: Backend Test Button (Remove after testing)
                     Button(action: {

@@ -123,3 +123,4 @@ Use Fallback Plan:
 - The extension runs in a **separate process** from the main app
 - Logs are prefixed with `EXTENSION NetworkTest:` for easy filtering
 
+

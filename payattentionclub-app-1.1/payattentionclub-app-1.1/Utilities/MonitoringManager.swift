@@ -241,11 +241,57 @@ class MonitoringManager {
         // With ~140 events, this should be fast (~2-3 seconds instead of 31 seconds)
         do {
             NSLog("MARKERS MonitoringManager: Attempting to start monitoring...")
+            NSLog("MARKERS MonitoringManager: Activity name: %@", activityName.rawValue)
+            let startHour = schedule.intervalStart.hour ?? 0
+            let startMin = schedule.intervalStart.minute ?? 0
+            let endHour = schedule.intervalEnd.hour ?? 23
+            let endMin = schedule.intervalEnd.minute ?? 59
+            NSLog("MARKERS MonitoringManager: Schedule: %02d:%02d to %02d:%02d, repeats: %@", 
+                  startHour, startMin, endHour, endMin, schedule.repeats ? "YES" : "NO")
             try center.startMonitoring(activityName, during: schedule, events: events)
             NSLog("MARKERS MonitoringManager: ✅✅✅ SUCCESS - Started monitoring with %d events", events.count)
+            NSLog("MARKERS MonitoringManager: ⚠️ NOTE: Extension will be invoked when interval starts or threshold is reached")
+            NSLog("MARKERS MonitoringManager: ⚠️ Look for: EXTENSION DeviceActivityMonitorExtension logs in console")
             fflush(stdout)
         } catch {
             NSLog("MARKERS MonitoringManager: ❌❌❌ FAILED to start monitoring: %@", error.localizedDescription)
+            NSLog("MARKERS MonitoringManager: Error details: %@", String(describing: error))
+            fflush(stdout)
+        }
+    }
+    
+    /// Debug monitoring function - starts monitoring in 1 minute, ends in 20 minutes
+    /// This is a minimal test to verify extension is being invoked
+    func startDebugMonitoring() async {
+        let center = DeviceActivityCenter()
+        
+        // Log the authorization status just to be sure
+        let status = await AuthorizationCenter.shared.authorizationStatus
+        NSLog("MARKERS MonitoringManager: FamilyControls status = %d", status.rawValue)
+        
+        let now = Date()
+        let calendar = Calendar.current
+        let startDate = calendar.date(byAdding: .minute, value: 1, to: now)!
+        let endDate   = calendar.date(byAdding: .minute, value: 20, to: now)!
+        
+        let comps: Set<Calendar.Component> = [.hour, .minute, .second]
+        let schedule = DeviceActivitySchedule(
+            intervalStart: calendar.dateComponents(comps, from: startDate),
+            intervalEnd:   calendar.dateComponents(comps, from: endDate),
+            repeats: false
+        )
+        
+        let activityName = DeviceActivityName("PAC.DebugActivity")
+        
+        do {
+            NSLog("MARKERS MonitoringManager: About to call startMonitoring...")
+            try center.startMonitoring(activityName, during: schedule)
+            NSLog("MARKERS MonitoringManager: ✅ started debug monitoring")
+            print("MARKERS MonitoringManager: ✅ started debug monitoring")
+            fflush(stdout)
+        } catch {
+            NSLog("MARKERS MonitoringManager: ❌ failed debug monitoring: %@", error.localizedDescription)
+            print("MARKERS MonitoringManager: ❌ failed debug monitoring: \(error.localizedDescription)")
             fflush(stdout)
         }
     }

@@ -1,389 +1,295 @@
 import DeviceActivity
 import Foundation
+import UserNotifications
 
-/// DeviceActivityMonitorExtension receives callbacks when usage thresholds are reached
-/// Writes usage data to App Group so main app can read it
+/// Local copy of DailyUsageEntry for extension target
+struct ExtensionDailyUsageEntry: Codable {
+    let date: String
+    let totalMinutes: Double
+    let baselineMinutes: Double
+    let lastUpdatedAt: TimeInterval
+    var synced: Bool
+    let weekStartDate: String
+    let commitmentId: String
+    
+    var usedMinutes: Int {
+        max(0, Int(totalMinutes - baselineMinutes))
+    }
+}
+
 @available(iOS 16.0, *)
 class DeviceActivityMonitorExtension: DeviceActivityMonitor {
+    
     private let appGroupIdentifier = "group.com.payattentionclub.app"
     
-    // MARK: - Rate Limiting (Step 5)
+    // Serial queue to ensure only one threshold is processed at a time
+    // This prevents race conditions when multiple extension instances process the same threshold
+    private static let processingQueue = DispatchQueue(label: "com.payattentionclub.extension.processing", qos: .userInitiated)
     
-    /// Track last report timestamp to prevent duplicate reports
-    private var lastReportTimestamp: TimeInterval = 0
-    
-    /// Minimum interval between reports (5 minutes = 300 seconds)
-    /// Prevents duplicate reports when multiple thresholds fire quickly
-    private let minReportInterval: TimeInterval = 300
+    override init() {
+        super.init()
+        NSLog("MONITOR_EXT: 🚀 init")
+        print("MONITOR_EXT: 🚀 init")
+        fflush(stdout)
+    }
     
     override func intervalDidStart(for activity: DeviceActivityName) {
         super.intervalDidStart(for: activity)
-        
-        NSLog("MARKERS MonitorExtension: 🟢 intervalDidStart for %@", activity.rawValue)
+        NSLog("MONITOR_EXT: 🟢 intervalDidStart \(activity.rawValue)")
+        print("MONITOR_EXT: 🟢 intervalDidStart \(activity.rawValue)")
         fflush(stdout)
         
-        // Reset sequence tracking when interval starts
-        resetSequenceTracking()
-        
-        // Store interval start time in App Group
-        storeIntervalStart(activity: activity)
-        
-        // Reset consumed minutes when interval starts
-        storeConsumedMinutes(0.0)
-        
-        // Reset rate limiting when interval starts (allow first report of new interval)
-        lastReportTimestamp = 0
-        
-        // TEST: Try network access (Step 0 - Network Test)
-        testNetworkAccess()
-    }
-    
-    override func intervalDidEnd(for activity: DeviceActivityName) {
-        super.intervalDidEnd(for: activity)
-        
-        NSLog("MARKERS MonitorExtension: 🔴 intervalDidEnd for %@", activity.rawValue)
+        // Reset last threshold tracking when interval starts (new day/week)
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        userDefaults.removeObject(forKey: "last_threshold_seconds")
+        userDefaults.removeObject(forKey: "last_processed_threshold_seconds")
+        userDefaults.synchronize()
+        NSLog("MONITOR_EXT: 🔄 Reset threshold tracking at interval start")
+        print("MONITOR_EXT: 🔄 Reset threshold tracking at interval start")
         fflush(stdout)
         
-        // Store interval end time
-        storeIntervalEnd(activity: activity)
+        // TEMP: visible proof-of-life via local notification
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "PAC Monitor started"
+            content.body = "Activity: \(activity.rawValue)"
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)
+            let request = UNNotificationRequest(
+                identifier: "pac_monitor_test_interval",
+                content: content,
+                trigger: trigger
+            )
+            center.add(request, withCompletionHandler: nil)
+        }
     }
     
-    override func eventDidReachThreshold(_ event: DeviceActivityEvent.Name, activity: DeviceActivityName) {
+    override func eventDidReachThreshold(_ event: DeviceActivityEvent.Name,
+                                         activity: DeviceActivityName) {
         super.eventDidReachThreshold(event, activity: activity)
+        NSLog("MONITOR_EXT: 🔔 eventDidReachThreshold \(event.rawValue)")
+        print("MONITOR_EXT: 🔔 eventDidReachThreshold \(event.rawValue)")
+        fflush(stdout)
         
-        // Extract seconds from event name
-        let seconds = extractSecondsFromEvent(event.rawValue)
-        let consumedMinutes = Double(seconds) / 60.0
+        // Extract seconds from event name (e.g., "t_300s" -> 300)
+        // NOTE: This is the CUMULATIVE threshold value, not the delta
+        let thresholdSeconds = extractSeconds(from: event.rawValue)
+        let thresholdMinutes = Double(thresholdSeconds) / 60.0
         
-        // Get last threshold seconds to detect gaps
-        let lastSeconds = getLastThresholdSeconds()
+        NSLog("MONITOR_EXT: 📊 Threshold reached - thresholdSeconds: \(thresholdSeconds)s = \(thresholdMinutes) min")
+        print("MONITOR_EXT: 📊 Threshold reached - thresholdSeconds: \(thresholdSeconds)s = \(thresholdMinutes) min")
+        fflush(stdout)
         
-        // Detect gaps (with new variable intervals, gaps can be up to 5 minutes)
-        if lastSeconds > 0 && seconds > lastSeconds {
-            let gapSeconds = seconds - lastSeconds
-            // With new strategy: gaps can be up to 5 minutes (300 seconds) in middle, 1 minute (60 seconds) at start/end
-            if gapSeconds > 300 {
-                NSLog("MARKERS MonitorExtension: ⚠️⚠️⚠️ LARGE GAP DETECTED! Last threshold: %d sec, current: %d sec. Gap: %d seconds (%.1f minutes)", 
-                      lastSeconds, seconds, gapSeconds, Double(gapSeconds) / 60.0)
-                fflush(stdout)
-            }
+        // Update daily usage entry (will calculate delta inside)
+        // Use serial queue synchronously to prevent concurrent processing of same threshold
+        // This ensures only one threshold is processed at a time, preventing race conditions
+        Self.processingQueue.sync {
+            self.updateDailyUsageEntry(thresholdSeconds: thresholdSeconds)
+        }
+    }
+    
+    /// Extract seconds from event name (e.g., "t_300s" -> 300)
+    private func extractSeconds(from eventName: String) -> Int {
+        // Remove "t_" prefix and "s" suffix
+        let cleaned = eventName.replacingOccurrences(of: "t_", with: "")
+            .replacingOccurrences(of: "s", with: "")
+        return Int(cleaned) ?? 0
+    }
+    
+    /// Update daily usage entry in App Group
+    /// - Parameter thresholdSeconds: The cumulative threshold value in seconds (e.g., 300 = 5 minutes total consumed)
+    private func updateDailyUsageEntry(thresholdSeconds: Int) {
+        NSLog("MONITOR_EXT: 📝 updateDailyUsageEntry called with thresholdSeconds: \(thresholdSeconds)")
+        print("MONITOR_EXT: 📝 updateDailyUsageEntry called with thresholdSeconds: \(thresholdSeconds)")
+        fflush(stdout)
+        
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            NSLog("MONITOR_EXT: ❌ Failed to access App Group '\(appGroupIdentifier)'")
+            print("MONITOR_EXT: ❌ Failed to access App Group '\(appGroupIdentifier)'")
+            fflush(stdout)
+            return
         }
         
-        // Log threshold
-        NSLog("MARKERS MonitorExtension: 🔔 Threshold: %@ (%d seconds = %.1f minutes)", 
-              event.rawValue, seconds, consumedMinutes)
-        fflush(stdout)
+        // CRITICAL: Atomic idempotency check - must happen FIRST before any other processing
+        // Use a serial queue to ensure only one thread processes at a time
+        let idempotencyKey = "last_processed_threshold_seconds"
+        let lastProcessedThreshold = userDefaults.integer(forKey: idempotencyKey)
         
-        // Store consumed minutes in App Group
-        let timestamp = Date().timeIntervalSince1970
-        storeConsumedMinutes(consumedMinutes)
-        storeLastThresholdEvent(event.rawValue)
-        storeLastThresholdTimestamp(timestamp)
-        storeLastThresholdSeconds(seconds)
-        
-        NSLog("MARKERS MonitorExtension: ✅ Stored: consumedMinutes=%.1f, seconds=%d, timestamp=%.0f", 
-              consumedMinutes, seconds, timestamp)
-        fflush(stdout)
-        
-        // Report usage to backend (with rate limiting) - Step 6
-        if shouldReportUsage() {
-            NSLog("EXTENSION MonitorExtension: 📤 Reporting usage to backend...")
+        // Check if already processed
+        if thresholdSeconds == lastProcessedThreshold && lastProcessedThreshold > 0 {
+            NSLog("MONITOR_EXT: ⏭️ Already processed threshold \(thresholdSeconds)s, skipping duplicate")
+            print("MONITOR_EXT: ⏭️ Already processed threshold \(thresholdSeconds)s, skipping duplicate")
             fflush(stdout)
-            
-            // Quick network test: Try simple GET request first
-            Task {
-                await quickNetworkTest()
-                await reportUsageToBackend(consumedMinutes: consumedMinutes)
-            }
+            return
+        }
+        
+        // Mark as processing IMMEDIATELY (atomic check-and-set)
+        // This prevents other concurrent calls from processing the same threshold
+        userDefaults.set(thresholdSeconds, forKey: idempotencyKey)
+        userDefaults.synchronize() // Force immediate write
+        
+        NSLog("MONITOR_EXT: ✅ Successfully accessed App Group")
+        print("MONITOR_EXT: ✅ Successfully accessed App Group")
+        fflush(stdout)
+        
+        // Read required data from App Group
+        let baselineTimeSpent = userDefaults.double(forKey: "baselineTimeSpent")
+        let baselineMinutes = baselineTimeSpent / 60.0
+        NSLog("MONITOR_EXT: 📊 Baseline: \(baselineTimeSpent)s = \(baselineMinutes) min")
+        print("MONITOR_EXT: 📊 Baseline: \(baselineTimeSpent)s = \(baselineMinutes) min")
+        fflush(stdout)
+        
+        // Diagnostic: List all keys in App Group
+        let allKeys = userDefaults.dictionaryRepresentation().keys
+        NSLog("MONITOR_EXT: 🔍 All App Group keys (\(allKeys.count) total): \(Array(allKeys).sorted())")
+        print("MONITOR_EXT: 🔍 All App Group keys (\(allKeys.count) total): \(Array(allKeys).sorted())")
+        fflush(stdout)
+        
+        guard let commitmentId = userDefaults.string(forKey: "commitmentId") else {
+            NSLog("MONITOR_EXT: ⚠️ No commitmentId found in App Group")
+            print("MONITOR_EXT: ⚠️ No commitmentId found in App Group")
+            NSLog("MONITOR_EXT: 🔍 Checking for similar keys...")
+            let relatedKeys = allKeys.filter { $0.lowercased().contains("commit") || $0.lowercased().contains("id") }
+            NSLog("MONITOR_EXT: 📋 Related keys: \(Array(relatedKeys))")
+            print("MONITOR_EXT: 📋 Related keys: \(Array(relatedKeys))")
+            fflush(stdout)
+            // Clear the processing flag since we're aborting
+            userDefaults.removeObject(forKey: idempotencyKey)
+            userDefaults.synchronize()
+            return
+        }
+        
+        NSLog("MONITOR_EXT: ✅ Found commitmentId: \(commitmentId)")
+        print("MONITOR_EXT: ✅ Found commitmentId: \(commitmentId)")
+        fflush(stdout)
+        
+        // Get week start date (commitment deadline) - stored as timestamp
+        let deadlineTimestamp = userDefaults.double(forKey: "commitmentDeadline")
+        guard deadlineTimestamp > 0 else {
+            NSLog("MONITOR_EXT: ⚠️ No commitmentDeadline found in App Group (timestamp: \(deadlineTimestamp))")
+            print("MONITOR_EXT: ⚠️ No commitmentDeadline found in App Group (timestamp: \(deadlineTimestamp))")
+            NSLog("MONITOR_EXT: 🔍 Checking all keys in App Group...")
+            let allKeys = userDefaults.dictionaryRepresentation().keys
+            NSLog("MONITOR_EXT: 📋 Sample keys: \(Array(allKeys.prefix(10)))")
+            print("MONITOR_EXT: 📋 Sample keys: \(Array(allKeys.prefix(10)))")
+            fflush(stdout)
+            // Clear the processing flag since we're aborting
+            userDefaults.removeObject(forKey: idempotencyKey)
+            userDefaults.synchronize()
+            return
+        }
+        
+        // Convert timestamp to Date, then to YYYY-MM-DD string
+        let deadlineDate = Date(timeIntervalSince1970: deadlineTimestamp)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone.current
+        let deadlineString = dateFormatter.string(from: deadlineDate)
+        
+        NSLog("MONITOR_EXT: ✅ Found commitmentDeadline: \(deadlineString) (timestamp: \(deadlineTimestamp))")
+        print("MONITOR_EXT: ✅ Found commitmentDeadline: \(deadlineString) (timestamp: \(deadlineTimestamp))")
+        fflush(stdout)
+        
+        // Get current date (reuse same dateFormatter)
+        let today = dateFormatter.string(from: Date())
+        
+        // Read last threshold value to calculate delta
+        // IMPORTANT: Thresholds are CUMULATIVE (total consumed), so we need to calculate delta
+        let lastThresholdKey = "last_threshold_seconds"
+        let lastThresholdSeconds = userDefaults.integer(forKey: lastThresholdKey)
+        
+        // Special handling for first threshold after commitment creation
+        // If this is the first threshold (lastThresholdSeconds == 0) and it's very large (> 10 minutes),
+        // it likely represents pre-commitment usage. We should treat it as baseline and not count it.
+        if lastThresholdSeconds == 0 && thresholdSeconds > 600 {
+            NSLog("MONITOR_EXT: ⚠️ First threshold is very large (\(thresholdSeconds)s = \(thresholdSeconds/60) min) - likely pre-commitment usage")
+            print("MONITOR_EXT: ⚠️ First threshold is very large (\(thresholdSeconds)s = \(thresholdSeconds/60) min) - likely pre-commitment usage")
+            NSLog("MONITOR_EXT: 📝 Storing as baseline threshold, not counting as consumption")
+            print("MONITOR_EXT: 📝 Storing as baseline threshold, not counting as consumption")
+            fflush(stdout)
+            // Store this threshold as the baseline, but don't count it as consumption
+            userDefaults.set(thresholdSeconds, forKey: lastThresholdKey)
+            userDefaults.synchronize()
+            // Clear processing flag since we're done
+            userDefaults.removeObject(forKey: idempotencyKey)
+            userDefaults.synchronize()
+            return
+        }
+        
+        // Calculate delta: current threshold - last threshold = time consumed since last threshold
+        let deltaSeconds = max(0, thresholdSeconds - lastThresholdSeconds)
+        let deltaMinutes = Double(deltaSeconds) / 60.0
+        
+        NSLog("MONITOR_EXT: 📊 Delta calculation - lastThreshold: \(lastThresholdSeconds)s, currentThreshold: \(thresholdSeconds)s, delta: \(deltaSeconds)s = \(deltaMinutes) min")
+        print("MONITOR_EXT: 📊 Delta calculation - lastThreshold: \(lastThresholdSeconds)s, currentThreshold: \(thresholdSeconds)s, delta: \(deltaSeconds)s = \(deltaMinutes) min")
+        fflush(stdout)
+        
+        if deltaSeconds == 0 {
+            NSLog("MONITOR_EXT: ⚠️ No delta, skipping update (last: \(lastThresholdSeconds)s, current: \(thresholdSeconds)s)")
+            print("MONITOR_EXT: ⚠️ No delta, skipping update (last: \(lastThresholdSeconds)s, current: \(thresholdSeconds)s)")
+            fflush(stdout)
+            return
+        }
+        
+        // Read existing entry or create new one
+        let entryKey = "daily_usage_\(today)"
+        var entry: ExtensionDailyUsageEntry
+        
+        if let existingData = userDefaults.data(forKey: entryKey),
+           let decoded = try? JSONDecoder().decode(ExtensionDailyUsageEntry.self, from: existingData) {
+            // Update existing entry
+            let newTotalMinutes = decoded.totalMinutes + deltaMinutes
+            entry = ExtensionDailyUsageEntry(
+                date: today,
+                totalMinutes: newTotalMinutes,
+                baselineMinutes: baselineMinutes,
+                lastUpdatedAt: Date().timeIntervalSince1970,
+                synced: false,
+                weekStartDate: deadlineString,
+                commitmentId: commitmentId
+            )
+            NSLog("MONITOR_EXT: 📝 Updated daily usage entry for \(today): +\(deltaMinutes) min (total: \(newTotalMinutes) min)")
+            print("MONITOR_EXT: 📝 Updated daily usage entry for \(today): +\(deltaMinutes) min (total: \(newTotalMinutes) min)")
+            fflush(stdout)
         } else {
-            let timeUntilNextReport = minReportInterval - (Date().timeIntervalSince1970 - lastReportTimestamp)
-            NSLog("EXTENSION MonitorExtension: ⏸️ Skipping report (rate limited, next report in %.0f seconds)", timeUntilNextReport)
+            // Create new entry
+            entry = ExtensionDailyUsageEntry(
+                date: today,
+                totalMinutes: deltaMinutes,
+                baselineMinutes: baselineMinutes,
+                lastUpdatedAt: Date().timeIntervalSince1970,
+                synced: false,
+                weekStartDate: deadlineString,
+                commitmentId: commitmentId
+            )
+            NSLog("MONITOR_EXT: ✨ Created new daily usage entry for \(today): \(deltaMinutes) min")
+            print("MONITOR_EXT: ✨ Created new daily usage entry for \(today): \(deltaMinutes) min")
             fflush(stdout)
         }
-    }
-    
-    // MARK: - App Group Storage
-    
-    private func storeIntervalStart(activity: DeviceActivityName) {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        let timestamp = Date().timeIntervalSince1970
-        userDefaults.set(timestamp, forKey: "monitorIntervalStart_\(activity.rawValue)")
-        userDefaults.synchronize()
-    }
-    
-    private func storeIntervalEnd(activity: DeviceActivityName) {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        let timestamp = Date().timeIntervalSince1970
-        userDefaults.set(timestamp, forKey: "monitorIntervalEnd_\(activity.rawValue)")
-        userDefaults.synchronize()
-    }
-    
-    private func storeConsumedMinutes(_ minutes: Double) {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        userDefaults.set(minutes, forKey: "consumedMinutes")
-        userDefaults.set(Date().timeIntervalSince1970, forKey: "consumedMinutesTimestamp")
-        userDefaults.synchronize()
-    }
-    
-    private func storeLastThresholdEvent(_ eventName: String) {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        userDefaults.set(eventName, forKey: "lastThresholdEvent")
-        userDefaults.synchronize()
-    }
-    
-    private func storeLastThresholdTimestamp(_ timestamp: TimeInterval) {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        userDefaults.set(timestamp, forKey: "lastThresholdTimestamp")
-        userDefaults.synchronize()
-    }
-    
-    private func storeLastThresholdSeconds(_ seconds: Int) {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        userDefaults.set(seconds, forKey: "lastThresholdSeconds")
-        userDefaults.synchronize()
-    }
-    
-    private func getLastThresholdSeconds() -> Int {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return 0
-        }
-        return userDefaults.integer(forKey: "lastThresholdSeconds")
-    }
-    
-    private func resetSequenceTracking() {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        userDefaults.removeObject(forKey: "lastThresholdSeconds")
-        userDefaults.synchronize()
-    }
-    
-    // MARK: - Helpers
-    
-    private func extractSecondsFromEvent(_ eventName: String) -> Int {
-        // Extract seconds from event name
-        // New format: "t_60s", "t_300s", etc.
-        // Old format (for compatibility): "30sec", "60sec", etc.
         
-        // Try new format first: "t_60s" or "t_300s"
-        let newPattern = #"t_(\d+)s"#
-        if let regex = try? NSRegularExpression(pattern: newPattern),
-           let match = regex.firstMatch(in: eventName, range: NSRange(eventName.startIndex..., in: eventName)),
-           let range = Range(match.range(at: 1), in: eventName),
-           let seconds = Int(eventName[range]) {
-            return seconds
-        }
-        
-        // Fallback to old format: "30sec" or "36000sec"
-        let oldPattern = #"(\d+)sec"#
-        if let regex = try? NSRegularExpression(pattern: oldPattern),
-           let match = regex.firstMatch(in: eventName, range: NSRange(eventName.startIndex..., in: eventName)),
-           let range = Range(match.range(at: 1), in: eventName),
-           let seconds = Int(eventName[range]) {
-            return seconds
-        }
-        
-        return 0
-    }
-    
-    private func extractMinutesFromEvent(_ eventName: String) -> Double {
-        // Extract minutes from event name (for backward compatibility)
-        let seconds = extractSecondsFromEvent(eventName)
-        return Double(seconds) / 60.0
-    }
-    
-    // MARK: - Network Test (Step 0)
-    
-    /// Test if the extension can make network calls
-    /// This is Step 0 of the network reporting implementation plan
-    /// Logs results to system console (view via Console.app)
-    private func testNetworkAccess() {
-        NSLog("EXTENSION NetworkTest: 🧪 Starting network access test...")
+        // Store entry
+        NSLog("MONITOR_EXT: 💾 Attempting to encode and store entry...")
+        print("MONITOR_EXT: 💾 Attempting to encode and store entry...")
         fflush(stdout)
-        
-        Task {
-            // Test 1: Simple GET request to httpbin.org
-            let testURL = URL(string: "https://httpbin.org/get")!
-            var request = URLRequest(url: testURL)
-            request.httpMethod = "GET"
-            request.timeoutInterval = 10.0
-            
-            do {
-                NSLog("EXTENSION NetworkTest: 📤 Attempting GET request to https://httpbin.org/get...")
-                fflush(stdout)
-                
-                let (data, response) = try await URLSession.shared.data(for: request)
-                
-                if let httpResponse = response as? HTTPURLResponse {
-                    let statusCode = httpResponse.statusCode
-                    let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-                    
-                    if statusCode == 200 {
-                        NSLog("EXTENSION NetworkTest: ✅ SUCCESS! Status: %d", statusCode)
-                        NSLog("EXTENSION NetworkTest: ✅ Network access is WORKING - extension CAN make HTTP requests")
-                        NSLog("EXTENSION NetworkTest: Response preview: %@", String(responseString.prefix(200)))
-                        fflush(stdout)
-                    } else {
-                        NSLog("EXTENSION NetworkTest: ⚠️ Unexpected status code: %d", statusCode)
-                        NSLog("EXTENSION NetworkTest: Response: %@", responseString)
-                        fflush(stdout)
-                    }
-                } else {
-                    NSLog("EXTENSION NetworkTest: ⚠️ Response is not HTTPURLResponse")
-                    fflush(stdout)
-                }
-            } catch {
-                NSLog("EXTENSION NetworkTest: ❌ FAILED - Network request error: %@", error.localizedDescription)
-                NSLog("EXTENSION NetworkTest: ❌ Error details: %@", String(describing: error))
-                NSLog("EXTENSION NetworkTest: ❌ This extension CANNOT make network calls (or network is unavailable)")
-                fflush(stdout)
-                
-                // Check if it's a specific error type
-                if let urlError = error as? URLError {
-                    NSLog("EXTENSION NetworkTest: ❌ URLError code: %d, domain: %@", urlError.code.rawValue, urlError.localizedDescription)
-                    fflush(stdout)
-                }
-            }
-            
-            // Test 2: Try POST request (simulating what we'd do for rpc_report_usage)
-            NSLog("EXTENSION NetworkTest: 🧪 Testing POST request (simulating backend call)...")
-            fflush(stdout)
-            
-            let postURL = URL(string: "https://httpbin.org/post")!
-            var postRequest = URLRequest(url: postURL)
-            postRequest.httpMethod = "POST"
-            postRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            postRequest.timeoutInterval = 10.0
-            
-            let testBody: [String: Any] = [
-                "test": "network_access",
-                "timestamp": Date().timeIntervalSince1970
-            ]
-            
-            do {
-                postRequest.httpBody = try JSONSerialization.data(withJSONObject: testBody)
-                
-                let (_, postResponse) = try await URLSession.shared.data(for: postRequest)
-                
-                if let httpResponse = postResponse as? HTTPURLResponse {
-                    if httpResponse.statusCode == 200 {
-                        NSLog("EXTENSION NetworkTest: ✅ POST request SUCCESS! Status: %d", httpResponse.statusCode)
-                        NSLog("EXTENSION NetworkTest: ✅ Extension CAN make POST requests with JSON body")
-                        fflush(stdout)
-                    } else {
-                        NSLog("EXTENSION NetworkTest: ⚠️ POST request returned status: %d", httpResponse.statusCode)
-                        fflush(stdout)
-                    }
-                }
-            } catch {
-                NSLog("EXTENSION NetworkTest: ❌ POST request FAILED: %@", error.localizedDescription)
-                fflush(stdout)
-            }
-            
-            NSLog("EXTENSION NetworkTest: 🏁 Network test complete. Check logs above for results.")
-            fflush(stdout)
-        }
-    }
-    
-    // MARK: - Rate Limiting Helpers (Step 5)
-    
-    /// Check if we should report usage based on rate limiting
-    /// Returns true if at least 5 minutes have passed since last report
-    /// This prevents duplicate reports when multiple thresholds fire quickly
-    private func shouldReportUsage() -> Bool {
-        let now = Date().timeIntervalSince1970
-        let timeSinceLastReport = now - lastReportTimestamp
-        
-        // Only report if at least 5 minutes have passed since last report
-        return timeSinceLastReport >= minReportInterval
-    }
-    
-    // MARK: - Network Diagnostics
-    
-    /// Quick network test to verify basic connectivity
-    /// Tests if extension can still make simple HTTP requests
-    private func quickNetworkTest() async {
-        let testURL = URL(string: "https://httpbin.org/get")!
-        var request = URLRequest(url: testURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 5.0
-        
-        let startTime = Date().timeIntervalSince1970
-        NSLog("EXTENSION NetworkTest: 🧪 Quick test - Starting GET request...")
-        fflush(stdout)
-        
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            let duration = Date().timeIntervalSince1970 - startTime
-            
-            if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode == 200 {
-                    NSLog("EXTENSION NetworkTest: ✅ Quick test SUCCESS! Status: %d, Duration: %.3fs", httpResponse.statusCode, duration)
-                    fflush(stdout)
-                } else {
-                    NSLog("EXTENSION NetworkTest: ⚠️ Quick test returned status: %d, Duration: %.3fs", httpResponse.statusCode, duration)
-                    fflush(stdout)
-                }
-            }
+            let encoded = try JSONEncoder().encode(entry)
+            userDefaults.set(encoded, forKey: entryKey)
+            // Store current threshold value for next delta calculation
+            userDefaults.set(thresholdSeconds, forKey: lastThresholdKey)
+            // Processing flag already set at the start, just ensure it's persisted
+            userDefaults.synchronize()
+            NSLog("MONITOR_EXT: ✅ Stored daily usage entry: date=\(today), total=\(entry.totalMinutes) min, used=\(entry.usedMinutes) min, synced=NO")
+            print("MONITOR_EXT: ✅ Stored daily usage entry: date=\(today), total=\(entry.totalMinutes) min, used=\(entry.usedMinutes) min, synced=NO")
+            fflush(stdout)
         } catch {
-            let duration = Date().timeIntervalSince1970 - startTime
-            NSLog("EXTENSION NetworkTest: ❌ Quick test FAILED! Error: %@, Duration: %.3fs", error.localizedDescription, duration)
-            if let urlError = error as? URLError {
-                NSLog("EXTENSION NetworkTest: URLError code: %d", urlError.code.rawValue)
-            }
+            NSLog("MONITOR_EXT: ❌ Failed to encode daily usage entry: \(error.localizedDescription)")
+            print("MONITOR_EXT: ❌ Failed to encode daily usage entry: \(error.localizedDescription)")
+            NSLog("MONITOR_EXT: 🔍 Entry details: date=\(entry.date), totalMinutes=\(entry.totalMinutes), baselineMinutes=\(entry.baselineMinutes)")
+            print("MONITOR_EXT: 🔍 Entry details: date=\(entry.date), totalMinutes=\(entry.totalMinutes), baselineMinutes=\(entry.baselineMinutes)")
             fflush(stdout)
         }
-    }
-    
-    // MARK: - Backend Reporting (Step 6)
-    
-    /// Report usage to backend when thresholds are hit
-    /// Called from eventDidReachThreshold() with rate limiting
-    private func reportUsageToBackend(consumedMinutes: Double) async {
-        // Get deadline from App Group
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier),
-              let deadlineTimestamp = userDefaults.object(forKey: "commitmentDeadline") as? TimeInterval else {
-            NSLog("EXTENSION MonitorExtension: ❌ No deadline found, skipping report")
-            fflush(stdout)
-            return
-        }
-        
-        // Get baseline from App Group (stored when commitment is created)
-        let baselineMinutes = userDefaults.double(forKey: "baselineTimeSpent") / 60.0
-        
-        // Calculate used minutes (consumed - baseline)
-        // Note: Currently baseline is always 0, but this ensures consistency if baseline logic changes
-        let usedMinutes = max(0, Int(consumedMinutes - baselineMinutes))
-        
-        let deadline = Date(timeIntervalSince1970: deadlineTimestamp)
-        let today = Date()
-        
-        NSLog("EXTENSION MonitorExtension: 📊 Reporting - consumed: %.1f min, baseline: %.1f min, used: %d min", 
-              consumedMinutes, baselineMinutes, usedMinutes)
-        fflush(stdout)
-        
-        // Report to backend
-        await ExtensionBackendClient.shared.reportUsage(
-            date: today,
-            weekStartDate: deadline,
-            usedMinutes: usedMinutes
-        )
-        
-        // Update last report timestamp
-        lastReportTimestamp = Date().timeIntervalSince1970
-        NSLog("EXTENSION MonitorExtension: ✅ Report timestamp updated")
-        fflush(stdout)
     }
 }
