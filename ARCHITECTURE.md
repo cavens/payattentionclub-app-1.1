@@ -147,3 +147,5 @@ All stored in `UserDefaults(suiteName: "group.com.payattentionclub.app")`:
 
 **Core rule**: Never try to read numeric data from DeviceActivityReport; all real-time numbers must flow through DeviceActivityMonitor → App Group → Main App.
 
+_Last updated: 2025-12-01_
+
