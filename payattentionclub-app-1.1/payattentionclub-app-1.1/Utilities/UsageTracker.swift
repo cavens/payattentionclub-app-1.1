@@ -46,37 +46,7 @@ class UsageTracker {
         return userDefaults.double(forKey: "consumedMinutes")
     }
     
-    /// Get today's daily usage entry from App Group
-    /// Returns nil if no entry exists for today
-    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
-    nonisolated func getTodayUsageEntry() -> DailyUsageEntry? {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return nil
-        }
-        
-        // Get today's date string (YYYY-MM-DD format)
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        dateFormatter.timeZone = TimeZone.current
-        let today = dateFormatter.string(from: Date())
-        
-        // Read today's daily usage entry
-        let entryKey = "daily_usage_\(today)"
-        guard let data = userDefaults.data(forKey: entryKey) else {
-            return nil
-        }
-        
-        do {
-            let entry = try JSONDecoder().decode(DailyUsageEntry.self, from: data)
-            return entry
-        } catch {
-            NSLog("UsageTracker: ❌ Failed to decode today's daily usage entry: \(error)")
-            return nil
-        }
-    }
-    
-    /// Get current time spent from today's daily usage entry
-    /// Falls back to consumedMinutes for backward compatibility if no daily usage entry exists
+    /// Get current time spent from the last threshold event
     /// Uses smart threshold distribution: 1-min early, 5-min regular, 1-min final
     /// Max undercount: ≤5 minutes globally, ≤1 minute in early/final windows
     /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
@@ -85,14 +55,11 @@ class UsageTracker {
             return 0.0
         }
         
-        // Try to read from today's daily usage entry first (new Phase 2 architecture)
-        if let todayEntry = getTodayUsageEntry() {
-            // Return total minutes from daily usage entry (already includes all threshold updates)
-            return todayEntry.totalMinutes * 60.0 // Convert to seconds
-        }
-        
-        // Fallback to consumedMinutes for backward compatibility (old architecture)
+        // Read consumed minutes from last threshold event (no synchronize() - not needed and can block)
         let consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
+        
+        // Return consumed minutes directly (no simulation)
+        // With smart threshold distribution: max undercount ≤5 min (≤1 min in early/final windows)
         return consumedMinutes * 60.0 // Convert to seconds
     }
     
@@ -137,42 +104,7 @@ class UsageTracker {
         }
         userDefaults.removeObject(forKey: "monitoringSelectionSet")
         userDefaults.removeObject(forKey: "commitmentDeadline")
-        userDefaults.removeObject(forKey: "commitmentId")
         userDefaults.synchronize()
-    }
-    
-    // MARK: - Commitment ID Storage
-    
-    /// Store commitment ID when commitment is created
-    /// Used by extension to identify which commitment to report usage for
-    func storeCommitmentId(_ id: String) {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            NSLog("EXTENSION UsageTracker: ❌ Failed to access App Group for storing commitment ID")
-            return
-        }
-        userDefaults.set(id, forKey: "commitmentId")
-        userDefaults.synchronize()
-        NSLog("EXTENSION UsageTracker: ✅ Stored commitment ID: \(id)")
-    }
-    
-    /// Get commitment ID
-    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
-    /// Used by extension to identify which commitment to report usage for
-    nonisolated func getCommitmentId() -> String? {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return nil
-        }
-        return userDefaults.string(forKey: "commitmentId")
-    }
-    
-    /// Clear commitment ID (called when monitoring ends or commitment expires)
-    func clearCommitmentId() {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        userDefaults.removeObject(forKey: "commitmentId")
-        userDefaults.synchronize()
-        NSLog("EXTENSION UsageTracker: ✅ Cleared commitment ID")
     }
     
     /// Check if monitoring flag is set (without checking deadline)

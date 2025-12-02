@@ -1,6 +1,5 @@
 import SwiftUI
 import Foundation
-import FamilyControls
 
 struct MonitorView: View {
     @EnvironmentObject var model: AppModel
@@ -100,49 +99,6 @@ struct MonitorView: View {
                         .cornerRadius(12)
                 }
                 .padding(.horizontal)
-                
-                // Debug Monitoring Button
-                Button(action: {
-                    Task { @MainActor in
-                        NSLog("DEBUG MonitorView: 🔵 Button tapped, checking authorization...")
-                        // Check authorization status first
-                        let status = await AuthorizationCenter.shared.authorizationStatus
-                        NSLog("DEBUG MonitorView: FamilyControls authorization status: \(status.rawValue)")
-                        print("DEBUG MonitorView: FamilyControls authorization status: \(status.rawValue)")
-                        
-                        if status == .approved {
-                            NSLog("DEBUG MonitorView: ✅ Authorization approved, calling startDebugMonitoring()...")
-                            await MonitoringManager.shared.startDebugMonitoring()
-                            NSLog("DEBUG MonitorView: ✅ startDebugMonitoring() completed")
-                        } else {
-                            NSLog("DEBUG MonitorView: ⚠️ Authorization not approved! Status: \(status.rawValue)")
-                            print("DEBUG MonitorView: ⚠️ Authorization not approved! Status: \(status.rawValue)")
-                        }
-                    }
-                }) {
-                    Text("Start Debug Monitoring")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.purple)
-                        .cornerRadius(12)
-                }
-                .padding(.horizontal)
-                
-                // Phase 2: Daily Usage Test Button
-                Button(action: {
-                    model.currentScreen = .dailyUsageTest
-                }) {
-                    Text("📊 Test Daily Usage Storage (Phase 2)")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.green)
-                        .cornerRadius(12)
-                }
-                .padding(.horizontal)
                 .padding(.bottom, 10)
                 
                 // Skip Button (temporary)
@@ -192,20 +148,6 @@ struct MonitorView: View {
             .withLogoutButton()
             .onAppear {
                 startTimer()
-                
-                // Diagnostic: Verify extension is in app bundle
-                verifyExtensionInBundle()
-                
-                // Phase 3: Sync unsynced usage entries when app comes to foreground
-                // Protection against duplicates is handled in UsageSyncManager
-                Task { @MainActor in
-                    do {
-                        try await UsageSyncManager.shared.syncToBackend()
-                    } catch {
-                        NSLog("SYNC MonitorView: ⚠️ Failed to sync usage on foreground: \(error)")
-                        // Don't show error to user, just log it
-                    }
-                }
             }
             .onDisappear {
                 stopTimer()
@@ -277,21 +219,6 @@ struct MonitorView: View {
         Task.detached(priority: .userInitiated) {
             // Access UsageTracker.shared on main actor, then call nonisolated methods
             let tracker = await MainActor.run { UsageTracker.shared }
-            
-            // Try to read from today's daily usage entry first (Phase 2 architecture)
-            if let todayEntry = tracker.getTodayUsageEntry() {
-                // Use usedMinutes from daily usage entry (already calculated as totalMinutes - baselineMinutes)
-                let usageSeconds = todayEntry.usedMinutes * 60
-                
-                // Update UI on main thread
-                await MainActor.run {
-                    model.currentUsageSeconds = usageSeconds
-                    model.updateCurrentPenalty()
-                }
-                return
-            }
-            
-            // Fallback to old method (for backward compatibility)
             let currentTotal = tracker.getCurrentTimeSpent()
             let baseline = tracker.getBaselineTime()
             let usageSeconds = Int(currentTotal) - Int(baseline)
@@ -313,45 +240,6 @@ struct MonitorView: View {
         let hours = Int(seconds) / 3600
         let minutes = (Int(seconds) % 3600) / 60
         return "\(hours)h \(minutes)m"
-    }
-    
-    /// Diagnostic: Verify extension is in app bundle
-    private func verifyExtensionInBundle() {
-        guard let extensionsPath = Bundle.main.builtInPlugInsPath else {
-            NSLog("EXTENSION DEBUG: ❌ No extensions path found in bundle")
-            return
-        }
-        
-        let fileManager = FileManager.default
-        do {
-            let extensionURLs = try fileManager.contentsOfDirectory(
-                at: URL(fileURLWithPath: extensionsPath),
-                includingPropertiesForKeys: nil
-            )
-            
-            NSLog("EXTENSION DEBUG: Found \(extensionURLs.count) extensions in bundle")
-            
-            let extensionNames = extensionURLs.map { $0.lastPathComponent }
-            NSLog("EXTENSION DEBUG: Extension names: \(extensionNames.joined(separator: ", "))")
-            
-            let monitorExtension = extensionURLs.first { $0.lastPathComponent.contains("DeviceActivityMonitorExtension") }
-            if let monitorExtension = monitorExtension {
-                NSLog("EXTENSION DEBUG: ✅ DeviceActivityMonitorExtension found: \(monitorExtension.lastPathComponent)")
-                
-                // Try to load the extension's Info.plist
-                let infoPlistPath = monitorExtension.appendingPathComponent("Info.plist")
-                if fileManager.fileExists(atPath: infoPlistPath.path) {
-                    if let infoDict = NSDictionary(contentsOfFile: infoPlistPath.path) {
-                        NSLog("EXTENSION DEBUG: Extension Info.plist contents: \(infoDict)")
-                    }
-                }
-            } else {
-                NSLog("EXTENSION DEBUG: ❌ DeviceActivityMonitorExtension NOT found in bundle!")
-                NSLog("EXTENSION DEBUG: Available extensions: \(extensionNames.joined(separator: ", "))")
-            }
-        } catch {
-            NSLog("EXTENSION DEBUG: ❌ Failed to list extensions: \(error)")
-        }
     }
 }
 

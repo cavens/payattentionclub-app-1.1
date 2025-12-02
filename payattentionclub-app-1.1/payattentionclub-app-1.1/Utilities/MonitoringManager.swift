@@ -266,7 +266,7 @@ class MonitoringManager {
         let center = DeviceActivityCenter()
         
         // Log the authorization status just to be sure
-        let status = await AuthorizationCenter.shared.authorizationStatus
+        let status = AuthorizationCenter.shared.authorizationStatus
         NSLog("MARKERS MonitoringManager: FamilyControls status = %d", status.rawValue)
         
         let now = Date()

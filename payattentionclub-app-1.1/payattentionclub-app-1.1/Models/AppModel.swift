@@ -159,6 +159,30 @@ final class AppModel: ObservableObject {
         }
     }
     
+    // MARK: - Deep Link Handling
+    
+    /// Handle custom URL deep links (payattentionclub://...)
+    func handleDeepLink(_ url: URL) {
+        NSLog("DEEPLINK AppModel: Handling URL %@", url.absoluteString)
+        
+        guard url.scheme?.lowercased() == "payattentionclub" else {
+            NSLog("DEEPLINK AppModel: Unsupported scheme %@", url.scheme ?? "nil")
+            return
+        }
+        
+        let host = url.host?.lowercased() ?? ""
+        switch host {
+        case "weekly-results":
+            NSLog("DEEPLINK AppModel: Navigating to bulletin view for weekly results")
+            navigate(.bulletin)
+        case "monitor":
+            NSLog("DEEPLINK AppModel: Navigating to monitor view")
+            navigate(.monitor)
+        default:
+            NSLog("DEEPLINK AppModel: No handler for host %@", host)
+        }
+    }
+    
     // MARK: - Authorization Calculation
     
     /// Calculate authorization amount based on formula

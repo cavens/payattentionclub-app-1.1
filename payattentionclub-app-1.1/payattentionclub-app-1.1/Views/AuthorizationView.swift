@@ -229,10 +229,6 @@ struct AuthorizationView: View {
             NSLog("LOCKIN AuthorizationView: commitmentId: \(commitmentResponse.commitmentId)")
             NSLog("LOCKIN AuthorizationView: maxChargeCents: \(commitmentResponse.maxChargeCents)")
             
-            // Store commitment ID in App Group for extension to use
-            UsageTracker.shared.storeCommitmentId(commitmentResponse.commitmentId)
-            NSLog("LOCKIN AuthorizationView: ✅ Stored commitmentId: \(commitmentResponse.commitmentId)")
-            
             // Step 3: Store baseline time (0 when "Lock in" is pressed)
         await MainActor.run {
             model.baselineUsageSeconds = 0
@@ -243,30 +239,24 @@ struct AuthorizationView: View {
         
         // Store baseline in App Group
         UsageTracker.shared.storeBaselineTime(0.0)
-        NSLog("LOCKIN AuthorizationView: ✅ Stored baselineTimeSpent: 0.0")
             
             // Store commitment deadline (next Monday noon EST)
             let deadline = await MainActor.run { model.getNextMondayNoonEST() }
-            NSLog("LOCKIN AuthorizationView: 🔒 Storing commitment deadline: %@", String(describing: deadline))
-            print("LOCKIN AuthorizationView: 🔒 Storing commitment deadline: \(deadline)")
+            NSLog("RESET AuthorizationView: 🔒 Storing commitment deadline: %@", String(describing: deadline))
+            print("RESET AuthorizationView: 🔒 Storing commitment deadline: \(deadline)")
             fflush(stdout)
             UsageTracker.shared.storeCommitmentDeadline(deadline)
             
-            // Verify all required values were stored (for extension to use)
-            let storedCommitmentId = UsageTracker.shared.getCommitmentId()
+            // Verify deadline was stored
             let storedDeadline = UsageTracker.shared.getCommitmentDeadline()
-            let storedBaseline = UsageTracker.shared.getBaselineTime()
-            
-            NSLog("LOCKIN AuthorizationView: 🔍 Verifying App Group storage:")
-            NSLog("LOCKIN AuthorizationView:   - commitmentId: \(storedCommitmentId ?? "❌ MISSING")")
-            NSLog("LOCKIN AuthorizationView:   - commitmentDeadline: \(storedDeadline != nil ? "✅ \(storedDeadline!)" : "❌ MISSING")")
-            NSLog("LOCKIN AuthorizationView:   - baselineTimeSpent: \(storedBaseline)s")
-            
-            if storedCommitmentId == nil {
-                NSLog("LOCKIN AuthorizationView: ⚠️⚠️⚠️ WARNING: commitmentId is MISSING - extension will fail to write data!")
-            }
-            if storedDeadline == nil {
-                NSLog("LOCKIN AuthorizationView: ⚠️⚠️⚠️ WARNING: commitmentDeadline is MISSING - extension will fail to write data!")
+            if let storedDeadline = storedDeadline {
+                NSLog("RESET AuthorizationView: ✅ Deadline stored successfully: %@", String(describing: storedDeadline))
+                print("RESET AuthorizationView: ✅ Deadline stored successfully: \(storedDeadline)")
+                fflush(stdout)
+            } else {
+                NSLog("RESET AuthorizationView: ❌ ERROR: Deadline was NOT stored!")
+                print("RESET AuthorizationView: ❌ ERROR: Deadline was NOT stored!")
+                fflush(stdout)
             }
         
         // Ensure thresholds are prepared before starting
@@ -304,23 +294,6 @@ struct AuthorizationView: View {
         // Uses cached thresholds if available (prepared after "Commit" button or above)
         if #available(iOS 16.0, *) {
             Task {
-                // Final verification before starting monitoring
-                let finalCommitmentId = UsageTracker.shared.getCommitmentId()
-                let finalDeadline = UsageTracker.shared.getCommitmentDeadline()
-                let finalBaseline = UsageTracker.shared.getBaselineTime()
-                
-                NSLog("LOCKIN AuthorizationView: 🔍 Final verification before starting monitoring:")
-                NSLog("LOCKIN AuthorizationView:   - commitmentId: \(finalCommitmentId ?? "❌ MISSING")")
-                NSLog("LOCKIN AuthorizationView:   - commitmentDeadline: \(finalDeadline != nil ? "✅ \(finalDeadline!)" : "❌ MISSING")")
-                NSLog("LOCKIN AuthorizationView:   - baselineTimeSpent: \(finalBaseline)s")
-                
-                if finalCommitmentId == nil || finalDeadline == nil {
-                    NSLog("LOCKIN AuthorizationView: ⚠️⚠️⚠️ CRITICAL: Required values missing! Extension will fail to write data!")
-                    NSLog("LOCKIN AuthorizationView: ⚠️ Extension needs: commitmentId, commitmentDeadline, baselineTimeSpent")
-                } else {
-                    NSLog("LOCKIN AuthorizationView: ✅ All required values present - extension should be able to write data")
-                }
-                
                 await MonitoringManager.shared.startMonitoring(
                     selection: model.selectedApps,
                     limitMinutes: Int(model.limitMinutes)

@@ -2,6 +2,7 @@ import Foundation
 import Supabase
 import Auth
 import FamilyControls
+import PostgREST
 
 // MARK: - Local Storage Implementation
 
@@ -91,6 +92,49 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
     }
 }
 
+struct SyncDailyUsageEntryPayload: Codable, Sendable {
+    let date: String
+    let weekStartDate: String
+    let usedMinutes: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case date
+        case weekStartDate = "week_start_date"
+        case usedMinutes = "used_minutes"
+    }
+}
+
+struct SyncDailyUsageParams: Encodable, Sendable {
+    let entries: [SyncDailyUsageEntryPayload]
+    
+    enum CodingKeys: String, CodingKey {
+        case entries = "p_entries"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(entries, forKey: .entries)
+    }
+}
+
+struct SyncDailyUsageResponse: Codable, Sendable {
+    let syncedCount: Int?
+    let failedCount: Int?
+    let syncedDates: [String]?
+    let failedDates: [String]?
+    let errors: [String]?
+    let processedWeeks: [String]?
+    
+    enum CodingKeys: String, CodingKey {
+        case syncedCount = "synced_count"
+        case failedCount = "failed_count"
+        case syncedDates = "synced_dates"
+        case failedDates = "failed_dates"
+        case errors
+        case processedWeeks = "processed_weeks"
+    }
+}
+
 // MARK: - Response Models
 
 struct BillingStatusResponse: Codable {
@@ -124,20 +168,19 @@ struct ConfirmSetupIntentResponse: Codable, Sendable {
     let paymentMethodId: String?
     let alreadyConfirmed: Bool?
     
-    // Explicit nonisolated decoder to avoid MainActor isolation issues in Swift 6
+    enum CodingKeys: String, CodingKey {
+        case success
+        case setupIntentId
+        case paymentMethodId
+        case alreadyConfirmed
+    }
+    
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         success = try container.decode(Bool.self, forKey: .success)
         setupIntentId = try container.decodeIfPresent(String.self, forKey: .setupIntentId)
         paymentMethodId = try container.decodeIfPresent(String.self, forKey: .paymentMethodId)
         alreadyConfirmed = try container.decodeIfPresent(Bool.self, forKey: .alreadyConfirmed)
-    }
-    
-    enum CodingKeys: String, CodingKey {
-        case success
-        case setupIntentId = "setup_intent_id"
-        case paymentMethodId = "payment_method_id"
-        case alreadyConfirmed = "already_confirmed"
     }
 }
 
@@ -221,28 +264,28 @@ class BackendClient {
     
     private init() {
         // Initialize Supabase client with Auth configuration
-        // Set emitLocalSessionAsInitialSession to opt-in to new session behavior
-        // This addresses the deprecation warning about session handling
         let localStorage = UserDefaultsLocalStorage()
         
-        // Create AuthClient with custom configuration including emitLocalSessionAsInitialSession
+        // Opt-in to new Auth behavior immediately (silences warning)
         let authConfig = AuthClient.Configuration(
             localStorage: localStorage,
             emitLocalSessionAsInitialSession: true
         )
         _ = AuthClient(configuration: authConfig)
         
+        // Opt-in to emitting the locally stored session immediately to silence warning
+        let authOptions = SupabaseClientOptions.AuthOptions(
+            storage: localStorage,
+            emitLocalSessionAsInitialSession: true
+        )
+        
         self.supabase = SupabaseClient(
             supabaseURL: URL(string: SupabaseConfig.projectURL)!,
             supabaseKey: SupabaseConfig.anonKey,
             options: SupabaseClientOptions(
-                auth: SupabaseClientOptions.AuthOptions(storage: localStorage)
+                auth: authOptions
             )
         )
-        
-        // Note: The deprecation warning about emitLocalSessionAsInitialSession
-        // may persist if AuthOptions doesn't support passing the full configuration.
-        // The warning is informational and won't break functionality.
     }
     
     // MARK: - Authentication
@@ -283,33 +326,7 @@ class BackendClient {
                 nonce: nonce
             )
         )
-        
-        // Store auth token in App Group for extension to use
-        await storeAuthTokenInAppGroup()
-        
         return session
-    }
-    
-    /// Store current auth token in App Group for extension to use
-    /// Called after successful authentication or session refresh
-    func storeAuthTokenInAppGroup() async {
-        do {
-            let session = try await supabase.auth.session
-            let accessToken = session.accessToken
-            
-            guard let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub.app") else {
-                NSLog("EXTENSION BackendClient: ❌ Failed to access App Group")
-                return
-            }
-            
-            userDefaults.set(accessToken, forKey: "supabaseAccessToken")
-            userDefaults.set(Date().timeIntervalSince1970, forKey: "supabaseAccessTokenTimestamp")
-            userDefaults.synchronize()
-            
-            NSLog("EXTENSION BackendClient: ✅ Stored auth token in App Group")
-        } catch {
-            NSLog("EXTENSION BackendClient: ❌ Failed to store auth token: \(error)")
-        }
     }
     
     /// Sign out the current user
@@ -345,9 +362,6 @@ class BackendClient {
             NSLog("BILLING BackendClient: needsSetupIntent: \(response.needsSetupIntent) (may be default false if missing)")
             NSLog("BILLING BackendClient: setupIntentClientSecret: \(response.setupIntentClientSecret ?? "nil")")
             NSLog("BILLING BackendClient: stripeCustomerId: \(response.stripeCustomerId ?? "nil")")
-            
-            // Store auth token in App Group after successful API call (session might be refreshed)
-            await storeAuthTokenInAppGroup()
             
             return response
         } catch {
@@ -574,6 +588,58 @@ class BackendClient {
         return try await task.value
     }
     
+    /// 2.5. Batch sync daily usage entries
+    /// Calls: rpc_sync_daily_usage (batch RPC)
+    /// - Parameter entries: Array of unsynced daily usage entries from App Group
+    /// - Returns: Array of date strings that were successfully synced
+    nonisolated func syncDailyUsage(_ entries: [DailyUsageEntry]) async throws -> [String] {
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
+        
+        guard !entries.isEmpty else {
+            NSLog("SYNC BackendClient: ⚠️ syncDailyUsage() called with empty entries array")
+            return []
+        }
+        
+        let payload: [SyncDailyUsageEntryPayload] = entries.map { entry in
+            let computedUsedMinutes = max(0, Int(entry.totalMinutes - entry.baselineMinutes))
+            return SyncDailyUsageEntryPayload(
+                date: entry.date,
+                weekStartDate: entry.weekStartDate,
+                usedMinutes: computedUsedMinutes
+            )
+        }
+        
+        let params = SyncDailyUsageParams(entries: payload)
+        NSLog("SYNC BackendClient: 🔄 Calling rpc_sync_daily_usage with \(payload.count) entries")
+        
+        do {
+            let builder = try supabase.rpc("rpc_sync_daily_usage", params: params)
+            let response: PostgrestResponse<SyncDailyUsageResponse> = try await builder.execute()
+            let value = response.value
+            
+            let syncedDates = value.syncedDates ?? []
+            let failedDates = value.failedDates ?? []
+            let errors = value.errors ?? []
+            
+            NSLog("SYNC BackendClient: ✅ rpc_sync_daily_usage synced \(syncedDates.count) dates, failed \(failedDates.count)")
+            
+            if !failedDates.isEmpty {
+                NSLog("SYNC BackendClient: ⚠️ Failed dates: \(failedDates.joined(separator: ", "))")
+            }
+            
+            if !errors.isEmpty {
+                NSLog("SYNC BackendClient: ⚠️ Errors from backend: \(errors.joined(separator: "; "))")
+            }
+            
+            return syncedDates
+        } catch {
+            NSLog("SYNC BackendClient: ❌ Failed to call rpc_sync_daily_usage: \(error)")
+            throw BackendError.serverError("Failed to sync usage entries: \(error.localizedDescription)")
+        }
+    }
+    
     /// 3. Report daily usage
     /// Calls: RPC function rpc_report_usage (or Edge Function if needed)
     /// - Parameters:
@@ -613,244 +679,15 @@ class BackendClient {
             p_used_minutes: usedMinutes
         )
         
-        return try await Task.detached(priority: .userInitiated) { [supabase, params] in
-            do {
-                // Call RPC and execute to get PostgrestResponse
-                let response = try await supabase.rpc("rpc_report_usage", params: params).execute()
-                
-                // Extract data and decode manually
-                // response.data is Data (non-optional) when RPC call succeeds
-                let data = response.data
-                
-                let decoder = JSONDecoder()
-                let usageResponse = try decoder.decode(UsageReportResponse.self, from: data)
-                
-                NSLog("USAGE BackendClient: ✅ Successfully reported usage")
-                return usageResponse
-            } catch {
-                NSLog("USAGE BackendClient: ❌ Failed to report usage: \(error)")
-                throw BackendError.serverError("Failed to report usage: \(error.localizedDescription)")
-            }
-        }.value
-    }
-    
-    // MARK: - Batch Sync (Phase 3)
-    
-    // Track if sync is in progress to prevent concurrent calls
-    // Use nonisolated(unsafe) since these are accessed from nonisolated context
-    nonisolated(unsafe) private static var _isSyncingDailyUsage = false
-    private static let _syncQueue = DispatchQueue(label: "com.payattentionclub.backend.sync", qos: .userInitiated)
-    
-    /// Sync multiple daily usage entries at once
-    /// Phase 3: Used by UsageSyncManager to upload unsynced entries
-    /// - Parameter entries: Array of daily usage entries to sync
-    /// - Returns: Array of date strings that were successfully synced
-    /// - Throws: BackendError if sync fails
-    nonisolated func syncDailyUsage(_ entries: [DailyUsageEntry]) async throws -> [String] {
-        let callId = String(UUID().uuidString.prefix(8))
-        NSLog("SYNC BackendClient[\(callId)]: 🔵 syncDailyUsage() called with \(entries.count) entries")
-        print("SYNC BackendClient[\(callId)]: 🔵 syncDailyUsage() called with \(entries.count) entries")
-        fflush(stdout)
-        
-        guard !entries.isEmpty else {
-            NSLog("SYNC BackendClient[\(callId)]: ⚠️ Empty entries array, returning empty")
-            return []
+        do {
+            let builder = try supabase.rpc("rpc_report_usage", params: params)
+            let response: PostgrestResponse<UsageReportResponse> = try await builder.execute()
+            NSLog("USAGE BackendClient: ✅ Successfully reported usage")
+            return response.value
+        } catch {
+            NSLog("USAGE BackendClient: ❌ Failed to report usage: \(error)")
+            throw BackendError.serverError("Failed to report usage: \(error.localizedDescription)")
         }
-        
-        // Prevent concurrent syncs at the BackendClient level
-        // Use sync dispatch for atomic check-and-set (blocks until complete)
-        NSLog("SYNC BackendClient[\(callId)]: 🔄 Requesting sync permission...")
-        print("SYNC BackendClient[\(callId)]: 🔄 Requesting sync permission...")
-        fflush(stdout)
-        
-        // Use sync dispatch to ensure atomic check-and-set
-        let canProceed = Self._syncQueue.sync {
-            let wasSyncing = Self._isSyncingDailyUsage
-            NSLog("SYNC BackendClient[\(callId)]: 🔍 Sync check - isSyncing: \(wasSyncing)")
-            print("SYNC BackendClient[\(callId)]: 🔍 Sync check - isSyncing: \(wasSyncing)")
-            fflush(stdout)
-            
-            guard !wasSyncing else {
-                NSLog("SYNC BackendClient[\(callId)]: ⏸️ syncDailyUsage() already in progress, rejecting concurrent call")
-                print("SYNC BackendClient[\(callId)]: ⏸️ syncDailyUsage() already in progress, rejecting concurrent call")
-                fflush(stdout)
-                return false
-            }
-            
-            // Atomic set
-            Self._isSyncingDailyUsage = true
-            NSLog("SYNC BackendClient[\(callId)]: ✅ syncDailyUsage() approved, proceeding (flag set to true)")
-            print("SYNC BackendClient[\(callId)]: ✅ syncDailyUsage() approved, proceeding (flag set to true)")
-            fflush(stdout)
-            return true
-        }
-        
-        NSLog("SYNC BackendClient[\(callId)]: 🔄 Permission check returned: canProceed=\(canProceed)")
-        print("SYNC BackendClient[\(callId)]: 🔄 Permission check returned: canProceed=\(canProceed)")
-        fflush(stdout)
-        
-        guard canProceed else {
-            NSLog("SYNC BackendClient[\(callId)]: ⏸️ Concurrent sync rejected, returning empty")
-            print("SYNC BackendClient[\(callId)]: ⏸️ Concurrent sync rejected, returning empty")
-            fflush(stdout)
-            return []
-        }
-        
-        // Clear flag when done - use sync dispatch for atomicity
-        defer {
-            NSLog("SYNC BackendClient[\(callId)]: 🔚 defer executing, clearing flag")
-            Self._syncQueue.sync {
-                let wasSyncing = Self._isSyncingDailyUsage
-                Self._isSyncingDailyUsage = false
-                NSLog("SYNC BackendClient[\(callId)]: 🔚 syncDailyUsage() completed, flag cleared (was: \(wasSyncing), now: false)")
-                print("SYNC BackendClient[\(callId)]: 🔚 syncDailyUsage() completed, flag cleared (was: \(wasSyncing), now: false)")
-                fflush(stdout)
-            }
-        }
-        
-        NSLog("SYNC BackendClient[\(callId)]: 🚀 Starting batch sync of \(entries.count) daily usage entries")
-        
-        // Check authentication first
-        guard await isAuthenticated else {
-            throw BackendError.notAuthenticated
-        }
-        
-        // Build JSON array of entries for batch RPC call
-        struct SyncEntry: Encodable, Sendable {
-            let date: String
-            let used_minutes: Int
-            let week_start_date: String
-        }
-        
-        var syncEntries: [SyncEntry] = []
-        for entry in entries {
-            // Calculate usedMinutes to avoid MainActor isolation issues
-            let usedMinutes = max(0, Int(entry.totalMinutes - entry.baselineMinutes))
-            
-            syncEntries.append(SyncEntry(
-                date: entry.date,
-                used_minutes: usedMinutes,
-                week_start_date: entry.weekStartDate
-            ))
-        }
-        
-        struct SyncDailyUsageParams: Encodable, Sendable {
-            let p_entries: [SyncEntry]
-        }
-        
-        let params = SyncDailyUsageParams(p_entries: syncEntries)
-        
-        // Log the actual data being sent for debugging
-        if let jsonData = try? JSONEncoder().encode(params),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            NSLog("SYNC BackendClient[\(callId)]: 📋 Request payload: \(jsonString)")
-            print("SYNC BackendClient[\(callId)]: 📋 Request payload: \(jsonString)")
-        }
-        
-        NSLog("SYNC BackendClient[\(callId)]: 📤 Calling batch RPC with \(syncEntries.count) entries")
-        print("SYNC BackendClient[\(callId)]: 📤 Calling batch RPC with \(syncEntries.count) entries")
-        for (index, entry) in syncEntries.enumerated() {
-            NSLog("SYNC BackendClient[\(callId)]:   Entry \(index): date=\(entry.date), used_minutes=\(entry.used_minutes), week_start_date=\(entry.week_start_date)")
-            print("SYNC BackendClient[\(callId)]:   Entry \(index): date=\(entry.date), used_minutes=\(entry.used_minutes), week_start_date=\(entry.week_start_date)")
-        }
-        fflush(stdout)
-        
-        return try await Task.detached(priority: .userInitiated) { [supabase, params, callId] in
-            do {
-                NSLog("SYNC BackendClient[\(callId)]: 🔄 Executing batch RPC call...")
-                print("SYNC BackendClient[\(callId)]: 🔄 Executing batch RPC call...")
-                fflush(stdout)
-                
-                // Call batch RPC function
-                let response = try await supabase.rpc("rpc_sync_daily_usage", params: params).execute()
-                
-                NSLog("SYNC BackendClient[\(callId)]: 📥 Received response from batch RPC")
-                print("SYNC BackendClient[\(callId)]: 📥 Received response from batch RPC")
-                
-                // Log raw response data for debugging
-                let responseString = String(data: response.data, encoding: .utf8)
-                if let responseString = responseString {
-                    NSLog("SYNC BackendClient[\(callId)]: 📋 Response data: \(responseString)")
-                    print("SYNC BackendClient[\(callId)]: 📋 Response data: \(responseString)")
-                } else {
-                    NSLog("SYNC BackendClient[\(callId)]: ⚠️ Response data is not valid UTF-8, size: \(response.data.count) bytes")
-                    print("SYNC BackendClient[\(callId)]: ⚠️ Response data is not valid UTF-8, size: \(response.data.count) bytes")
-                }
-                fflush(stdout)
-                
-                // Extract data and decode manually
-                let data = response.data
-                let decoder = JSONDecoder()
-                let syncResponse = try decoder.decode(BatchSyncResponse.self, from: data)
-                
-                let failedCountValue = syncResponse.failedCount ?? 0
-                NSLog("SYNC BackendClient[\(callId)]: ✅ Batch sync completed - synced: \(syncResponse.syncedCount), failed: \(failedCountValue)")
-                print("SYNC BackendClient[\(callId)]: ✅ Batch sync completed - synced: \(syncResponse.syncedCount), failed: \(failedCountValue)")
-                fflush(stdout)
-                
-                if !syncResponse.errors.isEmpty {
-                    NSLog("SYNC BackendClient[\(callId)]: ⚠️ Batch sync errors: \(syncResponse.errors.joined(separator: "; "))")
-                    print("SYNC BackendClient[\(callId)]: ⚠️ Batch sync errors: \(syncResponse.errors.joined(separator: "; "))")
-                    fflush(stdout)
-                }
-                
-                // Return synced dates (or throw if all failed)
-                if syncResponse.syncedCount == 0 && failedCountValue > 0 {
-                    let errorMsg = syncResponse.errors.isEmpty 
-                        ? "All entries failed to sync" 
-                        : syncResponse.errors.joined(separator: "; ")
-                    throw BackendError.serverError("Failed to sync all entries: \(errorMsg)")
-                }
-                
-                NSLog("SYNC BackendClient[\(callId)]: ✅ Returning \(syncResponse.syncedDates.count) synced dates")
-                print("SYNC BackendClient[\(callId)]: ✅ Returning \(syncResponse.syncedDates.count) synced dates")
-                fflush(stdout)
-                
-                return syncResponse.syncedDates
-            } catch {
-                NSLog("SYNC BackendClient[\(callId)]: ❌ Failed to batch sync: \(error)")
-                print("SYNC BackendClient[\(callId)]: ❌ Failed to batch sync: \(error)")
-                NSLog("SYNC BackendClient[\(callId)]: 🔍 Error type: \(type(of: error))")
-                print("SYNC BackendClient[\(callId)]: 🔍 Error type: \(type(of: error))")
-                if let decodingError = error as? DecodingError {
-                    NSLog("SYNC BackendClient[\(callId)]: 🔍 Decoding error details: \(decodingError)")
-                    print("SYNC BackendClient[\(callId)]: 🔍 Decoding error details: \(decodingError)")
-                }
-                fflush(stdout)
-                throw BackendError.serverError("Failed to batch sync: \(error.localizedDescription)")
-            }
-        }.value
-    }
-}
-
-// MARK: - Batch Sync Response Model
-
-struct BatchSyncResponse: Codable, Sendable {
-    let syncedCount: Int
-    let failedCount: Int? // Optional because backend returns null when no failures
-    let syncedDates: [String]
-    let failedDates: [String]
-    let errors: [String]
-    let processedWeeks: [String]
-    
-    enum CodingKeys: String, CodingKey {
-        case syncedCount = "synced_count"
-        case failedCount = "failed_count"
-        case syncedDates = "synced_dates"
-        case failedDates = "failed_dates"
-        case errors
-        case processedWeeks = "processed_weeks"
-    }
-    
-    // Explicit nonisolated decoder to avoid MainActor isolation issues in Swift 6
-    nonisolated init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        syncedCount = try container.decode(Int.self, forKey: .syncedCount)
-        failedCount = try container.decodeIfPresent(Int.self, forKey: .failedCount) // Handle null
-        syncedDates = try container.decode([String].self, forKey: .syncedDates)
-        failedDates = try container.decode([String].self, forKey: .failedDates)
-        errors = try container.decode([String].self, forKey: .errors)
-        processedWeeks = try container.decode([String].self, forKey: .processedWeeks)
     }
 }
 
@@ -875,7 +712,6 @@ struct UsageReportResponse: Codable, Sendable {
         case poolTotalCents = "pool_total_cents"
     }
     
-    // Explicit nonisolated decoder to avoid MainActor isolation issues in Swift 6
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         date = try container.decode(String.self, forKey: .date)

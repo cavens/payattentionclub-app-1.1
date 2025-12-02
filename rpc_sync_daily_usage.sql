@@ -216,3 +216,4 @@ ALTER FUNCTION public."rpc_sync_daily_usage"("p_entries" jsonb) OWNER TO "postgr
 GRANT EXECUTE ON FUNCTION public."rpc_sync_daily_usage"("p_entries" jsonb) TO authenticated;
 
 
+

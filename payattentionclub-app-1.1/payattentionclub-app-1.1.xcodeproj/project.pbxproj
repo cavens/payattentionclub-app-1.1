@@ -56,11 +56,21 @@
 			);
 			target = CD43B0582EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */;
 		};
+		CDA33E092EDE060A002646EB /* Exceptions for "payattentionclub-app-1.1" folder in "payattentionclub-app-1.1" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"payattentionclub-app-1-1-Info.plist",
+			);
+			target = CD43B0452EC4044A00BCDBB9 /* payattentionclub-app-1.1 */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CD43B0482EC4044A00BCDBB9 /* payattentionclub-app-1.1 */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CDA33E092EDE060A002646EB /* Exceptions for "payattentionclub-app-1.1" folder in "payattentionclub-app-1.1" target */,
+			);
 			path = "payattentionclub-app-1.1";
 			sourceTree = "<group>";
 		};
@@ -399,6 +409,7 @@
 				DEVELOPMENT_TEAM = WV7L7Q728Z;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "payattentionclub-app-1-1-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -435,6 +446,7 @@
 				DEVELOPMENT_TEAM = WV7L7Q728Z;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "payattentionclub-app-1-1-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

@@ -96,9 +96,104 @@ To verify fix:
 
 ---
 
+## Phase 2: Weekly Grace Window Needs Pre-Week Buffer
+
+**Status**: Known Issue - UX/Behavioral  
+**Severity**: Low (User Expectation)  
+**Date Identified**: 2025-12-01  
+**Phase**: Phase 2 - Commitment Tracking
+
+### Description
+
+Weekly commitments currently apply a **24-hour grace period only *after* the week ends**. We now need a **2–4 hour buffer *before* the week ends** during which usage should **not** be counted. This ensures users get an automatic “cool down” window leading into the week transition without impacting their streak.
+
+### Symptoms
+
+- Usage recorded during the final hours of the week still affects the outgoing week totals.
+- Users see last-minute usage reflected in the dashboard when it should be ignored.
+- Grace logic does not match current product expectations (pre-week buffer missing).
+
+### Impact
+
+**Functional**: ⚠️ Low - Tracking still works but doesn’t follow desired grace rules  
+**User Experience**: ⚠️ Medium - Users may feel penalized for last-minute usage  
+**Data Integrity**: ✅ None - Data is accurate, just counted when it shouldn’t be  
+**Product Consistency**: ⚠️ Medium - Behavior differs from documented UX
+
+### Proposed Fix
+
+1. Update commitment evaluation logic to treat **the final 2–4 hours of the week as grace time** (usage ignored).
+2. Maintain the existing **24-hour post-week grace period**.
+3. Ensure UI labels/tooltips reflect the expanded window.
+4. Add automated tests covering both pre- and post-week grace windows.
+
+### Code Locations
+
+- `UsageTracker.swift` (weekly window calculations)
+- `CommitmentEvaluator.swift` or equivalent logic handling grace periods
+- Any UI components reflecting “time remaining” for the week
+
+### Testing
+
+1. Simulate time within final 2–4 hours of a weekly window: verify usage is ignored.
+2. Verify usage outside the buffer still counts.
+3. Confirm 24-hour post-week grace still works.
+
+---
+
 ## Future Issues
 
 _Add new issues here as they are discovered..._
+
+---
+
+## Phase 1: Email Contact Limitation with Sign in with Apple
+
+**Status**: Known Issue - Potential Product Limitation  
+**Severity**: Medium (Growth & Support)  
+**Date Identified**: 2025-12-01  
+**Phase**: Phase 1 - Authentication & Onboarding
+
+### Description
+
+Users signing in exclusively via “Sign in with Apple” provide randomized, pseudonymous relay email addresses (e.g., `abcd1234@privaterelay.appleid.com`). We currently **do not collect a real contact email**, so:
+- Transactional emails (weekly summaries, nudges) may be filtered or ignored.
+- We can’t guarantee we can reach users outside the app.
+- Support follow-ups are difficult when Apple relay is disabled or rate-limited.
+
+### Symptoms
+
+- Email campaigns (Loops) only reach Apple relay addresses.
+- Some users report never receiving reminders.
+- We cannot correlate app accounts with real customer support tickets.
+
+### Impact
+
+**Product**: ⚠️ Medium – reduces engagement with email reminders and nudges.  
+**Support**: ⚠️ Medium – harder to reach customers proactively.  
+**Compliance**: ✅ None – still compliant, but Apple may throttle relays.  
+**Data**: ✅ None – no data loss, just communication friction.
+
+### Proposed Fix
+
+1. Prompt users (post-onboarding) to optionally share their real email address for reminders/support.  
+2. Store it securely in Supabase and mark whether the user opted in.  
+3. Update backend/email logic to prefer the real email when available, fallback to Apple relay otherwise.  
+4. Add UI copy explaining why the primary email improves reminders.  
+5. Consider making this mandatory for features that rely on external communication.
+
+### Code/Feature Touchpoints
+
+- `AuthorizationView.swift` (post-login UI)  
+- `BackendClient` / Supabase schema (extra user field for contact email + consent flag)  
+- Reminder scheduling logic (Loops template data)  
+- Account settings view (allow editing/removal)
+
+### Testing
+
+- Sign in via Apple, add a real email, verify Supabase stores and Loops sends to the correct address.  
+- Ensure opt-out/respect user deletion of the real email.  
+- Confirm backend falls back to Apple relay if no real email exists.
 
 ---
 
