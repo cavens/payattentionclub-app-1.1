@@ -191,24 +191,35 @@ func syncDailyUsage(_ entries: [DailyUsageEntry]) async throws -> SyncResponse
    - Record PaymentIntent IDs + amounts on the commitment/week tables.
    - **Tests:** invoke manually with fixtures covering synced/unsynced users and verify Stripe + DB records.
 
-5. **Step 4 – Late sync reconciliation**
-   - Extend `rpc_sync_daily_usage` + backend helpers to detect already-charged weeks.
-   - Recompute actual penalty; issue refunds when actual < charged, or additional charges when actual > charged.
-   - Update `user_week_penalties` with final settlement state.
-   - **Tests:** simulate a late sync and confirm refund/additional charge flows plus logging.
+5. **Step 4A – Detect late-sync reconciliation needs (current)**
+   - Extend `rpc_sync_daily_usage` (and any shared helpers) to look up already-settled weeks and compare new totals against `charged_amount_cents`.
+   - Populate `needs_reconciliation`, `reconciliation_delta_cents`, `reconciliation_reason`, and timestamps on `user_week_penalties`.
+   - **Tests:** simulate a late sync in SQL and confirm the RPC response plus table rows flag the delta correctly.
 
-6. **Step 5 – Frontend & copy**
+6. **Step 4B – Reconciliation processor (Edge Function)**
+   - Create `supabase/functions/settlement-reconcile/index.ts` that scans `user_week_penalties` where `needs_reconciliation = true`.
+   - For negative deltas → trigger Stripe refunds; for positive deltas → create incremental PaymentIntents (using saved payment method) and update `payments`.
+   - Update `settlement_status`, `charged_amount_cents`, and refund metadata to match the outcome.
+   - **Tests:** run against fixture data (one refund, one extra charge) and verify Stripe + DB mutations.
+
+7. **Step 4C – Integration + guardrails**
+   - Wire the reconciliation trigger into the iOS sync flow (e.g., have `UsageSyncManager` poll RPC results) and/or schedule a dedicated cron job.
+   - Add structured logging + alerts for reconciliation attempts and failures.
+   - Expand `test_rpc_sync_daily_usage.sql` with refund/extra-charge scenarios and document manual QA steps.
+   - **Tests:** full dry-run of “sync Wednesday after worst-case charge” covering RPC → Edge Function → Stripe.
+
+8. **Step 5 – Frontend & copy**
    - Update `AuthorizationView` copy: “We save your card now and charge you after each week. If you don’t open the app by Tuesday noon ET, we’ll charge the maximum possible penalty.”
    - Add `SettlementStatusView` to surface statuses: waiting for sync, charged worst-case, refund pending, settled actual.
    - Update sync banners to highlight the Tuesday noon deadline.
    - **Tests:** run through lock-in + monitor flows to verify text and UI states.
 
-7. **Step 6 – Monitoring & alerts**
+9. **Step 6 – Monitoring & alerts**
    - Add structured logs + alerting for reminder job, settlement job, and refund/extra-charge flows.
    - Define alert channels (Slack/PagerDuty) for failures or missed cron executions.
    - **Tests:** inject failures to confirm alerts trigger.
 
-8. **Step 7 – End-to-end QA**
+10. **Step 7 – End-to-end QA**
    - Scenario A: user syncs Monday afternoon → only actual penalty is charged.
    - Scenario B: user never opens the app → Tuesday worst-case charge fires.
    - Scenario C: user syncs Wednesday → refund/extra charge path completes.
