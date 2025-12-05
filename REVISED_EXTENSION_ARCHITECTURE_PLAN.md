@@ -191,18 +191,17 @@ func syncDailyUsage(_ entries: [DailyUsageEntry]) async throws -> SyncResponse
    - Record PaymentIntent IDs + amounts on the commitment/week tables.
    - **Tests:** invoke manually with fixtures covering synced/unsynced users and verify Stripe + DB records.
 
-5. **Step 4A – Detect late-sync reconciliation needs (current)**
+5. **Step 4A – Detect late-sync reconciliation needs ✅**
    - Extend `rpc_sync_daily_usage` (and any shared helpers) to look up already-settled weeks and compare new totals against `charged_amount_cents`.
    - Populate `needs_reconciliation`, `reconciliation_delta_cents`, `reconciliation_reason`, and timestamps on `user_week_penalties`.
    - **Tests:** simulate a late sync in SQL and confirm the RPC response plus table rows flag the delta correctly.
 
-6. **Step 4B – Reconciliation processor (Edge Function)**
-   - Create `supabase/functions/settlement-reconcile/index.ts` that scans `user_week_penalties` where `needs_reconciliation = true`.
-   - For negative deltas → trigger Stripe refunds; for positive deltas → create incremental PaymentIntents (using saved payment method) and update `payments`.
-   - Update `settlement_status`, `charged_amount_cents`, and refund metadata to match the outcome.
-   - **Tests:** run against fixture data (one refund, one extra charge) and verify Stripe + DB mutations.
+6. **Step 4B – Reconciliation processor (Edge Function) ✅**
+   - `supabase/functions/settlement-reconcile/index.ts` scans `user_week_penalties` for `needs_reconciliation = true`, issues Stripe refunds (negative deltas) or incremental PaymentIntents (positive deltas), and logs each update in `payments`.
+   - On success it brings rows back to steady state (`needs_reconciliation = false`, `settlement_status` → `refunded[_partial]` or `charged_actual_adjusted`).
+   - **Tests:** seed via `rpc_setup_test_data`, flag deltas with `rpc_sync_daily_usage`, then POST to the new function (optionally `dryRun`) and verify Stripe + DB mutations.
 
-7. **Step 4C – Integration + guardrails**
+7. **Step 4C – Integration + guardrails (current)**
    - Wire the reconciliation trigger into the iOS sync flow (e.g., have `UsageSyncManager` poll RPC results) and/or schedule a dedicated cron job.
    - Add structured logging + alerts for reconciliation attempts and failures.
    - Expand `test_rpc_sync_daily_usage.sql` with refund/extra-charge scenarios and document manual QA steps.
@@ -277,7 +276,8 @@ Week Ends (Mon 12:00 ET) → loops.so reminder @ 12:05 ET →
 5. `supabase/migrations/add_weekly_settlement_columns.sql` - Adds saved payment method + charge/refund fields
 6. `supabase/functions/send-week-end-reminders/index.ts` - loops.so blast Monday 12:05 ET
 7. `supabase/functions/run-weekly-settlement/index.ts` - Tuesday settlement (actual vs worst-case)
-8. `Views/SettlementStatusView.swift` - Show settlement status to users
+8. `supabase/functions/settlement-reconcile/index.ts` - Late-sync refunds & extra charges
+9. `Views/SettlementStatusView.swift` - Show settlement status to users
 
 ---
 
