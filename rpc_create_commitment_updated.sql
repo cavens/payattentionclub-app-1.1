@@ -26,7 +26,9 @@ declare
   v_user_id uuid := auth.uid();
   v_has_pm boolean;
   v_commitment_start_date date;
-  v_days_remaining integer;
+  v_deadline_ts timestamptz;
+  v_minutes_remaining numeric;
+  v_potential_overage numeric;
   v_risk_factor numeric;
   v_max_charge_cents integer;
   v_app_count integer;
@@ -50,9 +52,13 @@ begin
 
   -- 3) The commitment starts NOW (when user commits) and ends on the deadline
   v_commitment_start_date := current_date;  -- Commitment starts today
-
-  -- 4) Compute days remaining until deadline (minimum 1)
-  v_days_remaining := greatest(1, p_deadline_date - current_date);
+  v_deadline_ts := (p_deadline_date::timestamp at time zone 'America/New_York') + interval '12 hours';
+  
+  -- 4) Compute minutes remaining until the deadline (minimum 0)
+  v_minutes_remaining := greatest(
+    0,
+    extract(epoch from (v_deadline_ts - now())) / 60.0
+  );
 
   -- 5) Extract app count from JSONB object
   -- p_apps_to_limit is a JSONB object: {"app_bundle_ids": [], "categories": []}
@@ -63,15 +69,18 @@ begin
   -- 6) Simple risk factor based on number of apps/categories
   v_risk_factor := 1.0 + 0.1 * v_app_count;
 
-  -- 7) Compute max_charge_cents
+  -- 7) Compute max_charge_cents using potential overage minutes
+  v_potential_overage := greatest(0, v_minutes_remaining - p_limit_minutes);
   v_max_charge_cents :=
-      v_days_remaining
-    * p_limit_minutes
+      v_potential_overage
     * p_penalty_per_minute_cents
     * v_risk_factor;
 
-  -- Round to integer just in case
-  v_max_charge_cents := floor(v_max_charge_cents)::int;
+  if v_max_charge_cents > 0 then
+    v_max_charge_cents := greatest(500, floor(v_max_charge_cents)::int);
+  else
+    v_max_charge_cents := 0;
+  end if;
 
   -- 8) Ensure weekly pool for this week exists
   -- Use the deadline date as the pool identifier

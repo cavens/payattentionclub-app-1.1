@@ -25,6 +25,11 @@ final class AppModel: ObservableObject {
     
     // Countdown model for smooth countdown timer (lazy initialization)
     @Published var countdownModel: CountdownModel?
+
+    // Weekly settlement state
+    @Published var weekStatus: WeekStatusResponse?
+    @Published var isLoadingWeekStatus: Bool = false
+    @Published var weekStatusError: String?
     
     // Cached deadline date (recalculated only when needed)
     private var cachedNextMondayNoonEST: Date?
@@ -143,6 +148,31 @@ final class AppModel: ObservableObject {
         }
     }
     
+    func refreshWeekStatus(weekStartDateOverride: Date? = nil) {
+        Task { @MainActor in
+            isLoadingWeekStatus = true
+            defer { isLoadingWeekStatus = false }
+
+            do {
+                let response = try await BackendClient.shared.fetchWeekStatus(
+                    weekStartDate: weekStartDateOverride ?? UsageTracker.shared.getCommitmentDeadline()
+                )
+                weekStatus = response
+                weekStatusError = nil
+            } catch let backendError as BackendError {
+                switch backendError {
+                case .notAuthenticated:
+                    weekStatus = nil
+                    weekStatusError = "Sign in to view your settlement status."
+                default:
+                    weekStatusError = backendError.localizedDescription
+                }
+            } catch {
+                weekStatusError = error.localizedDescription
+            }
+        }
+    }
+
     // MARK: - Navigation
     
     /// Navigate to a screen (ensures main thread)
@@ -185,26 +215,24 @@ final class AppModel: ObservableObject {
     
     // MARK: - Authorization Calculation
     
-    /// Calculate authorization amount based on formula
+    /// Calculate authorization amount (mirrors rpc_create_commitment max_charge_cents)
     func calculateAuthorizationAmount() -> Double {
         let now = Date()
-        let nextMondayNoon = getNextMondayNoonEST()
-        let hoursUntilDeadline = nextMondayNoon.timeIntervalSince(now) / 3600.0
-        let hoursRemaining = max(0, hoursUntilDeadline - (limitMinutes / 60.0))
+        let deadline = getNextMondayNoonEST()
+        let minutesRemaining = max(0, deadline.timeIntervalSince(now) / 60.0)
         
-        let appCount = Double(selectedApps.applicationTokens.count)
-        let categoryCount = Double(selectedApps.categoryTokens.count)
-        let totalSelections = appCount + categoryCount
+        let appCount = Double(selectedApps.applicationTokens.count + selectedApps.categoryTokens.count)
+        let riskFactor = 1.0 + 0.1 * appCount
         
-        // Formula components (coefficients TBD - adjust as needed)
-        let timeComponent = max(0, hoursRemaining) * 0.5
-        let penaltyComponent = penaltyPerMinute * 10.0
-        let selectionComponent = totalSelections * 2.0
-        
-        let calculated = timeComponent + penaltyComponent + selectionComponent
-        
-        // Clamp between 5 and 1000
-        return max(5.0, min(1000.0, calculated))
+        let potentialOverage = max(0, minutesRemaining - limitMinutes)
+        let cents = potentialOverage * (penaltyPerMinute * 100.0) * riskFactor
+        let roundedCents: Double
+        if minutesRemaining > 0 {
+            roundedCents = max(500, floor(max(0, cents)))
+        } else {
+            roundedCents = 0
+        }
+        return roundedCents / 100.0
     }
     
     // MARK: - Date Utilities
