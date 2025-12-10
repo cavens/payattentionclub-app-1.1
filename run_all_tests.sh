@@ -61,11 +61,11 @@ if [ -d "$XCODE_PROJECT" ]; then
     echo "Building and testing..."
     
     # Run xcodebuild test
-    # Using iPhone 15 simulator, adjust if needed
+    # Using iPhone 17 Pro simulator (adjust name if needed)
     if xcodebuild test \
         -project "$XCODE_PROJECT" \
         -scheme "payattentionclub-app-1.1" \
-        -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+        -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
         -only-testing:payattentionclub-app-1.1Tests \
         -quiet \
         2>&1 | tail -20; then

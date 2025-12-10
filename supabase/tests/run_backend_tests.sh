@@ -51,15 +51,23 @@ echo -e "${GREEN}✓${NC} Found .env file"
 echo -e "${GREEN}✓${NC} Deno version: $(deno --version | head -1)"
 echo ""
 
-# Change to project root for .env loading
-cd "$PROJECT_ROOT"
+# Source the .env file to export variables
+echo "Loading environment variables..."
+set -a  # Auto-export all variables
+source "$PROJECT_ROOT/.env"
+set +a
+echo -e "${GREEN}✓${NC} Environment loaded"
+echo ""
+
+# Change to test directory
+cd "$SCRIPT_DIR"
 
 # Run tests
 echo "Running tests..."
 echo ""
 
 if deno test \
-    "$SCRIPT_DIR/test_*.ts" \
+    test_*.ts \
     --allow-net \
     --allow-env \
     --allow-read; then
