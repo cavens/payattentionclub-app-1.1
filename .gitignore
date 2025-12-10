@@ -42,6 +42,14 @@ Pods/
 # Logs
 *.log
 
+# Environment files (secrets - never commit)
+.env
+.env.local
+.env.staging
+.env.production
+# Note: .env.example should be committed but Cursor blocks it
+# Create it manually if needed
+
 # Build artifacts
 build/
 *.o

@@ -25,6 +25,13 @@
 			remoteGlobalIDString = CD43B0582EC4049D00BCDBB9;
 			remoteInfo = DeviceActivityMonitorExtension;
 		};
+		CDC8B73C2EEA1DF600060808 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CD43B03E2EC4044A00BCDBB9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CD43B0452EC4044A00BCDBB9;
+			remoteInfo = "payattentionclub-app-1.1";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -46,6 +53,7 @@
 		CD43B0592EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DeviceActivityMonitorExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD43B05B2EC4049D00BCDBB9 /* DeviceActivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DeviceActivity.framework; path = System/Library/Frameworks/DeviceActivity.framework; sourceTree = SDKROOT; };
 		CD43B06B2EC405B900BCDBB9 /* FamilyControls.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FamilyControls.framework; path = System/Library/Frameworks/FamilyControls.framework; sourceTree = SDKROOT; };
+		CDC8B7382EEA1DF600060808 /* payattentionclub-app-1.1Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "payattentionclub-app-1.1Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -56,21 +64,11 @@
 			);
 			target = CD43B0582EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */;
 		};
-		CDA33E092EDE060A002646EB /* Exceptions for "payattentionclub-app-1.1" folder in "payattentionclub-app-1.1" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				"payattentionclub-app-1-1-Info.plist",
-			);
-			target = CD43B0452EC4044A00BCDBB9 /* payattentionclub-app-1.1 */;
-		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CD43B0482EC4044A00BCDBB9 /* payattentionclub-app-1.1 */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				CDA33E092EDE060A002646EB /* Exceptions for "payattentionclub-app-1.1" folder in "payattentionclub-app-1.1" target */,
-			);
 			path = "payattentionclub-app-1.1";
 			sourceTree = "<group>";
 		};
@@ -80,6 +78,16 @@
 				CD43B0652EC4049D00BCDBB9 /* Exceptions for "DeviceActivityMonitorExtension" folder in "DeviceActivityMonitorExtension" target */,
 			);
 			path = DeviceActivityMonitorExtension;
+			sourceTree = "<group>";
+		};
+		CDC8B7392EEA1DF600060808 /* payattentionclub-app-1.1Tests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "payattentionclub-app-1.1Tests";
+			sourceTree = "<group>";
+		};
+		CDC8B74C2EEA2CBD00060808 /* payattentionclub-app-1.1UITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "payattentionclub-app-1.1UITests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -106,6 +114,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CDC8B7352EEA1DF600060808 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -114,6 +129,8 @@
 			children = (
 				CD43B0482EC4044A00BCDBB9 /* payattentionclub-app-1.1 */,
 				CD43B05D2EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */,
+				CDC8B7392EEA1DF600060808 /* payattentionclub-app-1.1Tests */,
+				CDC8B74C2EEA2CBD00060808 /* payattentionclub-app-1.1UITests */,
 				CD43B05A2EC4049D00BCDBB9 /* Frameworks */,
 				CD43B0472EC4044A00BCDBB9 /* Products */,
 			);
@@ -124,6 +141,7 @@
 			children = (
 				CD43B0462EC4044A00BCDBB9 /* payattentionclub-app-1.1.app */,
 				CD43B0592EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex */,
+				CDC8B7382EEA1DF600060808 /* payattentionclub-app-1.1Tests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -190,6 +208,29 @@
 			productReference = CD43B0592EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		CDC8B7372EEA1DF600060808 /* payattentionclub-app-1.1Tests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CDC8B73E2EEA1DF600060808 /* Build configuration list for PBXNativeTarget "payattentionclub-app-1.1Tests" */;
+			buildPhases = (
+				CDC8B7342EEA1DF600060808 /* Sources */,
+				CDC8B7352EEA1DF600060808 /* Frameworks */,
+				CDC8B7362EEA1DF600060808 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CDC8B73D2EEA1DF600060808 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				CDC8B7392EEA1DF600060808 /* payattentionclub-app-1.1Tests */,
+			);
+			name = "payattentionclub-app-1.1Tests";
+			packageProductDependencies = (
+			);
+			productName = "payattentionclub-app-1.1Tests";
+			productReference = CDC8B7382EEA1DF600060808 /* payattentionclub-app-1.1Tests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -206,6 +247,10 @@
 					CD43B0582EC4049D00BCDBB9 = {
 						CreatedOnToolsVersion = 26.0.1;
 						LastSwiftMigration = 2600;
+					};
+					CDC8B7372EEA1DF600060808 = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = CD43B0452EC4044A00BCDBB9;
 					};
 				};
 			};
@@ -229,6 +274,7 @@
 			targets = (
 				CD43B0452EC4044A00BCDBB9 /* payattentionclub-app-1.1 */,
 				CD43B0582EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */,
+				CDC8B7372EEA1DF600060808 /* payattentionclub-app-1.1Tests */,
 			);
 		};
 /* End PBXProject section */
@@ -242,6 +288,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		CD43B0572EC4049D00BCDBB9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CDC8B7362EEA1DF600060808 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -265,6 +318,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CDC8B7342EEA1DF600060808 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -272,6 +332,11 @@
 			isa = PBXTargetDependency;
 			target = CD43B0582EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */;
 			targetProxy = CD43B0622EC4049D00BCDBB9 /* PBXContainerItemProxy */;
+		};
+		CDC8B73D2EEA1DF600060808 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CD43B0452EC4044A00BCDBB9 /* payattentionclub-app-1.1 */;
+			targetProxy = CDC8B73C2EEA1DF600060808 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -534,6 +599,50 @@
 			};
 			name = Release;
 		};
+		CDC8B73F2EEA1DF600060808 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WV7L7Q728Z;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.payattentionclub.payattentionclub-app-1-1Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/payattentionclub-app-1.1.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/payattentionclub-app-1.1";
+			};
+			name = Debug;
+		};
+		CDC8B7402EEA1DF600060808 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WV7L7Q728Z;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.payattentionclub.payattentionclub-app-1-1Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/payattentionclub-app-1.1.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/payattentionclub-app-1.1";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -560,6 +669,15 @@
 			buildConfigurations = (
 				CD43B0672EC4049D00BCDBB9 /* Debug */,
 				CD43B0682EC4049D00BCDBB9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CDC8B73E2EEA1DF600060808 /* Build configuration list for PBXNativeTarget "payattentionclub-app-1.1Tests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CDC8B73F2EEA1DF600060808 /* Debug */,
+				CDC8B7402EEA1DF600060808 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

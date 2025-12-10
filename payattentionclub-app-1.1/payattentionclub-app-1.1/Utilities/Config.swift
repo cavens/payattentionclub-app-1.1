@@ -1,34 +1,119 @@
 import Foundation
 
+// MARK: - Environment
+
+/// App environment - controls which backend and payment keys are used
+enum AppEnvironment: String {
+    case staging
+    case production
+    
+    var displayName: String {
+        switch self {
+        case .staging: return "STAGING"
+        case .production: return "Production"
+        }
+    }
+}
+
+// MARK: - App Config
+
+/// Central configuration for the app
+/// Controls environment switching for Supabase and Stripe
+struct AppConfig {
+    
+    /// Current environment - auto-selected based on build configuration
+    /// DEBUG builds use staging, RELEASE builds use production
+    static var current: AppEnvironment {
+        #if DEBUG
+        return .staging
+        #else
+        return .production
+        #endif
+    }
+    
+    /// Override environment manually (useful for testing production in debug builds)
+    /// Set this in AppDelegate or early in app launch if needed
+    static var overrideEnvironment: AppEnvironment? = nil
+    
+    /// Resolved environment (uses override if set, otherwise auto-detected)
+    static var environment: AppEnvironment {
+        return overrideEnvironment ?? current
+    }
+    
+    /// True when running in staging/test mode
+    static var isTestMode: Bool {
+        return environment == .staging
+    }
+    
+    /// True when running in production
+    static var isProduction: Bool {
+        return environment == .production
+    }
+}
+
+// MARK: - Supabase Config
+
 /// Configuration for Supabase backend connection
 struct SupabaseConfig {
-    // TODO: Replace with your actual Supabase project URL
-    // Format: https://xxxxx.supabase.co
-    static let projectURL = "https://whdftvcrtrsnefhprebj.supabase.co"
     
-    // TODO: Replace with your actual Supabase anon key
-    // This is the public anon key from Supabase Dashboard → Settings → API
-    static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDc0NjUsImV4cCI6MjA3ODYyMzQ2NX0.T1Vz087udE-PywR5KfjXqDzORHSIggXw0uCu8zYGIxE"
+    // MARK: - Staging Environment
+    private static let stagingProjectURL = "https://whdftvcrtrsnefhprebj.supabase.co"
+    private static let stagingAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDc0NjUsImV4cCI6MjA3ODYyMzQ2NX0.T1Vz087udE-PywR5KfjXqDzORHSIggXw0uCu8zYGIxE"
     
-    // Environment detection (for future use)
-    #if DEBUG
-    static let environment = "staging"
-    #else
-    static let environment = "production"
-    #endif
+    // MARK: - Production Environment
+    // TODO: Replace with production Supabase project when ready
+    private static let productionProjectURL = "https://whdftvcrtrsnefhprebj.supabase.co"  // Same as staging for now
+    private static let productionAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDc0NjUsImV4cCI6MjA3ODYyMzQ2NX0.T1Vz087udE-PywR5KfjXqDzORHSIggXw0uCu8zYGIxE"  // Same as staging for now
+    
+    // MARK: - Active Configuration (environment-aware)
+    
+    /// Supabase project URL for current environment
+    static var projectURL: String {
+        switch AppConfig.environment {
+        case .staging: return stagingProjectURL
+        case .production: return productionProjectURL
+        }
+    }
+    
+    /// Supabase anon key for current environment
+    static var anonKey: String {
+        switch AppConfig.environment {
+        case .staging: return stagingAnonKey
+        case .production: return productionAnonKey
+        }
+    }
+    
+    /// Current environment name (for logging)
+    static var environment: String {
+        return AppConfig.environment.rawValue
+    }
 }
+
+// MARK: - Stripe Config
 
 /// Configuration for Stripe payment processing
 struct StripeConfig {
-    // TODO: Replace with your Stripe publishable key
-    // Get this from Stripe Dashboard → Developers → API Keys → Publishable key
-    // Test mode key starts with pk_test_, production starts with pk_live_
-    static let publishableKey = "pk_test_51SPVFLQcfZnqDqya4lgxkORQJQv9RAEeDfyPCs7ETZokdO8fe5k3HI84Gfpb2tpKRig3dcoBSPYVzKMpFXp048g400CCNcLahR" // Replace with actual key
     
-    #if DEBUG
-    static let environment = "test"
-    #else
-    static let environment = "production"
-    #endif
+    // MARK: - Test/Staging Environment
+    private static let testPublishableKey = "pk_test_51SPVFLQcfZnqDqya4lgxkORQJQv9RAEeDfyPCs7ETZokdO8fe5k3HI84Gfpb2tpKRig3dcoBSPYVzKMpFXp048g400CCNcLahR"
+    
+    // MARK: - Production Environment
+    // TODO: Replace with live Stripe key when ready for production
+    private static let livePublishableKey = "pk_test_51SPVFLQcfZnqDqya4lgxkORQJQv9RAEeDfyPCs7ETZokdO8fe5k3HI84Gfpb2tpKRig3dcoBSPYVzKMpFXp048g400CCNcLahR"  // Still test key - replace with pk_live_ when ready
+    
+    // MARK: - Active Configuration (environment-aware)
+    
+    /// Stripe publishable key for current environment
+    static var publishableKey: String {
+        switch AppConfig.environment {
+        case .staging: return testPublishableKey
+        case .production: return livePublishableKey
+        }
+    }
+    
+    /// Current environment name (for logging)
+    static var environment: String {
+        return AppConfig.environment == .staging ? "test" : "production"
+    }
 }
 

@@ -133,6 +133,17 @@ struct SyncDailyUsageResponse: Codable, Sendable {
         case errors
         case processedWeeks = "processed_weeks"
     }
+    
+    // Explicit nonisolated decoder to avoid MainActor isolation issues in Swift 6
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        syncedCount = try container.decodeIfPresent(Int.self, forKey: .syncedCount)
+        failedCount = try container.decodeIfPresent(Int.self, forKey: .failedCount)
+        syncedDates = try container.decodeIfPresent([String].self, forKey: .syncedDates)
+        failedDates = try container.decodeIfPresent([String].self, forKey: .failedDates)
+        errors = try container.decodeIfPresent([String].self, forKey: .errors)
+        processedWeeks = try container.decodeIfPresent([String].self, forKey: .processedWeeks)
+    }
 }
 
 // MARK: - Response Models

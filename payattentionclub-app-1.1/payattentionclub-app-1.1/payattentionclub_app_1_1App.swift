@@ -12,6 +12,15 @@ struct payattentionclub_app_1_1App: App {
         print("MARKERS App: 🚀🚀🚀 App init() called - NEW CODE IS RUNNING")
         fflush(stdout)
         
+        // Log environment configuration - filter by "TESTMODE" in console
+        NSLog("TESTMODE ========================================")
+        NSLog("TESTMODE Environment: %@", AppConfig.environment.displayName)
+        NSLog("TESTMODE isTestMode: %@", AppConfig.isTestMode ? "YES" : "NO")
+        NSLog("TESTMODE isProduction: %@", AppConfig.isProduction ? "YES" : "NO")
+        NSLog("TESTMODE Supabase URL: %@", SupabaseConfig.projectURL)
+        NSLog("TESTMODE Stripe env: %@", StripeConfig.environment)
+        NSLog("TESTMODE ========================================")
+        
         // Initialize Stripe SDK with publishable key
         StripeAPI.defaultPublishableKey = StripeConfig.publishableKey
         NSLog("STRIPE App: Stripe SDK initialized with publishable key: \(StripeConfig.publishableKey.prefix(20))...")
