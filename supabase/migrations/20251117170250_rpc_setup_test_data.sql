@@ -1,13 +1,19 @@
 -- RPC function to set up test data for weekly-close testing
 -- Creates test users, commitments, daily_usage, and weekly_pools
 
-CREATE OR REPLACE FUNCTION public.rpc_setup_test_data()
+CREATE OR REPLACE FUNCTION public.rpc_setup_test_data(
+  p_real_user_email text DEFAULT 'jef+stripe@cavens.io',
+  p_real_user_stripe_customer text DEFAULT 'cus_TRROpBSIbBGe2M'
+)
 RETURNS json
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
   v_real_user_id uuid;
+  v_seed_real_user_id uuid := '44444444-4444-4444-4444-444444444444'::uuid;
+  v_real_user_email text := coalesce(nullif(p_real_user_email, ''), 'jef+stripe@cavens.io');
+  v_real_user_stripe_customer text := coalesce(nullif(p_real_user_stripe_customer, ''), 'cus_TRROpBSIbBGe2M');
   v_test_user_1_id uuid := '11111111-1111-1111-1111-111111111111'::uuid;
   v_test_user_2_id uuid := '22222222-2222-2222-2222-222222222222'::uuid;
   v_test_user_3_id uuid := '33333333-3333-3333-3333-333333333333'::uuid;
@@ -38,8 +44,12 @@ BEGIN
   -- First, try to find existing user by email
   SELECT id INTO v_real_user_id
   FROM auth.users
-  WHERE email = 'jef+stripe@cavens.io'
+  WHERE email = v_real_user_email
   LIMIT 1;
+
+  IF v_real_user_id IS NULL THEN
+    v_real_user_id := v_seed_real_user_id;
+  END IF;
 
   -- If user doesn't exist in auth.users, we can't create it (needs Sign in with Apple)
   -- So we'll update public.users if the auth user exists
@@ -54,14 +64,14 @@ BEGIN
     )
     VALUES (
       v_real_user_id,
-      'jef+stripe@cavens.io',
-      'cus_TRROpBSIbBGe2M',
+      v_real_user_email,
+      v_real_user_stripe_customer,
       true,
       true,
       NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
-      stripe_customer_id = 'cus_TRROpBSIbBGe2M',
+      stripe_customer_id = v_real_user_stripe_customer,
       has_active_payment_method = true,
       is_test_user = true;
   END IF;
@@ -79,14 +89,14 @@ BEGIN
   VALUES (
     v_test_user_1_id,
     'test-user-1@example.com',
-    'cus_TRROpBSIbBGe2M',  -- Using real Stripe customer ID for testing
+    v_real_user_stripe_customer,  -- Using real Stripe customer ID for testing
     true,
     true,
     NOW()
   )
   ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
-    stripe_customer_id = 'cus_TRROpBSIbBGe2M',  -- Using real Stripe customer ID for testing
+    stripe_customer_id = v_real_user_stripe_customer,  -- Using real Stripe customer ID for testing
     has_active_payment_method = true,
     is_test_user = true;
 
@@ -417,7 +427,7 @@ BEGIN
     'message', 'Test data setup complete',
     'deadline_date', v_deadline_date,
     'real_user_id', v_real_user_id,
-    'real_user_stripe_customer', 'cus_TRROpBSIbBGe2M',
+    'real_user_stripe_customer', v_real_user_stripe_customer,
     'test_users_created', 3,
     'commitments_created', CASE WHEN v_real_user_id IS NOT NULL THEN 3 ELSE 2 END,
     'daily_usage_entries', CASE WHEN v_real_user_id IS NOT NULL THEN 4 ELSE 2 END

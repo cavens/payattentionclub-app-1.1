@@ -423,6 +423,18 @@ Deno.serve(async (req) => {
   const limit = getLimit(payload?.limit);
   const dryRun = Boolean(payload?.dryRun);
 
+  console.log(
+    "settlement-reconcile invoked",
+    JSON.stringify({
+      limit,
+      dryRun,
+      filters: {
+        week: payload?.week ?? null,
+        userId: payload?.userId ?? null
+      }
+    })
+  );
+
   try {
     const candidates = await fetchCandidates(supabase, {
       limit,
@@ -454,18 +466,38 @@ Deno.serve(async (req) => {
 
         if (result.skipped === "zero_delta") {
           summary.skipped.zeroDelta += 1;
+          console.log(
+            "settlement-reconcile skip zero-delta",
+            candidate.penalty.user_id,
+            candidate.penalty.week_start_date
+          );
           continue;
         }
         if (result.skipped === "missing_stripe_customer") {
           summary.skipped.missingStripeCustomer += 1;
+          console.warn(
+            "settlement-reconcile skip missing customer",
+            candidate.penalty.user_id,
+            candidate.penalty.week_start_date
+          );
           continue;
         }
         if (result.skipped === "missing_payment_method") {
           summary.skipped.missingPaymentMethod += 1;
+          console.warn(
+            "settlement-reconcile skip missing payment method",
+            candidate.penalty.user_id,
+            candidate.penalty.week_start_date
+          );
           continue;
         }
         if (result.skipped === "missing_charge_payment_intent_id") {
           summary.skipped.missingPaymentIntent += 1;
+          console.warn(
+            "settlement-reconcile skip missing payment intent",
+            candidate.penalty.user_id,
+            candidate.penalty.week_start_date
+          );
           continue;
         }
 
@@ -483,6 +515,17 @@ Deno.serve(async (req) => {
         } else {
           summary.chargesIssued += 1;
         }
+
+        console.log(
+          "settlement-reconcile action",
+          JSON.stringify({
+            userId: candidate.penalty.user_id,
+            weekStartDate: candidate.penalty.week_start_date,
+            action: result.action,
+            amountCents: result.amountCents,
+            dryRun
+          })
+        );
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         summary.failures.push({
@@ -490,8 +533,16 @@ Deno.serve(async (req) => {
           weekStartDate: candidate.penalty.week_start_date,
           reason
         });
+        console.error(
+          "settlement-reconcile failure",
+          candidate.penalty.user_id,
+          candidate.penalty.week_start_date,
+          reason
+        );
       }
     }
+
+    console.log("settlement-reconcile summary", JSON.stringify(summary));
 
     return new Response(JSON.stringify(summary), {
       headers: { "Content-Type": "application/json" }

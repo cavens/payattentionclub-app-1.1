@@ -96,6 +96,151 @@ To verify fix:
 
 ---
 
+## Phase 4C: Reconciliation Guardrails Depend on Operator Discipline
+
+**Status**: Known Issue – Operational Risk  
+**Severity**: Medium (Financial/Support)  
+**Date Identified**: 2025-12-07  
+**Phase**: Phase 4C – Integration & Guardrails
+
+### Description
+
+The `settlement-reconcile` scheduler can be misconfigured (e.g., larger payloads, no dry run) which increases the blast radius if Stripe refunds/charges have bugs. The safe-ops steps live in `supabase/functions/settlement-reconcile/README.md`, but they are easy to skip when someone new touches the cron or runs it manually.
+
+### Symptoms / Risks
+
+- Cron body is edited to include a high `limit`, so one run can touch hundreds of rows.
+- Operators trigger the Edge Function manually without doing a dry run first.
+- Team members do not have the curl snippet handy and improvise calls, risking malformed payloads.
+
+### Impact
+
+**Financial**: ⚠️ Medium – unintended bulk refunds/charges, Stripe disputes.  
+**Support**: ⚠️ Medium – flood of user questions if reconciliation misfires.  
+**Product**: ✅ None – feature works, risk comes from ops process.  
+**Data Integrity**: ⚠️ Low – incorrect settlement rows until manual cleanup.
+
+### Mitigation / Guardrails
+
+1. **Keep schedule body `{}`** so the default `limit = 25` stays in effect; never hardcode a higher limit in the cron.  
+2. **For single-user tests**, leave the schedule alone and instead run manual POSTs with the documented curl snippet (README).  
+3. **Always run with `"dryRun": true` first**, review the summary, then rerun with `dryRun: false` once confirmed.  
+4. **Pin the curl + dry-run instructions** in the ops/runbook so every operator follows the same process.
+
+### When to Fix
+
+Documented guardrails are acceptable for now, but we should revisit once we have:
+- Automated alerting tied to the schedule.  
+- Safer batching (e.g., per-user job queue).  
+- UI tooling that enforces dry-run-before-live.
+
+---
+
+## Test / Dry-Run Procedure (Reconciliation Flow)
+
+Repeat this flow whenever you need to verify `weekly-close` + `settlement-reconcile` end-to-end. It assumes Stripe test keys and the seeded users from `rpc_setup_test_data`.
+
+1. **Seed fixtures**  
+   ```sql
+   select public.rpc_setup_test_data();
+   ```
+   This creates Test User 1 (`1111…`) with a real Stripe test customer and week-long usage.
+
+2. **Run weekly-close**  
+   ```bash
+   PROJECT_REF=...; SERVICE_ROLE_KEY=...
+   curl -X POST \
+     "https://${PROJECT_REF}.functions.supabase.co/weekly-close" \
+     -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+     -H "Content-Type: application/json"
+   ```
+   Expect `chargedUsers: 1` (Test User 1) and note the returned PaymentIntent ID.
+
+3. **Simulate late sync using `test_rpc_sync_daily_usage.sql`**  
+   Run the script in Supabase SQL Editor. It now:
+   - Sets session JWT claims for Test User 1.
+   - Posts representative usage via `rpc_sync_daily_usage`.
+   - Runs the “Late sync” block which:
+     - Retrieves the latest PaymentIntent for that week from `public.payments`.
+     - Sets `charged_amount_cents = 150`, `actual_amount_cents = 0`.
+     - Flags `reconciliation_delta_cents = -150`, `needs_reconciliation = true`.
+
+   You should see:
+   ```json
+   {"week_start_date":"YYYY-MM-DD","charged_amount_cents":150,"actual_amount_cents":0,"reconciliation_delta_cents":-150,"needs_reconciliation":true}
+   ```
+
+4. **Run `quick-handler` (settlement-reconcile)**  
+   - Dry run:
+     ```bash
+     curl -X POST \
+       "https://${PROJECT_REF}.functions.supabase.co/quick-handler" \
+       -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+       -H "Content-Type: application/json" \
+       -d '{"week":"YYYY-MM-DD","dryRun":true}'
+     ```
+   - Live run (same payload, `dryRun:false`). Success looks like:
+     ```json
+     {
+       "processed": 1,
+       "refundsIssued": 1,
+       "details": [{"userId":"1111…","action":"refund","amountCents":150}]
+     }
+     ```
+
+5. **Verify tables & Stripe**
+   ```sql
+   select charged_amount_cents,
+          actual_amount_cents,
+          refund_amount_cents,
+          settlement_status,
+          needs_reconciliation
+   from public.user_week_penalties
+   where user_id = '1111…'
+     and week_start_date = 'YYYY-MM-DD';
+
+   select payment_type, amount_cents, status
+   from public.payments
+   where week_start_date = 'YYYY-MM-DD'
+     and user_id = '1111…'
+   order by created_at desc;
+   ```
+   Expect `needs_reconciliation = false`, `refund_amount_cents = 150`, and a new `penalty_refund` row. Confirm the refund in Stripe.
+
+6. **Reset (optional)**
+   Re-run `rpc_setup_test_data` to wipe the week, or manually clear the rows if running multiple iterations.
+
+### Notes
+- The SQL script **will refuse** to set `needs_reconciliation` if it cannot find a real PaymentIntent; fix the charge step first.
+- Always keep the schedule cron body `{}` so production still caps at `limit = 25`.
+- Document the PaymentIntent ID from `weekly-close` in your QA notes for auditability.
+
+---
+
+## Security: service_role key embedded in `call_weekly_close`
+
+**Status**: Known Issue – Security Hygiene  
+**Severity**: High (Secrets Exposure)  
+**Date Identified**: 2025-12-10  
+
+### Description
+The live `call_weekly_close` function body includes the Supabase `service_role` key in plain text (Authorization header). This key is highly privileged and should never be stored inside SQL or committed to the repo.
+
+### Impact / Risk
+- Anyone with access to function definitions or dumps could copy the key and use it for privileged operations.
+- The key was present in the schema dump; backups or git history may capture it.
+
+### Mitigation / Remediation
+1) **Rotate** the service_role key in Supabase (Settings → API).  
+2) **Move the key to a DB setting**, e.g. `ALTER DATABASE postgres SET app.settings.service_role_key = 'NEW_KEY';` (run once, do not commit).  
+3) **Update the function** to use the setting-based header:  
+   ```sql
+   'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key', true)
+   ```  
+4) **Re-dump** the schema after the fix to ensure no plain-text key remains in repo/backups.  
+
+---
+
 ## Phase 2: Weekly Grace Window Needs Pre-Week Buffer
 
 **Status**: Known Issue - UX/Behavioral  

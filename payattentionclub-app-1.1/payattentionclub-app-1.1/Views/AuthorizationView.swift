@@ -25,7 +25,13 @@ struct AuthorizationView: View {
                         .font(.system(size: 44, weight: .bold))
                         .foregroundColor(.pink)
                     
-                    Text("This amount is calculated from your time limit, penalty, and selected apps. It secures your commitment for the current period.")
+                    Text("""
+We save your card with Stripe today (Setup Intent) so the weekly settlement can run automatically:
+
+• Monday 12:05 PM ET: we send a reminder to open the app.
+• Open the app any time before Tuesday 12:00 PM ET to sync and pay your actual minutes.
+• Skip the sync and Tuesday noon charges the max penalty; open later and we refund or adjust automatically.
+""")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)

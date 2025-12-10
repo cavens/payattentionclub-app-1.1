@@ -1,19 +1,9 @@
--- RPC function to set up test data for weekly-close testing
--- Creates test users, commitments, daily_usage, and weekly_pools
-
-CREATE OR REPLACE FUNCTION public.rpc_setup_test_data(
-  p_real_user_email text DEFAULT 'jef+stripe@cavens.io',
-  p_real_user_stripe_customer text DEFAULT 'cus_TRROpBSIbBGe2M'
-)
+CREATE OR REPLACE FUNCTION public.rpc_setup_test_data_v0()
 RETURNS json
 LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
+SECURITY DEFINER AS $$
 DECLARE
   v_real_user_id uuid;
-  v_seed_real_user_id uuid := '44444444-4444-4444-4444-444444444444'::uuid;
-  v_real_user_email text := coalesce(nullif(p_real_user_email, ''), 'jef+stripe@cavens.io');
-  v_real_user_stripe_customer text := coalesce(nullif(p_real_user_stripe_customer, ''), 'cus_TRROpBSIbBGe2M');
   v_test_user_1_id uuid := '11111111-1111-1111-1111-111111111111'::uuid;
   v_test_user_2_id uuid := '22222222-2222-2222-2222-222222222222'::uuid;
   v_test_user_3_id uuid := '33333333-3333-3333-3333-333333333333'::uuid;
@@ -24,35 +14,20 @@ DECLARE
   v_start_date date;
   v_result json;
 BEGIN
-  -- Calculate deadline to match weekly-close logic
-  -- If today is Monday, use today (week ending today)
-  -- If today is Sunday, use tomorrow (next Monday)
-  -- Otherwise, use last Monday (go back to Monday)
   IF EXTRACT(DOW FROM CURRENT_DATE) = 1 THEN
-    -- Today is Monday - use today (week ending today)
     v_deadline_date := CURRENT_DATE;
   ELSIF EXTRACT(DOW FROM CURRENT_DATE) = 0 THEN
-    -- Today is Sunday - use tomorrow (next Monday)
     v_deadline_date := CURRENT_DATE + 1;
   ELSE
-    -- Today is Tue-Sat - go back to last Monday
     v_deadline_date := CURRENT_DATE - (EXTRACT(DOW FROM CURRENT_DATE)::int - 1);
   END IF;
   v_start_date := CURRENT_DATE;
 
-  -- 1) Set up real user with Stripe customer ID
-  -- First, try to find existing user by email
   SELECT id INTO v_real_user_id
   FROM auth.users
-  WHERE email = v_real_user_email
+  WHERE email = 'jef+stripe@cavens.io'
   LIMIT 1;
 
-  IF v_real_user_id IS NULL THEN
-    v_real_user_id := v_seed_real_user_id;
-  END IF;
-
-  -- If user doesn't exist in auth.users, we can't create it (needs Sign in with Apple)
-  -- So we'll update public.users if the auth user exists
   IF v_real_user_id IS NOT NULL THEN
     INSERT INTO public.users (
       id,
@@ -64,20 +39,18 @@ BEGIN
     )
     VALUES (
       v_real_user_id,
-      v_real_user_email,
-      v_real_user_stripe_customer,
+      'jef+stripe@cavens.io',
+      'cus_TRROpBSIbBGe2M',
       true,
       true,
       NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
-      stripe_customer_id = v_real_user_stripe_customer,
+      stripe_customer_id = 'cus_TRROpBSIbBGe2M',
       has_active_payment_method = true,
       is_test_user = true;
   END IF;
 
-  -- 2) Create/update test users (these won't have auth.users entries, but we'll create public.users entries)
-  -- Test User 1: Has penalties, will be charged - USING REAL STRIPE CUSTOMER ID FOR TESTING
   INSERT INTO public.users (
     id,
     email,
@@ -89,18 +62,17 @@ BEGIN
   VALUES (
     v_test_user_1_id,
     'test-user-1@example.com',
-    v_real_user_stripe_customer,  -- Using real Stripe customer ID for testing
+    'cus_TRROpBSIbBGe2M',
     true,
     true,
     NOW()
   )
   ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
-    stripe_customer_id = v_real_user_stripe_customer,  -- Using real Stripe customer ID for testing
+    stripe_customer_id = 'cus_TRROpBSIbBGe2M',
     has_active_payment_method = true,
     is_test_user = true;
 
-  -- Test User 2: Has penalties, will be charged
   INSERT INTO public.users (
     id,
     email,
@@ -123,7 +95,6 @@ BEGIN
     has_active_payment_method = EXCLUDED.has_active_payment_method,
     is_test_user = EXCLUDED.is_test_user;
 
-  -- Test User 3: No penalties (stayed within limit)
   INSERT INTO public.users (
     id,
     email,
@@ -146,7 +117,6 @@ BEGIN
     has_active_payment_method = EXCLUDED.has_active_payment_method,
     is_test_user = EXCLUDED.is_test_user;
 
-  -- 3) Create weekly pool for this week
   INSERT INTO public.weekly_pools (
     week_start_date,
     week_end_date,
@@ -163,8 +133,6 @@ BEGIN
     status = 'open',
     total_penalty_cents = 0;
 
-  -- 4) Create commitments
-  -- Commitment 1: Real user - exceeded limit (will have penalties)
   IF v_real_user_id IS NOT NULL THEN
     INSERT INTO public.commitments (
       id,
@@ -184,18 +152,17 @@ BEGIN
       v_real_user_id,
       v_start_date,
       v_deadline_date,
-      60,  -- 60 minute limit
-      10,  -- 10 cents per minute penalty
+      60,
+      10,
       '{"app_bundle_ids": ["com.apple.Safari"], "categories": []}'::jsonb,
       'active',
       'ok',
-      4200,  -- max charge
+      4200,
       NOW()
     )
     RETURNING id INTO v_commitment_1_id;
   END IF;
 
-  -- Commitment 2: Test User 1 - exceeded limit
   INSERT INTO public.commitments (
     id,
     user_id,
@@ -214,18 +181,17 @@ BEGIN
     v_test_user_1_id,
     v_start_date,
     v_deadline_date,
-    120,  -- 120 minute limit
-      5,  -- 5 cents per minute penalty
-      '{"app_bundle_ids": ["com.apple.Safari"], "categories": []}'::jsonb,
-      'active',
-      'ok',
-      6000,  -- max charge
-      NOW()
+    120,
+    5,
+    '{"app_bundle_ids": ["com.apple.Safari"], "categories": []}'::jsonb,
+    'active',
+    'ok',
+    6000,
+    NOW()
   )
   ON CONFLICT DO NOTHING
   RETURNING id INTO v_commitment_2_id;
 
-  -- Get commitment ID if it already exists
   IF v_commitment_2_id IS NULL THEN
     SELECT id INTO v_commitment_2_id
     FROM public.commitments
@@ -234,7 +200,6 @@ BEGIN
     LIMIT 1;
   END IF;
 
-  -- Commitment 3: Test User 3 - stayed within limit
   INSERT INTO public.commitments (
     id,
     user_id,
@@ -253,18 +218,17 @@ BEGIN
     v_test_user_3_id,
     v_start_date,
     v_deadline_date,
-    180,  -- 180 minute limit
-      3,  -- 3 cents per minute penalty
-      '{"app_bundle_ids": ["com.apple.Safari"], "categories": []}'::jsonb,
-      'active',
-      'ok',
-      5400,  -- max charge
-      NOW()
+    180,
+    3,
+    '{"app_bundle_ids": ["com.apple.Safari"], "categories": []}'::jsonb,
+    'active',
+    'ok',
+    5400,
+    NOW()
   )
   ON CONFLICT DO NOTHING
   RETURNING id INTO v_commitment_3_id;
 
-  -- Get commitment ID if it already exists
   IF v_commitment_3_id IS NULL THEN
     SELECT id INTO v_commitment_3_id
     FROM public.commitments
@@ -273,10 +237,7 @@ BEGIN
     LIMIT 1;
   END IF;
 
-  -- 5) Create daily_usage data
-  -- Real user: Exceeded limit on 3 days (30 minutes over each day = 90 minutes total)
   IF v_real_user_id IS NOT NULL AND v_commitment_1_id IS NOT NULL THEN
-    -- Day 1: Used 90 minutes (30 over limit)
     INSERT INTO public.daily_usage (
       user_id,
       commitment_id,
@@ -292,10 +253,10 @@ BEGIN
       v_real_user_id,
       v_commitment_1_id,
       v_start_date,
-      90,  -- used
-      60,  -- limit
-      30,  -- exceeded
-      300, -- penalty (30 * 10 cents)
+      90,
+      60,
+      30,
+      300,
       false,
       NOW()
     )
@@ -304,7 +265,6 @@ BEGIN
       exceeded_minutes = EXCLUDED.exceeded_minutes,
       penalty_cents = EXCLUDED.penalty_cents;
 
-    -- Day 2: Used 90 minutes (30 over limit)
     INSERT INTO public.daily_usage (
       user_id,
       commitment_id,
@@ -332,7 +292,6 @@ BEGIN
       exceeded_minutes = EXCLUDED.exceeded_minutes,
       penalty_cents = EXCLUDED.penalty_cents;
 
-    -- Day 3: Used 90 minutes (30 over limit)
     INSERT INTO public.daily_usage (
       user_id,
       commitment_id,
@@ -361,7 +320,6 @@ BEGIN
       penalty_cents = EXCLUDED.penalty_cents;
   END IF;
 
-  -- Test User 1: Exceeded limit (used 150 minutes, limit 120, exceeded 30)
   IF v_commitment_2_id IS NOT NULL THEN
     INSERT INTO public.daily_usage (
       user_id,
@@ -381,7 +339,7 @@ BEGIN
       150,
       120,
       30,
-      150,  -- 30 * 5 cents
+      150,
       false,
       NOW()
     )
@@ -391,7 +349,6 @@ BEGIN
       penalty_cents = EXCLUDED.penalty_cents;
   END IF;
 
-  -- Test User 3: Stayed within limit (used 100 minutes, limit 180, exceeded 0)
   IF v_commitment_3_id IS NOT NULL THEN
     INSERT INTO public.daily_usage (
       user_id,
@@ -411,7 +368,7 @@ BEGIN
       100,
       180,
       0,
-      0,  -- No penalty
+      0,
       false,
       NOW()
     )
@@ -421,13 +378,12 @@ BEGIN
       penalty_cents = EXCLUDED.penalty_cents;
   END IF;
 
-  -- 6) Return summary
   SELECT json_build_object(
     'success', true,
     'message', 'Test data setup complete',
     'deadline_date', v_deadline_date,
     'real_user_id', v_real_user_id,
-    'real_user_stripe_customer', v_real_user_stripe_customer,
+    'real_user_stripe_customer', 'cus_TRROpBSIbBGe2M',
     'test_users_created', 3,
     'commitments_created', CASE WHEN v_real_user_id IS NOT NULL THEN 3 ELSE 2 END,
     'daily_usage_entries', CASE WHEN v_real_user_id IS NOT NULL THEN 4 ELSE 2 END
@@ -436,4 +392,5 @@ BEGIN
   RETURN v_result;
 END;
 $$;
+
 

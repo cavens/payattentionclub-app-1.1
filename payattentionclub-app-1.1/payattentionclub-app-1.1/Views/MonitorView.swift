@@ -25,7 +25,15 @@ struct MonitorView: View {
                         }
                     }
                     .padding(.top, 20)
-                
+
+                SettlementStatusView(
+                    status: model.weekStatus,
+                    isLoading: model.isLoadingWeekStatus,
+                    errorMessage: model.weekStatusError,
+                    onRefresh: { model.refreshWeekStatus() }
+                )
+                .padding(.horizontal)
+
                 // Progress Bar
                 VStack(alignment: .leading, spacing: 15) {
                     Text("Time Spent")
@@ -148,6 +156,7 @@ struct MonitorView: View {
             .withLogoutButton()
             .onAppear {
                 startTimer()
+                model.refreshWeekStatus()
             }
             .onDisappear {
                 stopTimer()

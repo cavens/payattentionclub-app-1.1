@@ -1,19 +1,25 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
+
 // Determine which Stripe key to use (test or production)
 // Priority: STRIPE_SECRET_KEY_TEST (if exists) → STRIPE_SECRET_KEY (fallback)
 const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
 const STRIPE_SECRET_KEY_PROD = Deno.env.get("STRIPE_SECRET_KEY");
+
 const STRIPE_SECRET_KEY = STRIPE_SECRET_KEY_TEST || STRIPE_SECRET_KEY_PROD;
+
 if (!STRIPE_SECRET_KEY) {
   console.error("ERROR: No Stripe secret key found. Please set STRIPE_SECRET_KEY_TEST or STRIPE_SECRET_KEY in Supabase secrets.");
 }
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
 const stripe = new Stripe(STRIPE_SECRET_KEY, {
   apiVersion: "2023-10-16"
 });
-Deno.serve(async (req)=>{
+
+Deno.serve(async (req) => {
   try {
     // 1) Auth: get user from JWT
     const authHeader = req.headers.get("Authorization");
@@ -24,6 +30,7 @@ Deno.serve(async (req)=>{
         status: 401
       });
     }
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       global: {
         headers: {
@@ -31,6 +38,7 @@ Deno.serve(async (req)=>{
         }
       }
     });
+
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return new Response(JSON.stringify({
@@ -39,10 +47,17 @@ Deno.serve(async (req)=>{
         status: 401
       });
     }
+
     const userId = user.id;
     const userEmail = user.email ?? undefined;
+
     // 2) Fetch user row from public.users
-    const { data: dbUser, error: dbUserError } = await supabase.from("users").select("id, email, stripe_customer_id, has_active_payment_method").eq("id", userId).single();
+    const { data: dbUser, error: dbUserError } = await supabase
+      .from("users")
+      .select("id, email, stripe_customer_id, has_active_payment_method")
+      .eq("id", userId)
+      .single();
+
     if (dbUserError) {
       console.error("Error fetching user row:", dbUserError);
       return new Response(JSON.stringify({
@@ -51,7 +66,9 @@ Deno.serve(async (req)=>{
         status: 400
       });
     }
+
     let stripeCustomerId = dbUser.stripe_customer_id;
+
     // 3) Create Stripe customer if missing
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({
@@ -61,9 +78,14 @@ Deno.serve(async (req)=>{
         }
       });
       stripeCustomerId = customer.id;
-      const { error: updateCustomerError } = await supabase.from("users").update({
-        stripe_customer_id: stripeCustomerId
-      }).eq("id", userId);
+
+      const { error: updateCustomerError } = await supabase
+        .from("users")
+        .update({
+          stripe_customer_id: stripeCustomerId
+        })
+        .eq("id", userId);
+
       if (updateCustomerError) {
         console.error("Error updating stripe_customer_id:", updateCustomerError);
         return new Response(JSON.stringify({
@@ -73,22 +95,30 @@ Deno.serve(async (req)=>{
         });
       }
     }
+
     // 4) Check if user already has a card
     const paymentMethods = await stripe.paymentMethods.list({
       customer: stripeCustomerId,
       type: "card",
       limit: 1
     });
+
     const hasPaymentMethod = paymentMethods.data.length > 0;
+
     // If card exists, update has_active_payment_method = true
     if (hasPaymentMethod && !dbUser.has_active_payment_method) {
-      const { error: updatePmFlagError } = await supabase.from("users").update({
-        has_active_payment_method: true
-      }).eq("id", userId);
+      const { error: updatePmFlagError } = await supabase
+        .from("users")
+        .update({
+          has_active_payment_method: true
+        })
+        .eq("id", userId);
+
       if (updatePmFlagError) {
         console.error("Error updating has_active_payment_method:", updatePmFlagError);
       }
     }
+
     // 5) If user already has a PM → return status only
     if (hasPaymentMethod) {
       return new Response(JSON.stringify({
@@ -103,6 +133,7 @@ Deno.serve(async (req)=>{
         status: 200
       });
     }
+
     // 6) Else: create SetupIntent and return client_secret
     const setupIntent = await stripe.setupIntents.create({
       customer: stripeCustomerId,
@@ -110,6 +141,7 @@ Deno.serve(async (req)=>{
         enabled: true
       }
     });
+
     return new Response(JSON.stringify({
       has_payment_method: false,
       needs_setup_intent: true,
@@ -121,6 +153,7 @@ Deno.serve(async (req)=>{
       },
       status: 200
     });
+
   } catch (err) {
     console.error("billing-status error:", err);
     return new Response(JSON.stringify({

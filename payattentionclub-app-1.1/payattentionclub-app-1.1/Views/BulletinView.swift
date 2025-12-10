@@ -21,7 +21,15 @@ struct BulletinView: View {
                         }
                     }
                     .padding(.top, 20)
-                    
+
+                    SettlementStatusView(
+                        status: model.weekStatus,
+                        isLoading: model.isLoadingWeekStatus,
+                        errorMessage: model.weekStatusError,
+                        onRefresh: { model.refreshWeekStatus() }
+                    )
+                    .padding(.horizontal)
+
                     // Recap
                     VStack(spacing: 20) {
                         Text("Week Recap")
@@ -81,6 +89,7 @@ struct BulletinView: View {
             .onAppear {
                 // Update usage when view appears to show current values
                 updateUsage()
+                model.refreshWeekStatus()
             }
         }
     }

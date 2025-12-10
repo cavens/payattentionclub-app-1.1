@@ -53,7 +53,7 @@ begin
   -- 3) The commitment starts NOW (when user commits) and ends on the deadline
   v_commitment_start_date := current_date;  -- Commitment starts today
   v_deadline_ts := (p_deadline_date::timestamp at time zone 'America/New_York') + interval '12 hours';
-  
+
   -- 4) Compute minutes remaining until the deadline (minimum 0)
   v_minutes_remaining := greatest(
     0,

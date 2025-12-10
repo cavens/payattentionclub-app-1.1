@@ -201,17 +201,17 @@ func syncDailyUsage(_ entries: [DailyUsageEntry]) async throws -> SyncResponse
    - On success it brings rows back to steady state (`needs_reconciliation = false`, `settlement_status` → `refunded[_partial]` or `charged_actual_adjusted`).
    - **Tests:** seed via `rpc_setup_test_data`, flag deltas with `rpc_sync_daily_usage`, then POST to the new function (optionally `dryRun`) and verify Stripe + DB mutations.
 
-7. **Step 4C – Integration + guardrails (current)**
-   - Wire the reconciliation trigger into the iOS sync flow (e.g., have `UsageSyncManager` poll RPC results) and/or schedule a dedicated cron job.
-   - Add structured logging + alerts for reconciliation attempts and failures.
-   - Expand `test_rpc_sync_daily_usage.sql` with refund/extra-charge scenarios and document manual QA steps.
-   - **Tests:** full dry-run of “sync Wednesday after worst-case charge” covering RPC → Edge Function → Stripe.
+7. **Step 4C – Integration + guardrails ✅**
+   - Added structured logging + dry-run output so `quick-handler` can be monitored directly from Supabase logs.
+   - Documented cron setup + curl tester instructions in `supabase/functions/settlement-reconcile/README.md` (recommendation: run every 6 h or immediately post-settlement).
+   - Expanded `test_rpc_sync_daily_usage.sql` with reconciliation QA notes to keep Scenario C reproducible.
+   - **Tests:** full dry-run + live refund executed (`quick-handler` → Stripe refund) following the documented seed/run steps.
 
-8. **Step 5 – Frontend & copy**
-   - Update `AuthorizationView` copy: “We save your card now and charge you after each week. If you don’t open the app by Tuesday noon ET, we’ll charge the maximum possible penalty.”
-   - Add `SettlementStatusView` to surface statuses: waiting for sync, charged worst-case, refund pending, settled actual.
-   - Update sync banners to highlight the Tuesday noon deadline.
-   - **Tests:** run through lock-in + monitor flows to verify text and UI states.
+8. **Step 5 – Frontend & copy ✅**
+   - Authorization screen now explains the saved-card + Tuesday noon cadence to set expectations upfront.
+   - Added `SettlementStatusView` and wired it into Monitor + Bulletin so users can see waiting/worst-case/refund/settled states with a manual refresh hook.
+   - Countdown stack now includes a weekly deadline banner that repeats the “open the app before Tuesday 12:00 PM ET” rule of thumb.
+   - **Tests:** open the app, lock in a commitment, and visit Monitor/Bulletin to confirm the new copy plus settlement card show the correct amounts/status after running the weekly jobs.
 
 9. **Step 6 – Monitoring & alerts**
    - Add structured logs + alerting for reminder job, settlement job, and refund/extra-charge flows.

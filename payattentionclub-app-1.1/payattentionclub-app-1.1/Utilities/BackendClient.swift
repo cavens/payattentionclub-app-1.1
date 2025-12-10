@@ -689,6 +689,52 @@ class BackendClient {
             throw BackendError.serverError("Failed to report usage: \(error.localizedDescription)")
         }
     }
+    /// 4. Fetch weekly settlement + reconciliation status for the current commitment.
+    /// Calls: RPC function rpc_get_week_status.
+    /// - Parameter weekStartDate: Optional Monday deadline to query (defaults to backend auto-detection).
+    /// - Returns: WeekStatusResponse with settlement + reconciliation metadata.
+    nonisolated func fetchWeekStatus(weekStartDate: Date?) async throws -> WeekStatusResponse {
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
+
+        struct WeekStatusParams: Encodable, Sendable {
+            let p_week_start_date: String?
+
+            enum CodingKeys: String, CodingKey {
+                case p_week_start_date
+            }
+
+            nonisolated func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                if let value = p_week_start_date {
+                    try container.encode(value, forKey: .p_week_start_date)
+                }
+            }
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
+        let encodedDate = weekStartDate.map { dateFormatter.string(from: $0) }
+
+        let params = WeekStatusParams(p_week_start_date: encodedDate)
+
+        do {
+            let builder = try supabase.rpc("rpc_get_week_status", params: params)
+            let response: PostgrestResponse<[WeekStatusResponse]> = try await builder.execute()
+            guard let first = response.value.first else {
+                NSLog("SETTLEMENT BackendClient: ⚠️ rpc_get_week_status returned no rows for \(encodedDate ?? "auto")")
+                throw BackendError.serverError("No week status available yet. Lock in a commitment first.")
+            }
+            NSLog("SETTLEMENT BackendClient: ✅ Loaded week status for \(encodedDate ?? "auto")")
+            return first
+        } catch {
+            NSLog("SETTLEMENT BackendClient: ❌ Failed to load week status: \(error)")
+            throw BackendError.serverError("Failed to load week status: \(error.localizedDescription)")
+        }
+    }
+
 }
 
 // MARK: - Usage Report Response Model
@@ -724,3 +770,102 @@ struct UsageReportResponse: Codable, Sendable {
     }
 }
 
+
+struct WeekStatusResponse: Codable, Sendable {
+    let userTotalPenaltyCents: Int
+    let userStatus: String
+    let userMaxChargeCents: Int
+    let poolTotalPenaltyCents: Int
+    let poolStatus: String
+    let poolInstagramPostUrl: String?
+    let poolInstagramImageUrl: String?
+    let userSettlementStatus: String
+    let chargedAmountCents: Int
+    let actualAmountCents: Int
+    let refundAmountCents: Int
+    let needsReconciliation: Bool
+    let reconciliationDeltaCents: Int
+    let reconciliationReason: String?
+    let reconciliationDetectedAt: String?
+    let weekGraceExpiresAt: String?
+    let weekEndDate: String?
+
+    enum CodingKeys: String, CodingKey {
+        case userTotalPenaltyCents = "user_total_penalty_cents"
+        case userStatus = "user_status"
+        case userMaxChargeCents = "user_max_charge_cents"
+        case poolTotalPenaltyCents = "pool_total_penalty_cents"
+        case poolStatus = "pool_status"
+        case poolInstagramPostUrl = "pool_instagram_post_url"
+        case poolInstagramImageUrl = "pool_instagram_image_url"
+        case userSettlementStatus = "user_settlement_status"
+        case chargedAmountCents = "charged_amount_cents"
+        case actualAmountCents = "actual_amount_cents"
+        case refundAmountCents = "refund_amount_cents"
+        case needsReconciliation = "needs_reconciliation"
+        case reconciliationDeltaCents = "reconciliation_delta_cents"
+        case reconciliationReason = "reconciliation_reason"
+        case reconciliationDetectedAt = "reconciliation_detected_at"
+        case weekGraceExpiresAt = "week_grace_expires_at"
+        case weekEndDate = "week_end_date"
+    }
+
+    nonisolated init(
+        userTotalPenaltyCents: Int,
+        userStatus: String,
+        userMaxChargeCents: Int,
+        poolTotalPenaltyCents: Int,
+        poolStatus: String,
+        poolInstagramPostUrl: String?,
+        poolInstagramImageUrl: String?,
+        userSettlementStatus: String,
+        chargedAmountCents: Int,
+        actualAmountCents: Int,
+        refundAmountCents: Int,
+        needsReconciliation: Bool,
+        reconciliationDeltaCents: Int,
+        reconciliationReason: String?,
+        reconciliationDetectedAt: String?,
+        weekGraceExpiresAt: String?,
+        weekEndDate: String?
+    ) {
+        self.userTotalPenaltyCents = userTotalPenaltyCents
+        self.userStatus = userStatus
+        self.userMaxChargeCents = userMaxChargeCents
+        self.poolTotalPenaltyCents = poolTotalPenaltyCents
+        self.poolStatus = poolStatus
+        self.poolInstagramPostUrl = poolInstagramPostUrl
+        self.poolInstagramImageUrl = poolInstagramImageUrl
+        self.userSettlementStatus = userSettlementStatus
+        self.chargedAmountCents = chargedAmountCents
+        self.actualAmountCents = actualAmountCents
+        self.refundAmountCents = refundAmountCents
+        self.needsReconciliation = needsReconciliation
+        self.reconciliationDeltaCents = reconciliationDeltaCents
+        self.reconciliationReason = reconciliationReason
+        self.reconciliationDetectedAt = reconciliationDetectedAt
+        self.weekGraceExpiresAt = weekGraceExpiresAt
+        self.weekEndDate = weekEndDate
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userTotalPenaltyCents = try container.decodeIfPresent(Int.self, forKey: .userTotalPenaltyCents) ?? 0
+        userStatus = try container.decodeIfPresent(String.self, forKey: .userStatus) ?? "none"
+        userMaxChargeCents = try container.decodeIfPresent(Int.self, forKey: .userMaxChargeCents) ?? 0
+        poolTotalPenaltyCents = try container.decodeIfPresent(Int.self, forKey: .poolTotalPenaltyCents) ?? 0
+        poolStatus = try container.decodeIfPresent(String.self, forKey: .poolStatus) ?? "open"
+        poolInstagramPostUrl = try container.decodeIfPresent(String.self, forKey: .poolInstagramPostUrl)
+        poolInstagramImageUrl = try container.decodeIfPresent(String.self, forKey: .poolInstagramImageUrl)
+        userSettlementStatus = try container.decodeIfPresent(String.self, forKey: .userSettlementStatus) ?? "pending"
+        chargedAmountCents = try container.decodeIfPresent(Int.self, forKey: .chargedAmountCents) ?? 0
+        actualAmountCents = try container.decodeIfPresent(Int.self, forKey: .actualAmountCents) ?? 0
+        refundAmountCents = try container.decodeIfPresent(Int.self, forKey: .refundAmountCents) ?? 0
+        needsReconciliation = try container.decodeIfPresent(Bool.self, forKey: .needsReconciliation) ?? false
+        reconciliationDeltaCents = try container.decodeIfPresent(Int.self, forKey: .reconciliationDeltaCents) ?? 0
+        reconciliationReason = try container.decodeIfPresent(String.self, forKey: .reconciliationReason)
+        reconciliationDetectedAt = try container.decodeIfPresent(String.self, forKey: .reconciliationDetectedAt)
+        weekGraceExpiresAt = try container.decodeIfPresent(String.self, forKey: .weekGraceExpiresAt)
+        weekEndDate = try container.decodeIfPresent(String.self, forKey: .weekEndDate)
+    }
+}
