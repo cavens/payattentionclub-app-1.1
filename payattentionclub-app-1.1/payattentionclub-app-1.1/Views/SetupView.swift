@@ -88,16 +88,6 @@ struct SetupView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
-                        // Testing button to set limit to 1 minute
-                        Button(action: {
-                            model.limitMinutes = 1.0
-                        }) {
-                            Text("Set to 1 min (testing)")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                        }
-                        .padding(.top, 4)
                     }
                     .padding()
                     .background(Color.gray.opacity(0.1))
@@ -197,20 +187,6 @@ struct SetupView: View {
                     .onChange(of: model.selectedApps) { newSelection in
                         NSLog("SETUP SetupView: selectedApps changed! Apps: \(newSelection.applicationTokens.count), Categories: \(newSelection.categoryTokens.count)")
                     }
-                    
-                    // TEMPORARY: Backend Test Button (Remove after testing)
-                    Button(action: {
-                        model.navigate(.backendTest)
-                    }) {
-                        Text("🧪 Test Backend (Temporary)")
-                            .font(.subheadline)
-                            .foregroundColor(.orange)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.orange.opacity(0.1))
-                            .cornerRadius(8)
-                    }
-                    .padding(.horizontal)
                     
                     // Authentication Error Display
                     if let error = authenticationError {

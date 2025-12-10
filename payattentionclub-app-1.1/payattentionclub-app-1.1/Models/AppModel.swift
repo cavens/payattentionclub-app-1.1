@@ -385,7 +385,5 @@ enum AppScreen {
     case authorization
     case monitor
     case bulletin
-    case backendTest // TEMPORARY: Remove after testing
-    case dailyUsageTest // TEMPORARY: Phase 2 testing
 }
 

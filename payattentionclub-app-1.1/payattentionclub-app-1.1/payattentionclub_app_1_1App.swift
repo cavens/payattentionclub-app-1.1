@@ -60,27 +60,46 @@ struct RootRouterView: View {
         print("MARKERS RootRouterView: body accessed - screen: \(screen)")
         fflush(stdout)
         
-        return Group {
-            switch screen {
-            case .loading:
-                LoadingView()
-            case .setup:
-                SetupView()
-            case .screenTimeAccess:
-                ScreenTimeAccessView()
-            case .authorization:
-                AuthorizationView()
-            case .monitor:
-                MonitorView()
-            case .bulletin:
-                BulletinView()
-            case .backendTest:
-                BackendTestView() // TEMPORARY: Remove after testing
-            case .dailyUsageTest:
-                DailyUsageTestView()
+        return ZStack(alignment: .topLeading) {
+            Group {
+                switch screen {
+                case .loading:
+                    LoadingView()
+                case .setup:
+                    SetupView()
+                case .screenTimeAccess:
+                    ScreenTimeAccessView()
+                case .authorization:
+                    AuthorizationView()
+                case .monitor:
+                    MonitorView()
+                case .bulletin:
+                    BulletinView()
+                }
+            }
+            .id(model.currentScreen) // Force identity change
+            
+            // STAGING badge - only visible in test mode
+            if AppConfig.isTestMode {
+                StagingBadge()
             }
         }
-        .id(model.currentScreen) // Force identity change
+    }
+}
+
+/// Badge shown in staging/test mode to prevent confusion with production
+struct StagingBadge: View {
+    var body: some View {
+        Text("STAGING")
+            .font(.caption2)
+            .fontWeight(.bold)
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.orange)
+            .cornerRadius(4)
+            .padding(.leading, 8)
+            .padding(.top, 60) // Below status bar
     }
 }
 
