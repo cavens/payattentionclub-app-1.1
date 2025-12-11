@@ -13,8 +13,8 @@
 
 import "https://deno.land/std@0.177.0/dotenv/load.ts";
 
-// Default email - change this to your test email
-const DEFAULT_EMAIL = "jef@cavens.io";
+// Default email - your Apple Sign-In relay email
+const DEFAULT_EMAIL = "pythwk8m57@privaterelay.appleid.com";
 
 async function main() {
   // Get email from command line or use default
