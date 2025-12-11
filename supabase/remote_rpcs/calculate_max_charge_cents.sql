@@ -10,7 +10,7 @@
 --   - More apps selected → higher authorization (risk factor)
 --   - More time until deadline → higher authorization
 --   - Minimum: $5.00 (500 cents)
---   - Maximum: $100.00 (10000 cents)
+--   - Maximum: $1000.00 (100000 cents)
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.calculate_max_charge_cents(
@@ -65,8 +65,8 @@ BEGIN
         * LEAST(7, v_days_remaining)  -- Cap at 7 days worth
         * v_risk_factor;
     
-    -- Apply bounds: minimum $5 (500 cents), maximum $100 (10000 cents)
-    v_result_cents := GREATEST(500, LEAST(10000, FLOOR(v_base_amount_cents)::integer));
+    -- Apply bounds: minimum $5 (500 cents), maximum $1000 (100000 cents)
+    v_result_cents := GREATEST(500, LEAST(100000, FLOOR(v_base_amount_cents)::integer));
     
     RETURN v_result_cents;
 END;

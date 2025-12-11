@@ -26,7 +26,7 @@ Located in `supabase/remote_rpcs/calculate_max_charge_cents.sql`:
 
 - **Realistic daily usage cap**: Assumes max ~10 hours/day usage, not 24
 - **Risk factor**: 1.0 base + 0.05 per app (capped at 2.0)
-- **Bounds**: Minimum $5, Maximum $100
+- **Bounds**: Minimum $5, Maximum $1000
 - **Scale**: Based on days remaining (capped at 7 days)
 
 ## Files Changed
@@ -69,7 +69,7 @@ SELECT * FROM rpc_preview_max_charge(
 );
 ```
 
-Expected: `max_charge_cents` between 500 and 10000 (i.e., $5-$100)
+Expected: `max_charge_cents` between 500 and 100000 (i.e., $5-$1000)
 
 ### 3. Build and Test iOS App
 1. Open Xcode
