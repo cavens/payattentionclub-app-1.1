@@ -331,23 +331,14 @@ struct SetupView: View {
         // Navigate to next screen based on ScreenTime authorization status
         let authorizationCenter = AuthorizationCenter.shared
         let status = authorizationCenter.authorizationStatus
-        NSLog("MARKERS SetupView: Authorization status: %@", String(describing: status))
-        print("MARKERS SetupView: Authorization status: \(status)")
-        fflush(stdout)
         
         if status == .approved {
             // Skip ScreenTime access view, go directly to authorization
-            NSLog("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
-            print("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
-            fflush(stdout)
             await MainActor.run {
                 model.navigate(.authorization)
             }
         } else {
             // Need to request ScreenTime access
-            NSLog("MARKERS SetupView: ScreenTime not approved, showing access screen")
-            print("MARKERS SetupView: ScreenTime not approved, showing access screen")
-            fflush(stdout)
             await MainActor.run {
                 model.navigate(.screenTimeAccess)
             }
