@@ -1,0 +1,102 @@
+/**
+ * Reset My User - Completely delete a user from Supabase
+ * 
+ * This script deletes a user and ALL their data, allowing you to 
+ * start fresh with Apple Sign-In on your device.
+ * 
+ * Usage:
+ *   deno run --allow-all reset_my_user.ts your-email@example.com
+ * 
+ * Or edit the DEFAULT_EMAIL below and just run:
+ *   deno run --allow-all reset_my_user.ts
+ */
+
+import "https://deno.land/std@0.177.0/dotenv/load.ts";
+
+// Default email - change this to your test email
+const DEFAULT_EMAIL = "jef@cavens.io";
+
+async function main() {
+  // Get email from command line or use default
+  const email = Deno.args[0] || DEFAULT_EMAIL;
+  
+  console.log("🗑️  Reset My User");
+  console.log("================");
+  console.log(`Email: ${email}`);
+  console.log("");
+
+  // Load environment variables
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    console.error("❌ Missing environment variables!");
+    console.error("   Make sure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in .env");
+    Deno.exit(1);
+  }
+
+  // Confirm before proceeding
+  console.log("⚠️  WARNING: This will PERMANENTLY delete:");
+  console.log("   - User from auth.users (Apple Sign-In will create new user)");
+  console.log("   - User from public.users");
+  console.log("   - All commitments");
+  console.log("   - All daily_usage records");
+  console.log("   - All user_week_penalties");
+  console.log("   - All payments");
+  console.log("");
+  
+  const confirm = prompt("Type 'DELETE' to confirm: ");
+  if (confirm !== "DELETE") {
+    console.log("❌ Cancelled");
+    Deno.exit(0);
+  }
+
+  console.log("");
+  console.log("🔄 Deleting user...");
+
+  try {
+    // Call the RPC function
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/rpc_delete_user_completely`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": serviceRoleKey,
+        "Authorization": `Bearer ${serviceRoleKey}`,
+      },
+      body: JSON.stringify({
+        p_email: email,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ HTTP Error ${response.status}: ${errorText}`);
+      Deno.exit(1);
+    }
+
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log("✅ User deleted successfully!");
+      console.log("");
+      console.log("Deleted:");
+      console.log(`   - Payments: ${result.deleted.payments}`);
+      console.log(`   - Daily usage: ${result.deleted.daily_usage}`);
+      console.log(`   - Week penalties: ${result.deleted.user_week_penalties}`);
+      console.log(`   - Commitments: ${result.deleted.commitments}`);
+      console.log(`   - Public user: ${result.deleted.public_users}`);
+      console.log(`   - Auth user: ${result.deleted.auth_users}`);
+      console.log("");
+      console.log("🎉 You can now sign in fresh with Apple Sign-In!");
+    } else {
+      console.error(`❌ Error: ${result.error}`);
+      Deno.exit(1);
+    }
+  } catch (error) {
+    console.error(`❌ Error: ${error.message}`);
+    Deno.exit(1);
+  }
+}
+
+main();
+
