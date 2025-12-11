@@ -73,12 +73,8 @@ serve(async (req) => {
       )
     }
     
-    console.log('Using Stripe key:', stripeSecretKey.startsWith('sk_test_') ? 'TEST' : 'PRODUCTION')
-
     // Extract SetupIntent ID from client secret (format: seti_xxx_secret_yyy)
     const setupIntentId = clientSecret.split('_secret_')[0]
-    
-    console.log('Confirming SetupIntent:', setupIntentId, 'with PaymentMethod:', paymentMethodId)
 
     // First, retrieve the SetupIntent to check its current status
     const retrieveResponse = await fetch(`https://api.stripe.com/v1/setup_intents/${setupIntentId}`, {
@@ -98,11 +94,9 @@ serve(async (req) => {
     }
 
     const setupIntent = await retrieveResponse.json()
-    console.log('SetupIntent status:', setupIntent.status)
 
     // If already confirmed or succeeded, return success
     if (setupIntent.status === 'succeeded' || setupIntent.status === 'processing') {
-      console.log('SetupIntent already confirmed, returning success')
       return new Response(
         JSON.stringify({ 
           success: true, 
@@ -127,16 +121,11 @@ serve(async (req) => {
       )
     }
     
-    // Log the current status for debugging
-    console.log('SetupIntent status before confirmation:', setupIntent.status, '(expected: requires_payment_method)')
-
     // Now confirm the SetupIntent with the PaymentMethod
     // Note: return_url is required by Stripe even for Apple Pay flows
     // For Apple Pay, this URL won't actually be used, but Stripe requires it
     // Stripe requires an HTTPS URL (not a deep link)
     const returnUrl = 'https://payattentionclub.app/payment-return'
-    
-    console.log('Confirming SetupIntent with return_url:', returnUrl)
     
     const confirmResponse = await fetch(`https://api.stripe.com/v1/setup_intents/${setupIntentId}/confirm`, {
       method: 'POST',
@@ -183,7 +172,6 @@ serve(async (req) => {
     }
 
     const setupIntentData = await confirmResponse.json()
-    console.log('SetupIntent confirmed:', setupIntentData.id, 'status:', setupIntentData.status)
 
     // Return success
     return new Response(
