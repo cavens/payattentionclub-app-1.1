@@ -10,6 +10,7 @@ struct AuthorizationView: View {
     @State private var isLockingIn = false
     @State private var lockInError: String?
     @State private var isPresentingPaymentSheet = false
+    @State private var isLoadingAmount = true
     
     var body: some View {
         NavigationView {
@@ -21,9 +22,14 @@ struct AuthorizationView: View {
                         .font(.title2)
                         .fontWeight(.semibold)
                     
-                    Text("$\(calculatedAmount, specifier: "%.2f")")
-                        .font(.system(size: 44, weight: .bold))
-                        .foregroundColor(.pink)
+                    if isLoadingAmount {
+                        ProgressView()
+                            .frame(height: 52)
+                    } else {
+                        Text("$\(calculatedAmount, specifier: "%.2f")")
+                            .font(.system(size: 44, weight: .bold))
+                            .foregroundColor(.pink)
+                    }
                     
                     Text("""
 We save your card with Stripe today (Setup Intent) so the weekly settlement can run automatically:
@@ -126,9 +132,12 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
             }
             .navigationTitle("Authorization")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                calculatedAmount = model.calculateAuthorizationAmount()
+            .task {
+                // Fetch authorization amount from backend (single source of truth)
+                isLoadingAmount = true
+                calculatedAmount = await model.fetchAuthorizationAmount()
                 model.authorizationAmount = calculatedAmount
+                isLoadingAmount = false
             }
         }
     }

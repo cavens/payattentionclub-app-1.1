@@ -77,13 +77,13 @@ The `call_weekly_close()` function needs this to authenticate with the Edge Func
 
 **Staging:**
 - Key: `app.settings.service_role_key`
-- Value: `STAGING_SUPABASE_SERVICE_ROLE_KEY` from `.env`
-- Value: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1cXVqYnBwb3l0a2VxZHNncmJsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTQ1Nzg5NiwiZXhwIjoyMDgxMDMzODk2fQ.ZswLxpQlRnOUITjuK1WXdz-bL4A1pRGR0OxqX_A4TBI`
+- Value: Get from `.env` file: `STAGING_SUPABASE_SERVICE_ROLE_KEY`
+- ⚠️ **DO NOT commit this value to git!**
 
 **Production:**
 - Key: `app.settings.service_role_key`
-- Value: `PRODUCTION_SUPABASE_SERVICE_ROLE_KEY` from `.env`
-- Value: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MzA0NzQ2NSwiZXhwIjoyMDc4NjIzNDY1fQ.l-qljQAkfgioPGv5gATTosBtA70oA_c_DZWXFuZaI44`
+- Value: Get from `.env` file: `PRODUCTION_SUPABASE_SERVICE_ROLE_KEY`
+- ⚠️ **DO NOT commit this value to git!**
 
 ### Verify Service Role Key is Set:
 

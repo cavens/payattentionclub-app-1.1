@@ -1,3 +1,10 @@
+-- ==============================================================================
+-- RPC Function: rpc_create_commitment
+-- ==============================================================================
+-- Creates a new commitment for the authenticated user.
+-- Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
+-- ==============================================================================
+
 CREATE OR REPLACE FUNCTION public.rpc_create_commitment(
   p_deadline_date date,
   p_limit_minutes integer,
@@ -7,73 +14,64 @@ CREATE OR REPLACE FUNCTION public.rpc_create_commitment(
 RETURNS json
 LANGUAGE plpgsql
 SECURITY DEFINER AS $$
-declare
+DECLARE
   v_user_id uuid := auth.uid();
   v_has_pm boolean;
   v_commitment_start_date date;
   v_deadline_ts timestamptz;
-  v_minutes_remaining numeric;
-  v_potential_overage numeric;
-  v_risk_factor numeric;
-  v_max_charge_cents integer;
   v_app_count integer;
+  v_max_charge_cents integer;
   v_commitment_id uuid;
   v_result json;
-begin
-  if v_user_id is null then
-    raise exception 'Not authenticated' using errcode = '42501';
-  end if;
+BEGIN
+  -- 1) Must be authenticated
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
+  END IF;
 
-  select u.has_active_payment_method
-    into v_has_pm
-    from public.users u
-    where u.id = v_user_id;
+  -- 2) Check user has active payment method
+  SELECT u.has_active_payment_method
+    INTO v_has_pm
+    FROM public.users u
+    WHERE u.id = v_user_id;
 
-  if coalesce(v_has_pm, false) = false then
-    raise exception 'User has no active payment method' using errcode = 'P0001';
-  end if;
+  IF COALESCE(v_has_pm, false) = false THEN
+    RAISE EXCEPTION 'User has no active payment method' USING ERRCODE = 'P0001';
+  END IF;
 
+  -- 3) Set dates
   v_commitment_start_date := current_date;
-  v_deadline_ts := (p_deadline_date::timestamp at time zone 'America/New_York') + interval '12 hours';
+  v_deadline_ts := (p_deadline_date::timestamp AT TIME ZONE 'America/New_York') + INTERVAL '12 hours';
 
-  v_minutes_remaining := greatest(
-    0,
-    extract(epoch from (v_deadline_ts - now())) / 60.0
+  -- 4) Count apps
+  v_app_count := COALESCE(jsonb_array_length(p_apps_to_limit->'app_bundle_ids'), 0)
+               + COALESCE(jsonb_array_length(p_apps_to_limit->'categories'), 0);
+
+  -- 5) Calculate max charge using the SINGLE SOURCE OF TRUTH function
+  v_max_charge_cents := public.calculate_max_charge_cents(
+    v_deadline_ts,
+    p_limit_minutes,
+    p_penalty_per_minute_cents,
+    v_app_count
   );
 
-  v_app_count := coalesce(jsonb_array_length(p_apps_to_limit->'app_bundle_ids'), 0)
-               + coalesce(jsonb_array_length(p_apps_to_limit->'categories'), 0);
-
-  v_risk_factor := 1.0 + 0.1 * v_app_count;
-
-  v_potential_overage := greatest(0, v_minutes_remaining - p_limit_minutes);
-
-  v_max_charge_cents :=
-      v_potential_overage
-    * p_penalty_per_minute_cents
-    * v_risk_factor;
-
-  if v_minutes_remaining > 0 then
-    v_max_charge_cents := greatest(500, floor(v_max_charge_cents)::int);
-  else
-    v_max_charge_cents := 0;
-  end if;
-
-  insert into public.weekly_pools (
+  -- 6) Ensure weekly_pools entry exists
+  INSERT INTO public.weekly_pools (
     week_start_date,
     week_end_date,
     total_penalty_cents,
     status
   )
-  values (
+  VALUES (
     p_deadline_date,
     p_deadline_date,
     0,
     'open'
   )
-  on conflict (week_start_date) do nothing;
+  ON CONFLICT (week_start_date) DO NOTHING;
 
-  insert into public.commitments (
+  -- 7) Insert commitment
+  INSERT INTO public.commitments (
     user_id,
     week_start_date,
     week_end_date,
@@ -87,7 +85,7 @@ begin
     max_charge_cents,
     created_at
   )
-  values (
+  VALUES (
     v_user_id,
     v_commitment_start_date,
     p_deadline_date,
@@ -96,19 +94,18 @@ begin
     p_apps_to_limit,
     'pending',
     'ok',
-    null,
-    now(),
+    NULL,
+    NOW(),
     v_max_charge_cents,
-    now()
+    NOW()
   )
-  returning id into v_commitment_id;
+  RETURNING id INTO v_commitment_id;
 
-  select row_to_json(c.*) into v_result
-  from public.commitments c
-  where c.id = v_commitment_id;
+  -- 8) Return the created commitment as JSON
+  SELECT row_to_json(c.*) INTO v_result
+  FROM public.commitments c
+  WHERE c.id = v_commitment_id;
 
-  return v_result;
-end;
+  RETURN v_result;
+END;
 $$;
-
-

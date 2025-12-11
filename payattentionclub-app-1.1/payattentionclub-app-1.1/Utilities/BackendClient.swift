@@ -745,7 +745,93 @@ class BackendClient {
             throw BackendError.serverError("Failed to load week status: \(error.localizedDescription)")
         }
     }
+    
+    /// 5. Preview the max charge amount before creating a commitment
+    /// Calls: RPC function rpc_preview_max_charge
+    /// - Parameters:
+    ///   - deadlineDate: The deadline date (next Monday)
+    ///   - limitMinutes: User's time limit in minutes
+    ///   - penaltyPerMinuteCents: Penalty per minute in cents
+    ///   - selectedApps: FamilyActivitySelection containing apps and categories
+    /// - Returns: MaxChargePreviewResponse with the calculated amount
+    nonisolated func previewMaxCharge(
+        deadlineDate: Date,
+        limitMinutes: Int,
+        penaltyPerMinuteCents: Int,
+        selectedApps: FamilyActivitySelection
+    ) async throws -> MaxChargePreviewResponse {
+        // Note: This doesn't require authentication - preview is allowed before committing
+        // But the actual commitment will require auth
+        
+        // Format date as ISO string (YYYY-MM-DD)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
+        let deadlineDateString = dateFormatter.string(from: deadlineDate)
+        
+        // Create apps_to_limit structure
+        let appsToLimit = AppsToLimit(
+            appBundleIds: [],
+            categories: []
+        )
+        
+        struct PreviewParams: Encodable, Sendable {
+            let p_deadline_date: String
+            let p_limit_minutes: Int
+            let p_penalty_per_minute_cents: Int
+            let p_apps_to_limit: AppsToLimit
+        }
+        
+        let params = PreviewParams(
+            p_deadline_date: deadlineDateString,
+            p_limit_minutes: limitMinutes,
+            p_penalty_per_minute_cents: penaltyPerMinuteCents,
+            p_apps_to_limit: appsToLimit
+        )
+        
+        NSLog("PREVIEW BackendClient: Calling rpc_preview_max_charge...")
+        
+        do {
+            let builder = try supabase.rpc("rpc_preview_max_charge", params: params)
+            let response: PostgrestResponse<MaxChargePreviewResponse> = try await builder.execute()
+            NSLog("PREVIEW BackendClient: ✅ Got max charge preview: \(response.value.maxChargeCents) cents")
+            return response.value
+        } catch {
+            NSLog("PREVIEW BackendClient: ❌ Failed to preview max charge: \(error)")
+            throw BackendError.serverError("Failed to preview max charge: \(error.localizedDescription)")
+        }
+    }
 
+}
+
+// MARK: - Max Charge Preview Response Model
+
+struct MaxChargePreviewResponse: Codable, Sendable {
+    let maxChargeCents: Int
+    let maxChargeDollars: Double
+    let deadlineDate: String
+    let limitMinutes: Int
+    let penaltyPerMinuteCents: Int
+    let appCount: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case maxChargeCents = "max_charge_cents"
+        case maxChargeDollars = "max_charge_dollars"
+        case deadlineDate = "deadline_date"
+        case limitMinutes = "limit_minutes"
+        case penaltyPerMinuteCents = "penalty_per_minute_cents"
+        case appCount = "app_count"
+    }
+    
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        maxChargeCents = try container.decode(Int.self, forKey: .maxChargeCents)
+        maxChargeDollars = try container.decode(Double.self, forKey: .maxChargeDollars)
+        deadlineDate = try container.decode(String.self, forKey: .deadlineDate)
+        limitMinutes = try container.decode(Int.self, forKey: .limitMinutes)
+        penaltyPerMinuteCents = try container.decode(Int.self, forKey: .penaltyPerMinuteCents)
+        appCount = try container.decode(Int.self, forKey: .appCount)
+    }
 }
 
 // MARK: - Usage Report Response Model
