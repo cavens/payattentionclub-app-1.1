@@ -1,6 +1,5 @@
 // Supabase Edge Function: confirm-setup-intent
 // This function confirms a Stripe SetupIntent using an Apple Pay payment token
-// Located at: supabase/functions/confirm-setup-intent/index.ts
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -62,8 +61,6 @@ serve(async (req) => {
     }
 
     // Get Stripe secret key from environment
-    // Use test key for test mode, production key for production
-    // Check test key first (for development), fallback to production key
     const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY_TEST') || Deno.env.get('STRIPE_SECRET_KEY')
     if (!stripeSecretKey) {
       console.error('STRIPE_SECRET_KEY_TEST or STRIPE_SECRET_KEY not configured')
@@ -72,7 +69,7 @@ serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
-    
+
     // Extract SetupIntent ID from client secret (format: seti_xxx_secret_yyy)
     const setupIntentId = clientSecret.split('_secret_')[0]
 
@@ -112,7 +109,6 @@ serve(async (req) => {
     }
 
     // If cancelled, we can't confirm it
-    // Note: 'requires_payment_method' is actually the EXPECTED state before confirmation
     if (setupIntent.status === 'canceled') {
       console.error('SetupIntent is in invalid state:', setupIntent.status)
       return new Response(
@@ -120,11 +116,8 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
-    
+
     // Now confirm the SetupIntent with the PaymentMethod
-    // Note: return_url is required by Stripe even for Apple Pay flows
-    // For Apple Pay, this URL won't actually be used, but Stripe requires it
-    // Stripe requires an HTTPS URL (not a deep link)
     const returnUrl = 'https://payattentionclub.app/payment-return'
     
     const confirmResponse = await fetch(`https://api.stripe.com/v1/setup_intents/${setupIntentId}/confirm`, {
@@ -142,7 +135,6 @@ serve(async (req) => {
     if (!confirmResponse.ok) {
       const errorText = await confirmResponse.text()
       console.error('Stripe SetupIntent confirmation error (status:', confirmResponse.status, '):', errorText)
-      // Try to parse the error as JSON for better error messages
       let errorDetails = errorText
       let errorMessage = 'Failed to confirm SetupIntent with Stripe'
       try {
@@ -158,7 +150,6 @@ serve(async (req) => {
         }
         errorDetails = JSON.stringify(errorJson, null, 2)
       } catch (e) {
-        // Keep the raw error text
         errorDetails = errorText
       }
       return new Response(
