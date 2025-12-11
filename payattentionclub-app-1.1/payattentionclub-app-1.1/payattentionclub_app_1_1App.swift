@@ -7,23 +7,16 @@ import StripePaymentSheet
 @main
 struct payattentionclub_app_1_1App: App {
     init() {
-        // TEST: Verify new code is running
-        NSLog("MARKERS App: 🚀🚀🚀 App init() called - NEW CODE IS RUNNING")
-        print("MARKERS App: 🚀🚀🚀 App init() called - NEW CODE IS RUNNING")
-        fflush(stdout)
-        
-        // Log environment configuration - filter by "TESTMODE" in console
-        NSLog("TESTMODE ========================================")
-        NSLog("TESTMODE Environment: %@", AppConfig.environment.displayName)
-        NSLog("TESTMODE isTestMode: %@", AppConfig.isTestMode ? "YES" : "NO")
-        NSLog("TESTMODE isProduction: %@", AppConfig.isProduction ? "YES" : "NO")
-        NSLog("TESTMODE Supabase URL: %@", SupabaseConfig.projectURL)
-        NSLog("TESTMODE Stripe env: %@", StripeConfig.environment)
-        NSLog("TESTMODE ========================================")
+        // Log environment configuration in debug builds
+        #if DEBUG
+        NSLog("ENV: %@ | Supabase: %@ | Stripe: %@",
+              AppConfig.environment.displayName,
+              SupabaseConfig.projectURL,
+              StripeConfig.environment)
+        #endif
         
         // Initialize Stripe SDK with publishable key
         StripeAPI.defaultPublishableKey = StripeConfig.publishableKey
-        NSLog("STRIPE App: Stripe SDK initialized with publishable key: \(StripeConfig.publishableKey.prefix(20))...")
     }
     
     @StateObject private var model = AppModel()
@@ -35,7 +28,9 @@ struct payattentionclub_app_1_1App: App {
             RootRouterView()
                 .environmentObject(model)
                 .onOpenURL { url in
-                    NSLog("DEEPLINK App: Received URL %@", url.absoluteString)
+                    #if DEBUG
+                    NSLog("DEEPLINK: %@", url.absoluteString)
+                    #endif
                     model.handleDeepLink(url)
                 }
         }
@@ -47,22 +42,10 @@ struct payattentionclub_app_1_1App: App {
 struct RootRouterView: View {
     @EnvironmentObject var model: AppModel
     
-    init() {
-        NSLog("MARKERS RootRouterView: init() called")
-        print("MARKERS RootRouterView: init() called")
-        fflush(stdout)
-    }
-    
     var body: some View {
-        let screen = model.currentScreen
-        
-        NSLog("MARKERS RootRouterView: body accessed - screen: %@", String(describing: screen))
-        print("MARKERS RootRouterView: body accessed - screen: \(screen)")
-        fflush(stdout)
-        
-        return ZStack(alignment: .topLeading) {
+        ZStack(alignment: .topLeading) {
             Group {
-                switch screen {
+                switch model.currentScreen {
                 case .loading:
                     LoadingView()
                 case .setup:

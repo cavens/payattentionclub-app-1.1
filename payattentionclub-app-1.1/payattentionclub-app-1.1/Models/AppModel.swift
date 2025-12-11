@@ -45,17 +45,8 @@ final class AppModel: ObservableObject {
     
     /// Finish initialization after UI has rendered (called from LoadingView.onAppear)
     func finishInitialization() {
-        NSLog("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
-        print("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
-        fflush(stdout)
-        guard !isInitialized else { 
-            NSLog("SYNC AppModel: ⏸️ Already initialized, skipping")
-            return 
-        }
+        guard !isInitialized else { return }
         isInitialized = true
-        NSLog("SYNC AppModel: ✅ Setting isInitialized = true")
-        print("SYNC AppModel: ✅ Setting isInitialized = true")
-        fflush(stdout)
         
         // Initialize countdown model (deferred to avoid blocking startup)
         let deadline = getNextMondayNoonEST()
@@ -67,20 +58,14 @@ final class AppModel: ObservableObject {
         // Cache deadline date (now that countdownModel exists)
         refreshCachedDeadline()
         
-        // Phase 3: Sync unsynced usage entries on app launch
+        // Sync unsynced usage entries on app launch
         Task { @MainActor in
-            NSLog("SYNC AppModel: 🚀 Starting sync task on app launch")
-            print("SYNC AppModel: 🚀 Starting sync task on app launch")
-            fflush(stdout)
             do {
                 try await UsageSyncManager.shared.syncToBackend()
-                NSLog("SYNC AppModel: ✅ Sync completed successfully")
-                print("SYNC AppModel: ✅ Sync completed successfully")
-                fflush(stdout)
             } catch {
-                NSLog("SYNC AppModel: ⚠️ Failed to sync usage on launch: \(error)")
-                print("SYNC AppModel: ⚠️ Failed to sync usage on launch: \(error)")
-                fflush(stdout)
+                #if DEBUG
+                NSLog("SYNC: Failed to sync on launch: \(error)")
+                #endif
                 // Don't block app startup if sync fails
             }
         }
@@ -91,37 +76,11 @@ final class AppModel: ObservableObject {
             // Small delay to let UI render
             try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
             
-            // Explicitly check deadline first (before checking monitoring status)
-            let storedDeadline = UsageTracker.shared.getCommitmentDeadline()
-            let monitoringFlagSet = UsageTracker.shared.isMonitoringFlagSet()
-            
-            NSLog("RESET AppModel: 📋 Initial check - Deadline exists: %@, Monitoring flag: %@", 
-                  storedDeadline != nil ? "YES" : "NO",
-                  monitoringFlagSet ? "SET" : "NOT SET")
-            print("RESET AppModel: 📋 Initial check - Deadline exists: \(storedDeadline != nil ? "YES" : "NO"), Monitoring flag: \(monitoringFlagSet ? "SET" : "NOT SET")")
-            fflush(stdout)
-            
-            if let deadline = storedDeadline {
-                let now = Date()
-                let passed = now >= deadline
-                NSLog("RESET AppModel: 📅 Stored deadline: %@, Current: %@, Passed: %@", 
-                      String(describing: deadline), 
-                      String(describing: now),
-                      passed ? "YES" : "NO")
-                print("RESET AppModel: 📅 Stored deadline: \(deadline), Current: \(now), Passed: \(passed)")
-                fflush(stdout)
-            }
-            
             // Check if monitoring is active (also checks if deadline has passed)
             let isActive = UsageTracker.shared.isMonitoringActive()
             
-            NSLog("RESET AppModel: 🎯 Final decision - Monitoring active: %@", isActive ? "YES → Monitor" : "NO → Setup")
-            print("RESET AppModel: 🎯 Final decision - Monitoring active: \(isActive ? "YES → Monitor" : "NO → Setup")")
-            fflush(stdout)
-            
             if isActive {
                 // Monitoring is active and deadline hasn't passed - navigate to monitor screen
-                // Also refresh usage data from App Group
                 await refreshUsageFromAppGroup()
                 self.navigate(.monitor)
             } else {
@@ -193,23 +152,16 @@ final class AppModel: ObservableObject {
     
     /// Handle custom URL deep links (payattentionclub://...)
     func handleDeepLink(_ url: URL) {
-        NSLog("DEEPLINK AppModel: Handling URL %@", url.absoluteString)
-        
-        guard url.scheme?.lowercased() == "payattentionclub" else {
-            NSLog("DEEPLINK AppModel: Unsupported scheme %@", url.scheme ?? "nil")
-            return
-        }
+        guard url.scheme?.lowercased() == "payattentionclub" else { return }
         
         let host = url.host?.lowercased() ?? ""
         switch host {
         case "weekly-results":
-            NSLog("DEEPLINK AppModel: Navigating to bulletin view for weekly results")
             navigate(.bulletin)
         case "monitor":
-            NSLog("DEEPLINK AppModel: Navigating to monitor view")
             navigate(.monitor)
         default:
-            NSLog("DEEPLINK AppModel: No handler for host %@", host)
+            break
         }
     }
     
