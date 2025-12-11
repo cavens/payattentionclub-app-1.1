@@ -5,17 +5,37 @@
  * Filter logs by "TESTCONFIG" to see configuration status.
  * 
  * Usage:
- *   1. Copy .env.example to .env and fill in your values
- *   2. Run tests with: deno test --allow-net --allow-env --allow-read
+ *   1. Set TEST_ENVIRONMENT=staging or TEST_ENVIRONMENT=production (defaults to staging)
+ *   2. Ensure STAGING_* or PRODUCTION_* variables are set in .env
+ *   3. Run tests with: deno test --allow-net --allow-env --allow-read
+ * 
+ * Environment Selection:
+ *   - TEST_ENVIRONMENT=staging → uses STAGING_* variables
+ *   - TEST_ENVIRONMENT=production → uses PRODUCTION_* variables
+ *   - Falls back to SUPABASE_URL, etc. for backward compatibility
  */
 
 import "https://deno.land/std@0.208.0/dotenv/load.ts";
 
-// MARK: - Environment Variables
+// MARK: - Environment Selection
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+const TEST_ENVIRONMENT = Deno.env.get("TEST_ENVIRONMENT") || "staging";
+const isStaging = TEST_ENVIRONMENT === "staging";
+
+// MARK: - Environment Variables (with fallback for backward compatibility)
+
+const SUPABASE_URL = isStaging 
+  ? Deno.env.get("STAGING_SUPABASE_URL") || Deno.env.get("SUPABASE_URL")
+  : Deno.env.get("PRODUCTION_SUPABASE_URL") || Deno.env.get("SUPABASE_URL");
+
+const SUPABASE_SERVICE_ROLE_KEY = isStaging
+  ? Deno.env.get("STAGING_SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+  : Deno.env.get("PRODUCTION_SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+const SUPABASE_ANON_KEY = isStaging
+  ? Deno.env.get("STAGING_SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_ANON_KEY")
+  : Deno.env.get("PRODUCTION_SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_ANON_KEY");
+
 const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
 
 // MARK: - Validation
@@ -64,6 +84,7 @@ export const TEST_USER_IDS = {
 // MARK: - Logging
 
 console.log("TESTCONFIG ========================================");
+console.log(`TESTCONFIG Environment: ${TEST_ENVIRONMENT.toUpperCase()}`);
 console.log(`TESTCONFIG Supabase URL: ${config.supabase.url}`);
 console.log(`TESTCONFIG Service Role Key: ${config.supabase.serviceRoleKey.substring(0, 20)}...`);
 console.log(`TESTCONFIG Anon Key: ${config.supabase.anonKey ? config.supabase.anonKey.substring(0, 20) + "..." : "(not set)"}`);

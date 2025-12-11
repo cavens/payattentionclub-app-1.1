@@ -38,6 +38,29 @@ final class AppModel: ObservableObject {
     // Flag to track if initialization is complete
     private var isInitialized = false
     
+    /// Helper to add timeout to async operations
+    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            // Add the actual operation
+            group.addTask {
+                try await operation()
+            }
+            
+            // Add timeout task
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw TimeoutError()
+            }
+            
+            // Return first result (either operation or timeout)
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+    
+    private struct TimeoutError: Error {}
+    
     init() {
         // Minimal initialization - just set defaults
         // Heavy work deferred to finishInitialization() which is called after UI renders
@@ -58,20 +81,9 @@ final class AppModel: ObservableObject {
         // Cache deadline date (now that countdownModel exists)
         refreshCachedDeadline()
         
-        // Sync unsynced usage entries on app launch
-        Task { @MainActor in
-            do {
-                try await UsageSyncManager.shared.syncToBackend()
-            } catch {
-                #if DEBUG
-                NSLog("SYNC: Failed to sync on launch: \(error)")
-                #endif
-                // Don't block app startup if sync fails
-            }
-        }
-        
         // Check if monitoring is already active - if so, navigate to monitor screen
         // Otherwise navigate to setup
+        // Navigation happens immediately - don't wait for sync
         Task { @MainActor in
             // Small delay to let UI render
             try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
@@ -86,6 +98,22 @@ final class AppModel: ObservableObject {
             } else {
                 // No active monitoring (either not started or deadline passed) - navigate to setup
                 self.navigate(.setup)
+            }
+        }
+        
+        // Sync unsynced usage entries on app launch (non-blocking, with timeout)
+        // This happens in background and doesn't delay navigation
+        Task { @MainActor in
+            // Add timeout to prevent long delays if network is slow
+            do {
+                try await withTimeout(seconds: 5) {
+                    try await UsageSyncManager.shared.syncToBackend()
+                }
+            } catch {
+                #if DEBUG
+                NSLog("SYNC: Failed to sync on launch (timeout or error): \(error)")
+                #endif
+                // Don't block app startup if sync fails or times out
             }
         }
     }

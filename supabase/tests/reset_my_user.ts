@@ -29,8 +29,17 @@ async function main() {
   console.log("");
 
   // Load environment variables
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  // Support environment-specific variables with fallback
+  const env = Deno.env.get("TEST_ENVIRONMENT") || "staging";
+  const isStaging = env === "staging";
+  
+  const supabaseUrl = isStaging
+    ? Deno.env.get("STAGING_SUPABASE_URL") || Deno.env.get("SUPABASE_URL")
+    : Deno.env.get("PRODUCTION_SUPABASE_URL") || Deno.env.get("SUPABASE_URL");
+    
+  const serviceRoleKey = isStaging
+    ? Deno.env.get("STAGING_SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+    : Deno.env.get("PRODUCTION_SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
   if (!supabaseUrl || !serviceRoleKey) {
     console.error("❌ Missing environment variables!");

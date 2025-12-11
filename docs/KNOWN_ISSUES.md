@@ -4,6 +4,76 @@ This document tracks known bugs and issues that are not critical enough to block
 
 ---
 
+## App Startup Delay
+
+**Status**: Known Issue - Performance  
+**Severity**: Medium (User Experience)  
+**Date Identified**: 2025-12-11  
+**Phase**: App Initialization
+
+### Description
+
+The app takes approximately one minute to show the landing screen (PayAttentionClub logo) when launched on a physical device. This delay occurs during app initialization, likely due to network operations or synchronization tasks running on startup.
+
+### Symptoms
+
+- App launches but shows loading screen for ~60 seconds
+- Landing screen appears after significant delay
+- Occurs on physical devices (may not reproduce in simulator)
+- User experiences long wait time before app becomes interactive
+
+### Impact
+
+**User Experience**: ⚠️ Medium – Users wait ~60 seconds before seeing the main screen  
+**Product**: ⚠️ Medium – Poor first impression, may cause users to think app is frozen  
+**Functional**: ✅ None – App eventually loads and works correctly
+
+### Root Cause Analysis
+
+**Suspected Causes**:
+1. Network sync operation (`UsageSyncManager.syncToBackend()`) may be timing out (default URLSession timeout is 60 seconds)
+2. Supabase client initialization may be slow on first launch
+3. Network connectivity issues to staging/production environment
+4. Synchronous operations blocking main thread during initialization
+
+**Attempted Fixes**:
+- Added 5-second timeout to sync operation
+- Made sync non-blocking (runs in background)
+- Moved navigation before sync to prevent blocking
+- Issue persists, suggesting deeper network or initialization problem
+
+### Code Locations
+
+- `AppModel.swift`: `finishInitialization()` method
+- `UsageSyncManager.swift`: `syncToBackend()` method
+- `BackendClient.swift`: Supabase client initialization
+
+### When to Fix
+
+**Priority**: Medium  
+**Suggested Timeline**: Before production release, or when:
+- User complaints about slow startup increase
+- Performance becomes a blocker for user adoption
+- Root cause can be identified through profiling
+
+### Proposed Fix
+
+1. **Profile app startup** using Instruments to identify exact bottleneck
+2. **Add startup logging** to track which operation is taking time
+3. **Consider lazy initialization** of network clients (only when needed)
+4. **Skip sync on first launch** if user isn't authenticated
+5. **Add progress indicator** during startup to show app is working
+6. **Investigate Supabase client** initialization time
+
+### Testing
+
+- Measure startup time on physical device
+- Test with network disabled (airplane mode) to isolate network issues
+- Test with staging vs production environments
+- Profile with Instruments to identify slow operations
+
+---
+
 ## Phase 3: Multiple Concurrent Syncs Issue
 
 **Status**: Known Issue - Non-Critical  
@@ -283,6 +353,57 @@ Weekly commitments currently apply a **24-hour grace period only *after* the wee
 1. Simulate time within final 2–4 hours of a weekly window: verify usage is ignored.
 2. Verify usage outside the buffer still counts.
 3. Confirm 24-hour post-week grace still works.
+
+---
+
+## Authorization Fee Calculation Incorrect
+
+**Status**: Known Issue - Critical Bug  
+**Severity**: High (Financial/User Experience)  
+**Date Identified**: 2025-12-10  
+**Phase**: Commitment Creation Flow
+
+### Description
+
+The calculation of the authorization fee when making a commitment is way too high or way off. This affects the amount charged to users when they create a commitment, potentially charging significantly more than intended.
+
+### Symptoms
+
+- Authorization fee displayed/charged is incorrect (too high)
+- Users may be overcharged when creating commitments
+- Fee calculation does not match expected values
+
+### Impact
+
+**Financial**: ⚠️ High – Users may be incorrectly charged  
+**User Experience**: ⚠️ High – Users see incorrect fees, may abandon commitment creation  
+**Product**: ⚠️ High – Core payment flow is broken  
+**Data Integrity**: ⚠️ Medium – Incorrect charges may be recorded
+
+### Code Locations
+
+- Commitment creation flow (likely in `AppModel.swift` or commitment-related views)
+- Payment/Stripe integration code
+- Authorization fee calculation logic
+
+### When to Fix
+
+**Priority**: High  
+**Suggested Timeline**: Fix immediately - this affects core payment functionality
+
+### Proposed Fix
+
+1. Review authorization fee calculation logic
+2. Compare calculated values with expected/design specifications
+3. Identify where the calculation goes wrong (formula error, unit conversion, etc.)
+4. Fix the calculation and add unit tests to prevent regression
+5. Verify with test commitments before deploying
+
+### Testing
+
+- Create test commitments and verify authorization fees match expected amounts
+- Test with various commitment amounts/parameters
+- Verify Stripe charges match calculated authorization fees
 
 ---
 

@@ -25,9 +25,10 @@ echo ""
 BACKEND_RESULT=0
 IOS_RESULT=0
 
-# Get script directory
+# Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
 
 # ------------------------------
 # 1. Backend Tests (Deno)
@@ -35,8 +36,8 @@ cd "$SCRIPT_DIR"
 echo -e "${BLUE}📦 Backend Tests (Deno)${NC}"
 echo "------------------------"
 
-if [ -f "supabase/tests/run_backend_tests.sh" ]; then
-    if ./supabase/tests/run_backend_tests.sh; then
+if [ -f "$PROJECT_ROOT/supabase/tests/run_backend_tests.sh" ]; then
+    if "$PROJECT_ROOT/supabase/tests/run_backend_tests.sh" staging; then
         echo -e "${GREEN}✅ Backend tests passed${NC}"
     else
         echo -e "${RED}❌ Backend tests failed${NC}"
