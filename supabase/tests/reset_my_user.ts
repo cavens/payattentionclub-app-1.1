@@ -5,10 +5,9 @@
  * start fresh with Apple Sign-In on your device.
  * 
  * Usage:
- *   deno run --allow-all reset_my_user.ts your-email@example.com
- * 
- * Or edit the DEFAULT_EMAIL below and just run:
- *   deno run --allow-all reset_my_user.ts
+ *   deno run --allow-all reset_my_user.ts                    # Interactive
+ *   deno run --allow-all reset_my_user.ts --force            # Skip confirmation
+ *   deno run --allow-all reset_my_user.ts other@email.com    # Different email
  */
 
 import "https://deno.land/std@0.177.0/dotenv/load.ts";
@@ -17,8 +16,12 @@ import "https://deno.land/std@0.177.0/dotenv/load.ts";
 const DEFAULT_EMAIL = "pythwk8m57@privaterelay.appleid.com";
 
 async function main() {
-  // Get email from command line or use default
-  const email = Deno.args[0] || DEFAULT_EMAIL;
+  // Check for --force flag
+  const forceMode = Deno.args.includes("--force");
+  
+  // Get email from command line (ignore --force flag) or use default
+  const emailArg = Deno.args.find(arg => !arg.startsWith("--"));
+  const email = emailArg || DEFAULT_EMAIL;
   
   console.log("🗑️  Reset My User");
   console.log("================");
@@ -35,7 +38,7 @@ async function main() {
     Deno.exit(1);
   }
 
-  // Confirm before proceeding
+  // Confirm before proceeding (skip if --force)
   console.log("⚠️  WARNING: This will PERMANENTLY delete:");
   console.log("   - User from auth.users (Apple Sign-In will create new user)");
   console.log("   - User from public.users");
@@ -45,10 +48,14 @@ async function main() {
   console.log("   - All payments");
   console.log("");
   
-  const confirm = prompt("Type 'DELETE' to confirm: ");
-  if (confirm !== "DELETE") {
-    console.log("❌ Cancelled");
-    Deno.exit(0);
+  if (!forceMode) {
+    const confirm = prompt("Type 'DELETE' to confirm: ");
+    if (confirm !== "DELETE") {
+      console.log("❌ Cancelled");
+      Deno.exit(0);
+    }
+  } else {
+    console.log("🔓 Force mode - skipping confirmation");
   }
 
   console.log("");
