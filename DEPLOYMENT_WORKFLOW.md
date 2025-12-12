@@ -259,3 +259,4 @@ git checkout HEAD~1 -- supabase/remote_rpcs/[function].sql
 - `docs/AUTHORIZATION_FEE_FIX.md` - Recent auth calculation fix
 - `docs/PHASE7_VERIFICATION.md` - Environment verification checklist
 
+

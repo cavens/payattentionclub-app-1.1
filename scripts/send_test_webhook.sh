@@ -74,3 +74,4 @@ echo ""
 echo "Check Supabase logs:"
 echo "  https://supabase.com/dashboard/project/$PROJECT_REF/functions/stripe-webhook/logs"
 
+

@@ -66,3 +66,4 @@ You can also use the existing deploy script, which will show you all RPC functio
 
 This will list all RPC functions including `rpc_execute_sql.sql` that need to be deployed.
 
+

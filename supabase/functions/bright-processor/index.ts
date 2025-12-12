@@ -1,14 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
 const LOOPS_API_KEY = Deno.env.get("LOOPS_API_KEY");
 const LOOPS_TEMPLATE_ID = Deno.env.get("LOOPS_REMINDER_TEMPLATE_ID");
 const LOOPS_API_URL = Deno.env.get("LOOPS_API_BASE_URL") ?? "https://app.loops.so/api/v1/transactional";
 const TIME_ZONE = "America/New_York"; // Align with product deadline (Monday noon ET)
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("Missing Supabase service credentials. Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+  console.error("Missing Supabase service credentials. Please set SUPABASE_URL and SUPABASE_SECRET_KEY.");
 }
 if (!LOOPS_API_KEY || !LOOPS_TEMPLATE_ID) {
   console.error("Missing Loops credentials. Please set LOOPS_API_KEY and LOOPS_REMINDER_TEMPLATE_ID.");
@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
     return new Response("Use POST", { status: 405 });
   }
 
-  const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+  const supabase = createClient(SUPABASE_URL!, SUPABASE_SECRET_KEY!);
   let overrideDeadline: string | undefined;
   try {
     const body = await req.json();

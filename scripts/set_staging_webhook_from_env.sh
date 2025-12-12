@@ -61,3 +61,4 @@ echo ""
 echo "Verify with:"
 echo "  supabase secrets list --project-ref auqujbppoytkeqdsgrbl | grep WEBHOOK"
 
+

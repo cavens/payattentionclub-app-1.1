@@ -58,11 +58,11 @@ struct SupabaseConfig {
     
     // MARK: - Staging Environment
     private static let stagingProjectURL = "https://auqujbppoytkeqdsgrbl.supabase.co"
-    private static let stagingAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1cXVqYnBwb3l0a2VxZHNncmJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0NTc4OTYsImV4cCI6MjA4MTAzMzg5Nn0.UXUQ3AXdNLUQ8yB7x_v2oQAzFz9Vj-m07l04n-6flCQ"
+    private static let stagingPublishableKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1cXVqYnBwb3l0a2VxZHNncmJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0NTc4OTYsImV4cCI6MjA4MTAzMzg5Nn0.UXUQ3AXdNLUQ8yB7x_v2oQAzFz9Vj-m07l04n-6flCQ"
     
     // MARK: - Production Environment
     private static let productionProjectURL = "https://whdftvcrtrsnefhprebj.supabase.co"
-    private static let productionAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDc0NjUsImV4cCI6MjA3ODYyMzQ2NX0.T1Vz087udE-PywR5KfjXqDzORHSIggXw0uCu8zYGIxE"
+    private static let productionPublishableKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDc0NjUsImV4cCI6MjA3ODYyMzQ2NX0.T1Vz087udE-PywR5KfjXqDzORHSIggXw0uCu8zYGIxE"
     
     // MARK: - Active Configuration (environment-aware)
     
@@ -74,11 +74,11 @@ struct SupabaseConfig {
         }
     }
     
-    /// Supabase anon key for current environment
-    static var anonKey: String {
+    /// Supabase publishable key for current environment
+    static var publishableKey: String {
         switch AppConfig.environment {
-        case .staging: return stagingAnonKey
-        case .production: return productionAnonKey
+        case .staging: return stagingPublishableKey
+        case .production: return productionPublishableKey
         }
     }
     

@@ -225,12 +225,12 @@ const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
 const STRIPE_SECRET_KEY_PROD = Deno.env.get("STRIPE_SECRET_KEY");
 const STRIPE_SECRET_KEY = STRIPE_SECRET_KEY_TEST || STRIPE_SECRET_KEY_PROD;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
 
 if (!STRIPE_SECRET_KEY) {
   console.error("run-weekly-settlement: Missing Stripe secret key (set STRIPE_SECRET_KEY[_TEST]).");
 }
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
   console.error("run-weekly-settlement: Missing Supabase credentials.");
 }
 
@@ -388,11 +388,11 @@ async function chargeCandidate(
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Use POST", { status: 405 });
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
     return new Response("Supabase credentials missing", { status: 500 });
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
   let payload: RequestPayload | undefined;
   try {

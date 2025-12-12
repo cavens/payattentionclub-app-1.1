@@ -28,13 +28,13 @@ const SUPABASE_URL = isStaging
   ? Deno.env.get("STAGING_SUPABASE_URL") || Deno.env.get("SUPABASE_URL")
   : Deno.env.get("PRODUCTION_SUPABASE_URL") || Deno.env.get("SUPABASE_URL");
 
-const SUPABASE_SERVICE_ROLE_KEY = isStaging
-  ? Deno.env.get("STAGING_SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
-  : Deno.env.get("PRODUCTION_SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SUPABASE_SECRET_KEY = isStaging
+  ? Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || Deno.env.get("SUPABASE_SECRET_KEY")
+  : Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") || Deno.env.get("SUPABASE_SECRET_KEY");
 
-const SUPABASE_ANON_KEY = isStaging
-  ? Deno.env.get("STAGING_SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_ANON_KEY")
-  : Deno.env.get("PRODUCTION_SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_ANON_KEY");
+const SUPABASE_PUBLISHABLE_KEY = isStaging
+  ? Deno.env.get("STAGING_SUPABASE_PUBLISHABLE_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY")
+  : Deno.env.get("PRODUCTION_SUPABASE_PUBLISHABLE_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
 
 const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
 
@@ -43,8 +43,8 @@ const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
 const missingVars: string[] = [];
 
 if (!SUPABASE_URL) missingVars.push("SUPABASE_URL");
-if (!SUPABASE_SERVICE_ROLE_KEY) missingVars.push("SUPABASE_SERVICE_ROLE_KEY");
-// SUPABASE_ANON_KEY is optional for backend tests (we use service role)
+if (!SUPABASE_SECRET_KEY) missingVars.push("SUPABASE_SECRET_KEY");
+// SUPABASE_PUBLISHABLE_KEY is optional for backend tests (we use secret key)
 // STRIPE_SECRET_KEY_TEST is optional (only needed for payment tests)
 
 if (missingVars.length > 0) {
@@ -53,7 +53,7 @@ if (missingVars.length > 0) {
   console.error("TESTCONFIG");
   console.error("TESTCONFIG 💡 Create a .env file in the project root with:");
   console.error("TESTCONFIG    SUPABASE_URL=https://your-project.supabase.co");
-  console.error("TESTCONFIG    SUPABASE_SERVICE_ROLE_KEY=your-service-role-key");
+  console.error("TESTCONFIG    SUPABASE_SECRET_KEY=your-secret-key");
   console.error("TESTCONFIG");
   throw new Error(`Missing required environment variables: ${missingVars.join(", ")}`);
 }
@@ -63,8 +63,8 @@ if (missingVars.length > 0) {
 export const config = {
   supabase: {
     url: SUPABASE_URL!,
-    serviceRoleKey: SUPABASE_SERVICE_ROLE_KEY!,
-    anonKey: SUPABASE_ANON_KEY ?? "",
+    secretKey: SUPABASE_SECRET_KEY!,
+    publishableKey: SUPABASE_PUBLISHABLE_KEY ?? "",
   },
   stripe: {
     secretKey: STRIPE_SECRET_KEY_TEST ?? "",
@@ -86,8 +86,8 @@ export const TEST_USER_IDS = {
 console.log("TESTCONFIG ========================================");
 console.log(`TESTCONFIG Environment: ${TEST_ENVIRONMENT.toUpperCase()}`);
 console.log(`TESTCONFIG Supabase URL: ${config.supabase.url}`);
-console.log(`TESTCONFIG Service Role Key: ${config.supabase.serviceRoleKey.substring(0, 20)}...`);
-console.log(`TESTCONFIG Anon Key: ${config.supabase.anonKey ? config.supabase.anonKey.substring(0, 20) + "..." : "(not set)"}`);
+console.log(`TESTCONFIG Secret Key: ${config.supabase.secretKey.substring(0, 20)}...`);
+console.log(`TESTCONFIG Publishable Key: ${config.supabase.publishableKey ? config.supabase.publishableKey.substring(0, 20) + "..." : "(not set)"}`);
 console.log(`TESTCONFIG Stripe Key: ${config.stripe.hasStripeKey ? "✅ Set" : "⚠️ Not set (payment tests will skip)"}`);
 console.log("TESTCONFIG ========================================");
 

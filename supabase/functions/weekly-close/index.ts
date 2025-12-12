@@ -8,7 +8,7 @@ if (!STRIPE_SECRET_KEY) {
   console.error("ERROR: No Stripe secret key found. Please set STRIPE_SECRET_KEY_TEST or STRIPE_SECRET_KEY in Supabase secrets.");
 }
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
 // Change this if you want a different currency
 const CURRENCY = "usd";
 const stripe = new Stripe(STRIPE_SECRET_KEY, {
@@ -26,7 +26,7 @@ Deno.serve(async (req)=>{
         status: 405
       });
     }
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
     // 1) Determine last week (week being closed)
     // Assume function is scheduled every Monday 12:00 EST for "last week"
     // We need to find the deadline (week_end_date) that just passed

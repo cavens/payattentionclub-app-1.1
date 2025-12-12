@@ -33,12 +33,12 @@ setup_cron_for_env() {
     if [ "$env" = "staging" ]; then
         project_ref="auqujbppoytkeqdsgrbl"
         db_url="$STAGING_DB_URL"
-        service_role_key="$STAGING_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$STAGING_SUPABASE_SECRET_KEY"
         echo "Setting up cron job for STAGING..."
     elif [ "$env" = "production" ]; then
         project_ref="whdftvcrtrsnefhprebj"
         db_url="$PRODUCTION_DB_URL"
-        service_role_key="$PRODUCTION_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$PRODUCTION_SUPABASE_SECRET_KEY"
         echo "Setting up cron job for PRODUCTION..."
     else
         echo "Error: Invalid environment: $env"
@@ -50,8 +50,8 @@ setup_cron_for_env() {
         return 1
     fi
     
-    if [ -z "$service_role_key" ]; then
-        echo "❌ Error: Service role key not found in .env for $env"
+    if [ -z "$supabase_secret_key" ]; then
+        echo "❌ Error: Supabase secret key not found in .env for $env"
         return 1
     fi
     
@@ -69,17 +69,17 @@ setup_cron_for_env() {
 -- Step 1: Enable pg_cron extension
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 
--- Step 2: Set service_role_key (required for call_weekly_close function)
+-- Step 2: Set supabase_secret_key (required for call_weekly_close function)
 -- Note: This uses ALTER DATABASE which requires superuser privileges
 -- If this fails, you may need to set it manually in Supabase Dashboard
 DO \$\$
 BEGIN
-    EXECUTE format('ALTER DATABASE postgres SET app.settings.service_role_key = %L', '$service_role_key');
+    EXECUTE format('ALTER DATABASE postgres SET app.settings.service_role_key = %L', '$supabase_secret_key');
 EXCEPTION
     WHEN insufficient_privilege THEN
-        RAISE NOTICE 'Cannot set service_role_key via SQL. Please set it manually in Supabase Dashboard → Database → Settings → Database Settings → Custom Postgres Config';
+        RAISE NOTICE 'Cannot set supabase_secret_key via SQL. Please set it manually in Supabase Dashboard → Database → Settings → Database Settings → Custom Postgres Config';
     WHEN OTHERS THEN
-        RAISE WARNING 'Error setting service_role_key: %', SQLERRM;
+        RAISE WARNING 'Error setting supabase_secret_key: %', SQLERRM;
 END;
 \$\$;
 
@@ -200,7 +200,7 @@ echo "=========================================="
 echo ""
 echo "Next steps:"
 echo "1. Verify cron jobs in Supabase Dashboard → Database → Cron Jobs"
-echo "2. Check that service_role_key is set (if SQL failed)"
+echo "2. Check that supabase_secret_key is set (if SQL failed)"
 echo "3. Test by manually calling: SELECT public.call_weekly_close();"
 echo "4. Monitor logs on next Monday at 17:00 UTC"
 

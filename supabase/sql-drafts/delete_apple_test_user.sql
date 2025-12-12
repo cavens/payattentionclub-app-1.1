@@ -91,3 +91,4 @@ BEGIN
     RAISE NOTICE '🎉 You can now sign in fresh with Apple Sign-In!';
 END $$;
 
+

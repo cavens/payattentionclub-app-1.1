@@ -57,3 +57,4 @@ COMMENT ON FUNCTION public.rpc_preview_max_charge(date, integer, integer, jsonb)
 Returns the same value that would be stored in max_charge_cents when committing.
 Call this from the frontend to display the authorization amount to the user.';
 
+

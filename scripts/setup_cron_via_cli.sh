@@ -31,12 +31,12 @@ setup_cron_for_env() {
     
     if [ "$env" = "staging" ]; then
         project_ref="auqujbppoytkeqdsgrbl"
-        service_role_key="$STAGING_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$STAGING_SUPABASE_SECRET_KEY"
         sql_file="$PROJECT_ROOT/supabase/sql-drafts/setup_cron_staging.sql"
         echo "Setting up cron job for STAGING via CLI..."
     elif [ "$env" = "production" ]; then
         project_ref="whdftvcrtrsnefhprebj"
-        service_role_key="$PRODUCTION_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$PRODUCTION_SUPABASE_SECRET_KEY"
         sql_file="$PROJECT_ROOT/supabase/sql-drafts/setup_cron_production.sql"
         echo "Setting up cron job for PRODUCTION via CLI..."
     else
@@ -44,8 +44,8 @@ setup_cron_for_env() {
         return 1
     fi
     
-    if [ -z "$service_role_key" ]; then
-        echo "❌ Error: Service role key not found in .env for $env"
+    if [ -z "$supabase_secret_key" ]; then
+        echo "❌ Error: Supabase secret key not found in .env for $env"
         return 1
     fi
     
@@ -126,10 +126,10 @@ setup_cron_for_env() {
     echo ""
     echo "✅ Cron job setup complete for $env!"
     echo ""
-    echo "⚠️  IMPORTANT: Don't forget to set service_role_key in database settings:"
+    echo "⚠️  IMPORTANT: Don't forget to set supabase_secret_key in database settings:"
     echo "   Go to Supabase Dashboard → Database → Settings → Custom Postgres Config"
     echo "   Key: app.settings.service_role_key"
-    echo "   Value: $service_role_key"
+    echo "   Value: $supabase_secret_key"
     echo ""
 }
 
@@ -160,4 +160,5 @@ fi
 echo "=========================================="
 echo "✅ Setup Complete!"
 echo "=========================================="
+
 

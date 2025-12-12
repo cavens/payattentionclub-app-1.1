@@ -33,13 +33,13 @@ process_env() {
     if [ "$env" = "staging" ]; then
         project_ref="auqujbppoytkeqdsgrbl"
         db_url="$STAGING_DB_URL"
-        service_role_key="$STAGING_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$STAGING_SUPABASE_SECRET_KEY"
         supabase_url="$STAGING_SUPABASE_URL"
         echo "Processing STAGING environment..."
     elif [ "$env" = "production" ]; then
         project_ref="whdftvcrtrsnefhprebj"
         db_url="$PRODUCTION_DB_URL"
-        service_role_key="$PRODUCTION_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$PRODUCTION_SUPABASE_SECRET_KEY"
         supabase_url="$PRODUCTION_SUPABASE_URL"
         echo "Processing PRODUCTION environment..."
     else
@@ -47,7 +47,7 @@ process_env() {
         return 1
     fi
     
-    if [ -z "$supabase_url" ] || [ -z "$service_role_key" ]; then
+    if [ -z "$supabase_url" ] || [ -z "$supabase_secret_key" ]; then
         echo "❌ Error: Missing environment variables for $env"
         return 1
     fi
@@ -63,8 +63,8 @@ process_env() {
         # List users via API
         curl -s -X GET \
             "${supabase_url}/rest/v1/users?select=id,email,created_at" \
-            -H "apikey: ${service_role_key}" \
-            -H "Authorization: Bearer ${service_role_key}" \
+            -H "apikey: ${supabase_secret_key}" \
+            -H "Authorization: Bearer ${supabase_secret_key}" \
             -H "Content-Type: application/json" | \
             deno eval "
                 const data = JSON.parse(await Deno.stdin.readText());
@@ -85,7 +85,7 @@ process_env() {
         echo ""
         
         export SUPABASE_URL="$supabase_url"
-        export SUPABASE_SERVICE_ROLE_KEY="$service_role_key"
+        export SUPABASE_SECRET_KEY="$supabase_secret_key"
         
         cd "$PROJECT_ROOT"
         deno run --allow-net --allow-env --allow-read \
@@ -129,4 +129,5 @@ fi
 echo "=========================================="
 echo "✅ Complete!"
 echo "=========================================="
+
 

@@ -48,17 +48,17 @@ fix_env() {
     
     if [ "$env" = "staging" ]; then
         SUPABASE_URL="$STAGING_SUPABASE_URL"
-        SERVICE_ROLE_KEY="$STAGING_SUPABASE_SERVICE_ROLE_KEY"
+        SUPABASE_SECRET_KEY="$STAGING_SUPABASE_SECRET_KEY"
     else
         SUPABASE_URL="$PRODUCTION_SUPABASE_URL"
-        SERVICE_ROLE_KEY="$PRODUCTION_SUPABASE_SERVICE_ROLE_KEY"
+        SUPABASE_SECRET_KEY="$PRODUCTION_SUPABASE_SECRET_KEY"
     fi
     
     # Check if function exists by trying to call it
     CHECK_RESPONSE=$(curl -s -X POST \
         "${SUPABASE_URL}/rest/v1/rpc/rpc_execute_sql" \
-        -H "apikey: ${SERVICE_ROLE_KEY}" \
-        -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+        -H "apikey: ${SUPABASE_SECRET_KEY}" \
+        -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}" \
         -H "Content-Type: application/json" \
         -d '{"p_sql": "SELECT 1;"}' 2>&1)
     
@@ -75,8 +75,8 @@ fix_env() {
     # Execute the fix SQL
     RESPONSE=$(curl -s -X POST \
         "${SUPABASE_URL}/rest/v1/rpc/rpc_execute_sql" \
-        -H "apikey: ${SERVICE_ROLE_KEY}" \
-        -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+        -H "apikey: ${SUPABASE_SECRET_KEY}" \
+        -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}" \
         -H "Content-Type: application/json" \
         -d "{\"p_sql\": $(echo "$FIX_SQL" | jq -Rs . 2>/dev/null || echo "\"$FIX_SQL\"")}")
     

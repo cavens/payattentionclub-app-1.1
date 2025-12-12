@@ -292,7 +292,7 @@ class BackendClient {
         
         self.supabase = SupabaseClient(
             supabaseURL: URL(string: SupabaseConfig.projectURL)!,
-            supabaseKey: SupabaseConfig.anonKey,
+            supabaseKey: SupabaseConfig.publishableKey,
             options: SupabaseClientOptions(
                 auth: authOptions
             )

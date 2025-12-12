@@ -152,3 +152,4 @@ MIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg...
 
 Copy this **entire block** into Supabase's "Secret Key" field.
 
+

@@ -37,3 +37,4 @@ FROM auth.users au
 LEFT JOIN public.users pu ON au.id = pu.id
 WHERE pu.id IS NULL;
 
+

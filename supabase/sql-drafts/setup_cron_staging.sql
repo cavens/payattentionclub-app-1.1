@@ -40,3 +40,4 @@ WHERE jobname = 'weekly-close-staging';
 --    Value: Your STAGING_SUPABASE_SERVICE_ROLE_KEY from .env
 -- ==============================================================================
 
+

@@ -1,7 +1,7 @@
 // supabase/functions/admin-close-week-now/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
 Deno.serve(async (req)=>{
   try {
     // Only allow POST
@@ -21,7 +21,7 @@ Deno.serve(async (req)=>{
       });
     }
     // Supabase client with service role, but aware of caller's JWT
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
       global: {
         headers: {
           Authorization: authHeader
@@ -62,7 +62,7 @@ Deno.serve(async (req)=>{
     const weeklyCloseResponse = await fetch(weeklyCloseUrl, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Authorization": `Bearer ${SUPABASE_SECRET_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({})

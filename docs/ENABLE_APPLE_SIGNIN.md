@@ -129,3 +129,4 @@ After enabling Apple Sign-In:
 3. ✅ Verify user is created in `auth.users` table
 4. ✅ Verify user is created in `public.users` table
 
+

@@ -102,3 +102,4 @@ The function auto-detects the project URL from the service role key. If it fails
 - **Staging Setup**: `supabase/sql-drafts/set_service_role_key_staging.sql`
 - **Production Setup**: `supabase/sql-drafts/set_service_role_key_production.sql`
 
+

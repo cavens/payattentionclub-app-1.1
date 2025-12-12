@@ -57,3 +57,4 @@ BEGIN
     RAISE NOTICE '   Commitments: %', v_deleted_commitments;
 END $$;
 
+

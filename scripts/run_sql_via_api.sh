@@ -33,18 +33,18 @@ fi
 # Get environment-specific variables
 if [ "$ENVIRONMENT" = "staging" ]; then
     SUPABASE_URL="$STAGING_SUPABASE_URL"
-    SERVICE_ROLE_KEY="$STAGING_SUPABASE_SERVICE_ROLE_KEY"
+    SUPABASE_SECRET_KEY="$STAGING_SUPABASE_SECRET_KEY"
     echo "Executing SQL in STAGING..."
 elif [ "$ENVIRONMENT" = "production" ]; then
     SUPABASE_URL="$PRODUCTION_SUPABASE_URL"
-    SERVICE_ROLE_KEY="$PRODUCTION_SUPABASE_SERVICE_ROLE_KEY"
+    SUPABASE_SECRET_KEY="$PRODUCTION_SUPABASE_SECRET_KEY"
     echo "Executing SQL in PRODUCTION..."
 else
     echo "Error: Environment must be 'staging' or 'production'"
     exit 1
 fi
 
-if [ -z "$SUPABASE_URL" ] || [ -z "$SERVICE_ROLE_KEY" ]; then
+if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SECRET_KEY" ]; then
     echo "❌ Error: Missing environment variables"
     exit 1
 fi
@@ -60,8 +60,8 @@ SQL_QUERY_ENCODED=$(printf '%s' "$SQL_QUERY" | jq -sRr @uri 2>/dev/null || pytho
 # Call RPC function via REST API
 RESPONSE=$(curl -s -X POST \
     "${SUPABASE_URL}/rest/v1/rpc/rpc_execute_sql" \
-    -H "apikey: ${SERVICE_ROLE_KEY}" \
-    -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+    -H "apikey: ${SUPABASE_SECRET_KEY}" \
+    -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}" \
     -H "Content-Type: application/json" \
     -d "{\"p_sql\": $(echo "$SQL_QUERY" | jq -Rs .)}")
 
@@ -81,4 +81,5 @@ else
     echo ""
     echo "✅ SQL executed successfully!"
 fi
+
 

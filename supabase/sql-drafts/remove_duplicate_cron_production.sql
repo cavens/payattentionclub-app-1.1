@@ -20,3 +20,4 @@ FROM cron.job
 WHERE jobname LIKE '%weekly%close%'
 ORDER BY jobid;
 
+

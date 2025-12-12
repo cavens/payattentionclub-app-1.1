@@ -34,14 +34,14 @@ echo ""
 # Expected values
 EXPECTED_STAGING_URL="https://auqujbppoytkeqdsgrbl.supabase.co"
 EXPECTED_PRODUCTION_URL="https://whdftvcrtrsnefhprebj.supabase.co"
-EXPECTED_STAGING_ANON_KEY_START="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1cXVqYnBwb3l0a2VxZHNncmJs"
-EXPECTED_PRODUCTION_ANON_KEY_START="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJq"
+EXPECTED_STAGING_PUBLISHABLE_KEY_START="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1cXVqYnBwb3l0a2VxZHNncmJs"
+EXPECTED_PRODUCTION_PUBLISHABLE_KEY_START="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJq"
 
 # Extract values from Config.swift
 STAGING_URL=$(grep -A 1 "stagingProjectURL" "$CONFIG_FILE" | grep "https://" | sed 's/.*"\(.*\)".*/\1/' | head -1)
 PRODUCTION_URL=$(grep -A 1 "productionProjectURL" "$CONFIG_FILE" | grep "https://" | sed 's/.*"\(.*\)".*/\1/' | head -1)
-STAGING_ANON_KEY=$(grep -A 1 "stagingAnonKey" "$CONFIG_FILE" | grep "eyJ" | sed 's/.*"\(.*\)".*/\1/' | head -1)
-PRODUCTION_ANON_KEY=$(grep -A 1 "productionAnonKey" "$CONFIG_FILE" | grep "eyJ" | sed 's/.*"\(.*\)".*/\1/' | head -1)
+STAGING_PUBLISHABLE_KEY=$(grep -A 1 "stagingPublishableKey" "$CONFIG_FILE" | grep "eyJ" | sed 's/.*"\(.*\)".*/\1/' | head -1)
+PRODUCTION_PUBLISHABLE_KEY=$(grep -A 1 "productionPublishableKey" "$CONFIG_FILE" | grep "eyJ" | sed 's/.*"\(.*\)".*/\1/' | head -1)
 
 # Verify staging URL
 echo "Checking Staging Configuration..."
@@ -53,11 +53,11 @@ else
     echo "     Found:    $STAGING_URL"
 fi
 
-# Verify staging anon key (check first part)
-if echo "$STAGING_ANON_KEY" | grep -q "$EXPECTED_STAGING_ANON_KEY_START"; then
-    echo -e "  ${GREEN}✓${NC} Staging Anon Key: ${STAGING_ANON_KEY:0:50}..."
+# Verify staging publishable key (check first part)
+if echo "$STAGING_PUBLISHABLE_KEY" | grep -q "$EXPECTED_STAGING_PUBLISHABLE_KEY_START"; then
+    echo -e "  ${GREEN}✓${NC} Staging Publishable Key: ${STAGING_PUBLISHABLE_KEY:0:50}..."
 else
-    echo -e "  ${RED}❌${NC} Staging Anon Key mismatch!"
+    echo -e "  ${RED}❌${NC} Staging Publishable Key mismatch!"
 fi
 
 echo ""
@@ -72,11 +72,11 @@ else
     echo "     Found:    $PRODUCTION_URL"
 fi
 
-# Verify production anon key (check first part)
-if echo "$PRODUCTION_ANON_KEY" | grep -q "$EXPECTED_PRODUCTION_ANON_KEY_START"; then
-    echo -e "  ${GREEN}✓${NC} Production Anon Key: ${PRODUCTION_ANON_KEY:0:50}..."
+# Verify production publishable key (check first part)
+if echo "$PRODUCTION_PUBLISHABLE_KEY" | grep -q "$EXPECTED_PRODUCTION_PUBLISHABLE_KEY_START"; then
+    echo -e "  ${GREEN}✓${NC} Production Publishable Key: ${PRODUCTION_PUBLISHABLE_KEY:0:50}..."
 else
-    echo -e "  ${RED}❌${NC} Production Anon Key mismatch!"
+    echo -e "  ${RED}❌${NC} Production Publishable Key mismatch!"
 fi
 
 echo ""
@@ -105,4 +105,5 @@ echo "  2. Open Dev Menu (triple-tap countdown logo)"
 echo "  3. Verify Environment shows 'STAGING'"
 echo "  4. Verify Supabase URL shows staging URL"
 echo ""
+
 

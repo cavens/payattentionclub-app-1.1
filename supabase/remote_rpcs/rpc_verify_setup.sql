@@ -77,3 +77,4 @@ $$;
 GRANT EXECUTE ON FUNCTION public.rpc_verify_setup() TO service_role;
 REVOKE EXECUTE ON FUNCTION public.rpc_verify_setup() FROM anon, authenticated;
 
+

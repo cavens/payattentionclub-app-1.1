@@ -40,3 +40,4 @@ WHERE jobname = 'weekly-close-production';
 --    Value: Your PRODUCTION_SUPABASE_SERVICE_ROLE_KEY from .env
 -- ==============================================================================
 
+

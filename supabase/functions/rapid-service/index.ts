@@ -30,8 +30,8 @@ serve(async (req) => {
     
     // Create Supabase client with the user's JWT token
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    const supabasePublishableKey = Deno.env.get('SUPABASE_PUBLISHABLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabasePublishableKey, {
       global: {
         headers: {
           Authorization: authHeader
@@ -180,6 +180,7 @@ serve(async (req) => {
     )
   }
 })
+
 
 
 

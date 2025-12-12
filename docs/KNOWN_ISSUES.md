@@ -311,6 +311,31 @@ The live `call_weekly_close` function body includes the Supabase `service_role` 
 
 ---
 
+## Rename Supabase Key Variables to Match New Naming Convention
+
+**Status**: ✅ **RESOLVED** - Completed 2025-12-12  
+**Severity**: Low (Naming Consistency)  
+**Date Identified**: 2025-12-12  
+**Date Resolved**: 2025-12-12
+
+### Description
+
+We are already using Supabase's new publishable/secret key system, but our variable names still use the legacy naming convention. We need to rename:
+- `SUPABASE_ANON_KEY` → `SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` → `SUPABASE_SECRET_KEY`
+
+### Resolution
+
+✅ **Completed**: All variable names have been updated across the codebase:
+- Swift code: `anonKey` → `publishableKey` in `Config.swift` and `BackendClient.swift`
+- Shell scripts: All references updated to use `SUPABASE_SECRET_KEY` and `SUPABASE_PUBLISHABLE_KEY`
+- TypeScript/Deno tests: Updated `config.ts` to use new naming
+- Edge Functions: Updated `weekly-close/index.ts` to use `SUPABASE_SECRET_KEY`
+
+**Note**: The `.env` file needs to be manually updated with the new variable names (not committed to git).
+
+---
+
 ## Phase 2: Weekly Grace Window Needs Pre-Week Buffer
 
 **Status**: Known Issue - UX/Behavioral  
@@ -407,9 +432,93 @@ The calculation of the authorization fee when making a commitment is way too hig
 
 ---
 
+## App Selection Group Display Issue
+
+**Status**: Known Issue - UI/UX Bug  
+**Severity**: Medium (User Experience)  
+**Date Identified**: 2025-12-11  
+**Phase**: App Selection Flow
+
+### Description
+
+When selecting the "Select apps to limit" button, users sometimes see a list of app groups. When opening one of these groups for the first time, the apps within that group do not display. Users must exit the screen, press the "Select apps to limit" button again, and then open the group a second time for the apps to appear.
+
+### Symptoms
+
+- First attempt: User taps "Select apps to limit" → sees groups → opens a group → apps don't show
+- Second attempt: User exits screen → taps "Select apps to limit" again → opens same group → apps now display correctly
+- Inconsistent behavior - doesn't happen every time
+- Requires user to perform the action twice to see apps in groups
+
+### Impact
+
+**User Experience**: ⚠️ Medium – Users must repeat the action to see apps, creating confusion and friction  
+**Product**: ⚠️ Medium – Poor UX may cause users to think the feature is broken  
+**Functional**: ✅ None – Feature works correctly on second attempt  
+**Data Integrity**: ✅ None – No data loss, just display issue
+
+### Root Cause Analysis
+
+**Suspected Causes**:
+1. Race condition in loading app groups/apps data
+2. Initial state not properly initialized when group is first opened
+3. FamilyActivityPicker or app selection view not refreshing properly on first load
+4. Async data loading completing after UI renders
+
+### Code Locations
+
+- App selection view (likely related to FamilyActivityPicker or app limiting flow)
+- Group/app data loading logic
+- Navigation/view state management for app selection screen
+
+### When to Fix
+
+**Priority**: Medium  
+**Suggested Timeline**: Before production release, or when:
+- User complaints about the feature increase
+- UX becomes a blocker for user adoption
+- Root cause can be identified through debugging
+
+### Proposed Fix
+
+1. **Investigate app group loading logic** - Check if data is loaded before UI renders
+2. **Add proper state management** - Ensure view state is correctly initialized when groups are opened
+3. **Add loading indicators** - Show loading state while apps are being fetched
+4. **Review FamilyActivityPicker integration** - Check if there's a refresh or reload mechanism needed
+5. **Add logging** - Track when groups are opened and when apps are loaded to identify timing issues
+6. **Consider preloading** - Load app data when groups are displayed, not when opened
+
+### Testing
+
+- Test app selection flow multiple times to reproduce the issue
+- Verify apps display correctly on first group open attempt
+- Test with different numbers of apps/groups
+- Test on physical devices (may not reproduce in simulator)
+- Verify fix works consistently across multiple attempts
+
+---
+
 ## Future Issues
 
 _Add new issues here as they are discovered..._
+
+---
+
+## Ops: Loops.so Secrets Must Match in Production and Staging
+
+**Status**: Known Issue – Configuration  
+**Severity**: Low (Ops/Testing)  
+**Date Identified**: 2025-12-12  
+
+### Description
+
+The Loops.so API secrets must be identical in both **production** and **staging** Supabase environments. Since Loops.so is a single service (no separate staging environment), both Supabase projects need to use the same Loops API key to send emails.
+
+### Action Required
+
+Ensure the `LOOPS_API_KEY` (or equivalent secret name) is set to the same value in:
+- Production Supabase project secrets
+- Staging Supabase project secrets
 
 ---
 

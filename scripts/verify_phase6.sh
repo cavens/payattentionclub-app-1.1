@@ -32,12 +32,12 @@ verify_env() {
     if [ "$env" = "staging" ]; then
         project_ref="auqujbppoytkeqdsgrbl"
         supabase_url="$STAGING_SUPABASE_URL"
-        service_role_key="$STAGING_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$STAGING_SUPABASE_SECRET_KEY"
         echo "Verifying STAGING environment..."
     elif [ "$env" = "production" ]; then
         project_ref="whdftvcrtrsnefhprebj"
         supabase_url="$PRODUCTION_SUPABASE_URL"
-        service_role_key="$PRODUCTION_SUPABASE_SERVICE_ROLE_KEY"
+        supabase_secret_key="$PRODUCTION_SUPABASE_SECRET_KEY"
         echo "Verifying PRODUCTION environment..."
     else
         echo "Error: Invalid environment"
@@ -53,8 +53,8 @@ verify_env() {
     echo "   (This verifies: table exists, key is set, function works)"
     RESPONSE=$(curl -s -X POST \
         "${supabase_url}/rest/v1/rpc/rpc_execute_sql" \
-        -H "apikey: ${service_role_key}" \
-        -H "Authorization: Bearer ${service_role_key}" \
+        -H "apikey: ${supabase_secret_key}" \
+        -H "Authorization: Bearer ${supabase_secret_key}" \
         -H "Content-Type: application/json" \
         -d "{\"p_sql\": \"SELECT public.call_weekly_close();\"}")
     
@@ -69,7 +69,7 @@ verify_env() {
         echo "   Response: $RESPONSE"
         echo "   ⚠️  This means either:"
         echo "      - _internal_config table is missing"
-        echo "      - Service role key is not set"
+        echo "      - Supabase secret key is not set"
         echo "      - Function has an error"
         return 1
     fi
@@ -80,8 +80,8 @@ verify_env() {
     JOB_NAME="weekly-close-$env"
     RESPONSE=$(curl -s -X POST \
         "${supabase_url}/rest/v1/rpc/rpc_execute_sql" \
-        -H "apikey: ${service_role_key}" \
-        -H "Authorization: Bearer ${service_role_key}" \
+        -H "apikey: ${supabase_secret_key}" \
+        -H "Authorization: Bearer ${supabase_secret_key}" \
         -H "Content-Type: application/json" \
         -d "{\"p_sql\": \"SELECT 1 FROM cron.job WHERE jobname = '$JOB_NAME' LIMIT 1;\"}")
     

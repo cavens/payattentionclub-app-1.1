@@ -221,3 +221,4 @@ After setup:
 3. ✅ Test function manually
 4. ✅ Monitor first scheduled run (next Monday at 17:00 UTC)
 
+

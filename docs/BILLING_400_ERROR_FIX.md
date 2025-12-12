@@ -147,3 +147,4 @@ The trigger should automatically create `public.users` rows for new users. If it
 - **Fix Script**: `supabase/sql-drafts/fix_missing_user_row.sql`
 - **Trigger Function**: Should be in `supabase/remote_schema.sql` or `supabase/remote_schema_staging.sql`
 
+

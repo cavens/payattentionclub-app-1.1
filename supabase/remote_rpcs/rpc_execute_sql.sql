@@ -42,3 +42,4 @@ $$;
 GRANT EXECUTE ON FUNCTION public.rpc_execute_sql(TEXT) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.rpc_execute_sql(TEXT) FROM anon, authenticated;
 
+

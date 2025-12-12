@@ -31,3 +31,4 @@
 -- Alternative: Use the RPC function for each user
 -- SELECT rpc_delete_user_completely(email) FROM (SELECT email FROM auth.users) AS users;
 
+

@@ -31,10 +31,36 @@ echo "Removing secrets from git history..."
 echo ""
 
 # List of secrets to remove (JWT tokens and keys)
-SECRETS=(
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1cXVqYnBwb3l0a2VxZHNncmJsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTQ1Nzg5NiwiZXhwIjoyMDgxMDMzODk2fQ.ZswLxpQlRnOUITjuK1WXdz-bL4A1pRGR0OxqX_A4TBI"
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MzA0NzQ2NSwiZXhwIjoyMDc4NjIzNDY1fQ.l-qljQAkfgioPGv5gATTosBtA70oA_c_DZWXFuZaI44"
-)
+# ⚠️  IMPORTANT: Do NOT hardcode secrets here!
+# Instead, provide them via environment variables or prompt the user
+# This prevents secrets from being committed to git
+
+if [ -z "$EXPOSED_SECRETS" ]; then
+    echo "⚠️  No secrets provided via EXPOSED_SECRETS environment variable."
+    echo "   To use this script, set EXPOSED_SECRETS as a newline-separated list:"
+    echo "   export EXPOSED_SECRETS=\"secret1\nsecret2\""
+    echo ""
+    echo "   Or provide secrets interactively (not recommended for automation):"
+    read -p "Enter secrets to remove (one per line, empty line to finish): " secret
+    SECRETS=()
+    while [ -n "$secret" ]; do
+        SECRETS+=("$secret")
+        read -p "Next secret (or empty to finish): " secret
+    done
+else
+    # Read secrets from environment variable (newline-separated)
+    SECRETS=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && SECRETS+=("$line")
+    done <<< "$EXPOSED_SECRETS"
+fi
+
+if [ ${#SECRETS[@]} -eq 0 ]; then
+    echo "❌ No secrets provided. Exiting."
+    exit 1
+fi
+
+echo "Found ${#SECRETS[@]} secret(s) to remove from history."
 
 # Create a filter script
 FILTER_SCRIPT=$(mktemp)
@@ -89,4 +115,5 @@ echo ""
 echo "4. Notify all collaborators to:"
 echo "   git fetch origin"
 echo "   git reset --hard origin/main"
+
 
