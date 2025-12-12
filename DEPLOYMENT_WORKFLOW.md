@@ -54,10 +54,24 @@ git checkout -b feat/my-feature
 ./scripts/run_backend_tests.sh staging
 ```
 
-### 3. COMMIT & PUSH
+### 3. PRE-COMMIT SAFETY CHECK
 
 ```bash
-# Only after staging tests pass!
+# ⚠️ IMPORTANT: Check for secrets BEFORE committing!
+./scripts/check_secrets.sh
+
+# This scans for:
+# - API keys (sk_live_, sk_test_, eyJ...)
+# - Service role keys
+# - Webhook secrets (whsec_)
+# - Database passwords
+# - Any hardcoded credentials
+```
+
+### 4. COMMIT & PUSH
+
+```bash
+# Only after staging tests pass AND secrets check passes!
 git add -A
 git commit -m "feat: description of changes"
 git push origin feat/my-feature
@@ -65,7 +79,7 @@ git push origin feat/my-feature
 # Create Pull Request on GitHub (optional for solo dev)
 ```
 
-### 4. MERGE TO MAIN
+### 5. MERGE TO MAIN
 
 ```bash
 # After PR approval (or directly for solo dev)
@@ -75,7 +89,7 @@ git merge feat/my-feature
 git push
 ```
 
-### 5. DEPLOY TO PRODUCTION
+### 6. DEPLOY TO PRODUCTION
 
 ```bash
 # Deploy SQL/RPC functions to production
@@ -87,7 +101,7 @@ git push
 # Verify in production
 ```
 
-### 6. RELEASE (Optional)
+### 7. RELEASE (Optional)
 
 ```bash
 # Tag the release
@@ -138,12 +152,13 @@ Deploys all SQL/RPC functions from `supabase/remote_rpcs/` to production.
 | 2.3 | ⬜ | Create `scripts/deploy_edge_functions.sh` |
 | 2.4 | ⬜ | Create `scripts/deploy_all.sh` (master script) |
 
-### Phase 3: Pre-Commit Testing
+### Phase 3: Pre-Commit Safety Checks
 | Task | Status | Description |
 |------|--------|-------------|
-| 3.1 | ⬜ | Create `scripts/test_staging.sh` |
-| 3.2 | ⬜ | Create `scripts/pre_commit_check.sh` |
-| 3.3 | ⬜ | (Optional) Add git pre-commit hook |
+| 3.1 | ⬜ | Create `scripts/check_secrets.sh` - scan for exposed secrets |
+| 3.2 | ⬜ | Create `scripts/test_staging.sh` - run tests against staging |
+| 3.3 | ⬜ | Create `scripts/pre_commit_check.sh` - runs secrets check + tests |
+| 3.4 | ⬜ | Add git pre-commit hook (auto-runs check_secrets.sh) |
 
 ### Phase 4: Documentation
 | Task | Status | Description |
@@ -216,6 +231,51 @@ Edge Functions currently require manual deployment via Supabase Dashboard:
 - `billing-status` - Check billing status
 - `weekly-close` - Weekly settlement
 - `bright-service` - Penalty charging
+
+---
+
+## Secrets Safety Check
+
+### ⚠️ CRITICAL: Never Commit Secrets!
+
+Before ANY commit, check for exposed secrets:
+
+```bash
+./scripts/check_secrets.sh
+```
+
+### What It Scans For
+
+| Pattern | Description |
+|---------|-------------|
+| `sk_live_*` | Stripe live secret key |
+| `sk_test_*` | Stripe test secret key |
+| `whsec_*` | Stripe webhook secret |
+| `eyJ*` (long) | JWT tokens (service role keys) |
+| `sbp_*` | Supabase project tokens |
+| Hardcoded passwords | Database connection strings |
+
+### Files That Should NEVER Contain Secrets
+
+- `*.swift` - iOS source code
+- `*.sql` - SQL scripts
+- `*.ts` - Edge Functions
+- `*.md` - Documentation
+- `*.sh` - Shell scripts (except reading from .env)
+
+### Files That CAN Contain Secrets (gitignored)
+
+- `.env` - Environment variables (in .gitignore)
+- `*.p8` - Apple auth keys (in .gitignore)
+
+### If Secrets Are Accidentally Committed
+
+1. **Rotate the secret immediately** in Supabase/Stripe Dashboard
+2. Remove from git history:
+   ```bash
+   ./scripts/remove_secrets_from_history.sh
+   ```
+3. Force push (coordinate with team if applicable)
 
 ---
 
