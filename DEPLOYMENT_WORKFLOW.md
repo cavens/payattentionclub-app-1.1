@@ -382,6 +382,189 @@ git checkout HEAD~1 -- supabase/remote_rpcs/[function].sql
 
 ---
 
+## Backward Compatibility & API Versioning
+
+### The Problem
+
+When you deploy a new backend version:
+- ✅ New iOS app version works with new backend
+- ⚠️ Old iOS app versions still in use by users
+- ❌ Old app versions may break if backend changes
+
+**You cannot force users to update the app immediately.**
+
+### Strategy: Backward Compatible Changes
+
+**Always make backend changes backward compatible:**
+
+#### ✅ Safe Changes (No Breaking)
+- **Add new RPC functions** - Old apps ignore them
+- **Add new optional parameters** - Old apps work without them
+- **Add new database columns** - Old apps don't query them
+- **Add new Edge Functions** - Old apps don't call them
+
+#### ⚠️ Risky Changes (May Break)
+- **Remove RPC functions** - Old apps will get 404 errors
+- **Remove required parameters** - Old apps will get validation errors
+- **Change response format** - Old apps may fail to parse
+- **Change database schema** - Old apps may query wrong columns
+
+### Best Practices
+
+#### 1. **Additive Changes Only**
+```sql
+-- ✅ GOOD: Add new optional parameter
+CREATE OR REPLACE FUNCTION rpc_create_commitment(
+  p_deadline_date date,
+  p_limit_minutes integer,
+  p_penalty_per_minute_cents integer,
+  p_apps_to_limit jsonb,
+  p_new_optional_param integer DEFAULT NULL  -- New, optional
+)
+
+-- ❌ BAD: Remove required parameter
+CREATE OR REPLACE FUNCTION rpc_create_commitment(
+  p_deadline_date date,
+  -- p_limit_minutes integer,  -- REMOVED - breaks old apps!
+  p_penalty_per_minute_cents integer
+)
+```
+
+#### 2. **Version Your RPC Functions (If Needed)**
+```sql
+-- Old version (keep for backward compatibility)
+CREATE OR REPLACE FUNCTION rpc_create_commitment_v1(...)
+
+-- New version (new apps use this)
+CREATE OR REPLACE FUNCTION rpc_create_commitment_v2(...)
+```
+
+#### 3. **Gradual Migration Strategy**
+
+**Phase 1: Deploy Backend (Backward Compatible)**
+```bash
+# Deploy new backend that supports both old and new formats
+./scripts/deploy_to_production.sh
+# Old apps continue working
+# New app version not released yet
+```
+
+**Phase 2: Release New iOS App**
+```
+# Submit new iOS version to App Store
+# Users gradually update over days/weeks
+# Both old and new app versions work with backend
+```
+
+**Phase 3: Deprecate Old Format (After Most Users Updated)**
+```sql
+-- After 90%+ users updated, you can:
+-- 1. Log warnings for old format usage
+-- 2. Eventually remove old format support
+-- 3. Force minimum app version (if critical)
+```
+
+#### 4. **Handle Breaking Changes Carefully**
+
+If you MUST make a breaking change:
+
+**Option A: Dual Support Period**
+```sql
+-- Support both old and new format for 3-6 months
+CREATE OR REPLACE FUNCTION rpc_create_commitment(
+  p_deadline_date date,
+  p_limit_minutes integer,  -- Old format
+  p_limit_hours integer DEFAULT NULL  -- New format
+)
+RETURNS json AS $$
+BEGIN
+  -- Use new format if provided, fallback to old
+  IF p_limit_hours IS NOT NULL THEN
+    -- New logic
+  ELSE
+    -- Old logic (convert minutes to hours)
+  END IF;
+END;
+$$;
+```
+
+**Option B: Force Minimum App Version**
+```sql
+-- Check app version in RPC
+CREATE OR REPLACE FUNCTION rpc_create_commitment(
+  p_deadline_date date,
+  p_app_version text DEFAULT '1.0.0'
+)
+RETURNS json AS $$
+BEGIN
+  -- Require minimum version for new features
+  IF p_app_version < '2.0.0' THEN
+    RAISE EXCEPTION 'App version too old. Please update from App Store.';
+  END IF;
+  -- New logic
+END;
+$$;
+```
+
+### Real-World Example: Authorization Fee Fix
+
+When we fixed the authorization fee calculation:
+
+1. **Backend Change**: New `calculate_max_charge_cents()` function
+2. **Backward Compatible**: Old `rpc_create_commitment` still works
+3. **New Feature**: Added `rpc_preview_max_charge` (new apps use this)
+4. **Old Apps**: Still work, just don't get the preview feature
+5. **New Apps**: Get better UX with preview
+
+**Result**: No breaking changes, gradual improvement.
+
+### Monitoring Old App Versions
+
+Track which app versions are in use:
+
+```sql
+-- Add app_version to requests (optional)
+CREATE TABLE api_requests (
+  user_id uuid,
+  app_version text,
+  endpoint text,
+  created_at timestamptz
+);
+
+-- Log in RPC functions
+INSERT INTO api_requests (user_id, app_version, endpoint)
+VALUES (auth.uid(), current_setting('app.version', true), 'rpc_create_commitment');
+```
+
+Then query:
+```sql
+SELECT app_version, COUNT(*) 
+FROM api_requests 
+WHERE created_at > NOW() - INTERVAL '7 days'
+GROUP BY app_version;
+```
+
+### Deployment Checklist for Backward Compatibility
+
+Before deploying backend changes:
+
+- [ ] Does this change remove any RPC functions? → **DON'T** (or add versioning)
+- [ ] Does this change remove required parameters? → **DON'T** (make optional)
+- [ ] Does this change response format? → **DON'T** (add new field, keep old)
+- [ ] Does this change database schema? → **DON'T** (add new columns, keep old)
+- [ ] Can old app versions still work? → **YES** (required)
+
+### When You MUST Break Compatibility
+
+If you absolutely need to break compatibility:
+
+1. **Announce deprecation** (in-app message, email)
+2. **Set minimum version** in backend
+3. **Give users time** (30-60 days)
+4. **Force update** only for critical security issues
+
+---
+
 ## Related Documentation
 
 - `ARCHITECTURE.md` - System architecture
