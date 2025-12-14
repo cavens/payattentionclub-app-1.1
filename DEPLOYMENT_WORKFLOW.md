@@ -393,7 +393,102 @@ When you deploy a new backend version:
 
 **You cannot force users to update the app immediately.**
 
-### Strategy: Backward Compatible Changes
+### Reality Check: Keep It Simple
+
+**For early-stage apps with frequent releases:**
+
+1. **Don't maintain old iOS versions locally** - Too complex
+2. **Use semantic versioning** - Align frontend and backend versions
+3. **Enforce minimum app version** - Force updates for breaking changes
+4. **Test current version only** - Don't test old versions
+
+**This is simpler and more practical than maintaining multiple versions.**
+
+### Recommended Approach: Semantic Versioning + Minimum Version
+
+**Simple strategy for frequent releases:**
+
+#### 1. Use Semantic Versioning
+
+```
+Frontend: 1.2.0
+Backend:  1.2.0
+```
+
+- Major version (1.x.x) = Breaking changes (force update)
+- Minor version (x.2.x) = New features (backward compatible)
+- Patch version (x.x.0) = Bug fixes (backward compatible)
+
+#### 2. Enforce Minimum App Version
+
+```sql
+-- In RPC functions, check app version
+CREATE OR REPLACE FUNCTION rpc_create_commitment(
+  p_deadline_date date,
+  p_limit_minutes integer,
+  p_penalty_per_minute_cents integer,
+  p_apps_to_limit jsonb,
+  p_app_version text DEFAULT '1.0.0'  -- App sends its version
+)
+RETURNS json AS $$
+DECLARE
+  v_min_version text := '1.2.0';  -- Minimum required version
+BEGIN
+  -- Force update for breaking changes
+  IF p_app_version < v_min_version THEN
+    RAISE EXCEPTION 'App version too old. Please update from App Store. Required: %', v_min_version;
+  END IF;
+  
+  -- Normal logic here
+  ...
+END;
+$$;
+```
+
+#### 3. Version Your Backend
+
+Store backend version in database:
+
+```sql
+-- Track backend version
+CREATE TABLE IF NOT EXISTS _internal_config (
+  key text PRIMARY KEY,
+  value text,
+  updated_at timestamptz DEFAULT NOW()
+);
+
+-- Set backend version
+INSERT INTO _internal_config (key, value) 
+VALUES ('backend_version', '1.2.0')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+```
+
+#### 4. Simple Deployment Flow
+
+```bash
+# 1. Update version numbers (both frontend and backend)
+#    - iOS: Info.plist CFBundleShortVersionString = "1.2.0"
+#    - Backend: _internal_config.backend_version = "1.2.0"
+
+# 2. Deploy backend
+./scripts/deploy_to_production.sh
+
+# 3. Release iOS app
+#    - Archive in Xcode
+#    - Upload to App Store Connect
+#    - Set minimum version requirement in App Store (if needed)
+```
+
+**Result:**
+- Old apps get error message: "Please update from App Store"
+- Users update to new version
+- No need to maintain old versions locally
+
+---
+
+### Alternative: Backward Compatible Changes (More Complex)
+
+**Only use this if you need to support old versions for extended periods.**
 
 **Always make backend changes backward compatible:**
 
@@ -409,7 +504,7 @@ When you deploy a new backend version:
 - **Change response format** - Old apps may fail to parse
 - **Change database schema** - Old apps may query wrong columns
 
-### Best Practices
+### Best Practices (For Backward Compatible Approach)
 
 #### 1. **Additive Changes Only**
 ```sql
@@ -544,24 +639,80 @@ WHERE created_at > NOW() - INTERVAL '7 days'
 GROUP BY app_version;
 ```
 
-### Deployment Checklist for Backward Compatibility
+### Comparison: Classic Backend Approach
+
+**How classic backends handle this:**
+
+Most backends use **API versioning**:
+```
+/api/v1/create_commitment
+/api/v2/create_commitment
+```
+
+**Why this works:**
+- Old apps call `/v1/` endpoints (kept running)
+- New apps call `/v2/` endpoints (new features)
+- Backend maintains both versions
+- Eventually deprecate `/v1/` after users migrate
+
+**For Supabase RPC:**
+- You can version function names: `rpc_create_commitment_v1`, `rpc_create_commitment_v2`
+- Or use minimum version enforcement (simpler)
+
+---
+
+### Recommended: Minimum Version Strategy
+
+**For frequent releases (weekly), use minimum version enforcement:**
+
+#### Pros:
+- ✅ Simple - no need to maintain old versions
+- ✅ Fast iteration - deploy breaking changes immediately
+- ✅ Clear - users know they need to update
+- ✅ Less testing burden - only test current version
+
+#### Cons:
+- ⚠️ Users must update (but that's usually fine for early-stage apps)
+- ⚠️ Some users may be temporarily blocked
+
+#### Implementation:
+
+1. **App sends version** in RPC calls (add to all RPCs)
+2. **Backend checks version** against minimum required
+3. **Return clear error** if version too old
+4. **Update minimum** when you deploy breaking changes
+
+**Example:**
+```swift
+// iOS: Send app version in RPC calls
+let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+let params = CreateCommitmentParams(
+    deadlineDate: deadline,
+    limitMinutes: limit,
+    appVersion: appVersion  // ← Add this
+)
+```
+
+```sql
+-- Backend: Check version
+IF p_app_version < '1.2.0' THEN
+  RAISE EXCEPTION 'Please update to version 1.2.0 or later from the App Store';
+END IF;
+```
+
+---
+
+### Deployment Checklist (Minimum Version Strategy)
 
 Before deploying backend changes:
 
-- [ ] Does this change remove any RPC functions? → **DON'T** (or add versioning)
-- [ ] Does this change remove required parameters? → **DON'T** (make optional)
-- [ ] Does this change response format? → **DON'T** (add new field, keep old)
-- [ ] Does this change database schema? → **DON'T** (add new columns, keep old)
-- [ ] Can old app versions still work? → **YES** (required)
+- [ ] **Breaking change?** → Update minimum version in backend
+- [ ] **Update iOS version** → Bump version in Info.plist
+- [ ] **Deploy backend** → New minimum version enforced
+- [ ] **Release iOS app** → Users update, get new features
+- [ ] **Monitor** → Check if users are blocked (should be minimal)
 
-### When You MUST Break Compatibility
-
-If you absolutely need to break compatibility:
-
-1. **Announce deprecation** (in-app message, email)
-2. **Set minimum version** in backend
-3. **Give users time** (30-60 days)
-4. **Force update** only for critical security issues
+**That's it. Simple and effective.**
 
 ---
 
