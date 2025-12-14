@@ -404,9 +404,223 @@ When you deploy a new backend version:
 
 **This is simpler and more practical than maintaining multiple versions.**
 
-### Recommended Approach: Semantic Versioning + Minimum Version
+### Recommended Approach: Weekly Releases + Support 1 Version Back
 
-**Simple strategy for frequent releases:**
+**Practical strategy for weekly production updates:**
+
+#### Strategy Overview
+
+- **Weekly releases**: Deploy frontend + backend together every week
+- **Support 1 version back**: Current version (1.2.0) + previous version (1.1.0)
+- **Testing**: Test production frontend with staging backend before production deploy
+
+#### Example Timeline
+
+```
+Week 1: Release 1.1.0 (frontend + backend)
+Week 2: Release 1.2.0 (frontend + backend)
+        - Backend 1.2.0 supports frontend 1.1.0 AND 1.2.0
+        - Users on 1.1.0 can still use the app
+Week 3: Release 1.3.0
+        - Backend 1.3.0 supports frontend 1.2.0 AND 1.3.0
+        - Drop support for 1.1.0 (users must update)
+```
+
+#### Backend Version Support Logic
+
+```sql
+-- In RPC functions, check if version is supported
+CREATE OR REPLACE FUNCTION rpc_create_commitment(
+  p_deadline_date date,
+  p_limit_minutes integer,
+  p_penalty_per_minute_cents integer,
+  p_apps_to_limit jsonb,
+  p_app_version text DEFAULT '1.0.0'
+)
+RETURNS json AS $$
+DECLARE
+  v_current_backend_version text := '1.2.0';
+  v_supported_versions text[] := ARRAY['1.1.0', '1.2.0'];  -- Current + 1 back
+  v_min_supported_version text := '1.1.0';
+BEGIN
+  -- Check if app version is supported
+  IF p_app_version < v_min_supported_version THEN
+    RAISE EXCEPTION 'App version % is too old. Please update to version % or later from the App Store.', 
+      p_app_version, v_min_supported_version;
+  END IF;
+  
+  -- Version-specific logic (if needed)
+  IF p_app_version = '1.1.0' THEN
+    -- Old format logic
+  ELSIF p_app_version >= '1.2.0' THEN
+    -- New format logic
+  END IF;
+  
+  -- Normal logic here
+  ...
+END;
+$$;
+```
+
+---
+
+### Testing Production Frontend with Staging Backend
+
+**The Challenge:**
+- Production frontend (1.1.0) is built in RELEASE mode → connects to production backend
+- Staging backend (1.2.0) is where you want to test
+- How to test production frontend with staging backend?
+
+**Solution: Environment Override**
+
+#### Option 1: Build Configuration Override (Recommended)
+
+Add a way to override environment in RELEASE builds:
+
+```swift
+// Config.swift
+struct SupabaseConfig {
+    #if DEBUG
+        static let current: Environment = .staging
+    #else
+        // RELEASE mode - normally production
+        static let current: Environment = {
+            // Check for override flag (set via Xcode scheme or environment variable)
+            if ProcessInfo.processInfo.environment["USE_STAGING"] == "true" {
+                return .staging  // Override to staging
+            }
+            return .production  // Default to production
+        }()
+    #endif
+}
+```
+
+**How to use:**
+1. In Xcode, create a new Scheme: "Release (Staging)"
+2. Edit Scheme → Run → Arguments → Environment Variables
+3. Add: `USE_STAGING = true`
+4. Build Archive with this scheme
+5. Install on device → connects to staging backend
+
+#### Option 2: TestFlight Staging Build
+
+Create a separate TestFlight build that points to staging:
+
+```swift
+// Config.swift
+struct SupabaseConfig {
+    #if DEBUG
+        static let current: Environment = .staging
+    #else
+        // Check for staging TestFlight build
+        static let current: Environment = {
+            // Use a different bundle ID or build number range for staging TestFlight
+            if Bundle.main.bundleIdentifier?.contains("staging") == true {
+                return .staging
+            }
+            return .production
+        }()
+    #endif
+}
+```
+
+**How to use:**
+1. Create separate Xcode target: "PayAttentionClub Staging"
+2. Different bundle ID: `com.payattentionclub.staging`
+3. Archive and upload to TestFlight
+4. Test with staging backend
+5. When ready, use production target for App Store
+
+#### Option 3: Manual Testing Script (Simplest)
+
+For quick testing, temporarily modify `Config.swift`:
+
+```swift
+// Temporarily override for testing
+static let current: Environment = .staging  // ← Change this
+```
+
+Then:
+1. Build Archive
+2. Install on device
+3. Test with staging backend
+4. Revert change before App Store submission
+
+**⚠️ Remember to revert before submitting to App Store!**
+
+---
+
+### Weekly Release Workflow
+
+#### Step 1: Develop on Staging (Monday-Wednesday)
+
+```bash
+# Work on new features
+git checkout develop
+git checkout -b feat/new-feature
+
+# Deploy to staging
+./scripts/deploy_to_staging.sh
+
+# Test in Xcode (DEBUG mode = staging)
+```
+
+#### Step 2: Test Production Frontend with Staging Backend (Thursday)
+
+```bash
+# 1. Build production frontend (1.1.0) with staging override
+#    - Use Option 1: Create "Release (Staging)" scheme
+#    - Or Option 3: Temporarily change Config.swift
+
+# 2. Install on device
+# 3. Test all critical flows
+# 4. Verify compatibility
+
+# 5. Revert staging override
+```
+
+#### Step 3: Deploy to Production (Friday)
+
+```bash
+# 1. Merge to main
+git checkout main && git merge develop
+
+# 2. Update version numbers
+#    - iOS: 1.2.0
+#    - Backend: Update supported_versions array
+
+# 3. Deploy backend
+./scripts/deploy_to_production.sh
+
+# 4. Archive iOS (RELEASE mode = production)
+# 5. Upload to App Store Connect
+# 6. Submit for review
+```
+
+#### Step 4: Monitor (Weekend)
+
+- Check if old version (1.1.0) still works
+- Monitor error logs for version issues
+- Prepare next week's release
+
+---
+
+### Version Support Matrix
+
+| Backend Version | Supports Frontend Versions | Notes |
+|----------------|---------------------------|-------|
+| 1.1.0 | 1.0.0, 1.1.0 | Initial release |
+| 1.2.0 | 1.1.0, 1.2.0 | Supports 1 version back |
+| 1.3.0 | 1.2.0, 1.3.0 | Drops 1.1.0 support |
+| 1.4.0 | 1.3.0, 1.4.0 | Drops 1.2.0 support |
+
+**Rule:** Always support current version + 1 version back.
+
+---
+
+### Alternative: Semantic Versioning + Minimum Version (Simpler)
+
+**If weekly releases + 1 version back is too complex, use minimum version:**
 
 #### 1. Use Semantic Versioning
 
