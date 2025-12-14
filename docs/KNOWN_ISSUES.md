@@ -498,6 +498,67 @@ When selecting the "Select apps to limit" button, users sometimes see a list of 
 
 ---
 
+## Test Harness Needs Update
+
+**Status**: Known Issue - Technical Debt  
+**Severity**: Medium (Development Velocity)  
+**Date Identified**: 2025-12-14  
+**Phase**: Testing Infrastructure
+
+### Description
+
+The test harness (backend Deno tests and iOS unit tests) may be out of sync with the actual codebase after recent major changes including:
+- Authorization fee calculation moved to backend (`calculate_max_charge_cents`, `rpc_preview_max_charge`)
+- Environment variable naming changes (`ANON_KEY` → `PUBLISHABLE_KEY`, `SERVICE_ROLE_KEY` → `SECRET_KEY`)
+- New RPC functions added (`rpc_execute_sql`, `rpc_list_cron_jobs`, `rpc_get_cron_history`, `rpc_verify_setup`)
+- Updated `rpc_create_commitment` to use shared calculation function
+- Frontend `AppModel` changes (async `fetchAuthorizationAmount()` vs old sync method)
+- `PenaltyCalculator.calculateAuthorizationAmount()` deprecated
+
+### Tests Potentially Affected
+
+**Backend (Deno)**:
+- `supabase/tests/test_create_commitment.ts` - May need update for new calculation logic
+- `supabase/tests/reset_my_user.ts` - ✅ Already updated for `SECRET_KEY` naming
+- Other test files may reference old function signatures or env vars
+
+**Frontend (iOS)**:
+- `AppModelTests.swift` - Tests `PenaltyCalculator.calculateAuthorizationAmount()` which is now deprecated
+- `BackendClientTests.swift` - May need tests for new `previewMaxCharge()` method
+- Tests may fail if they expect old return values or method signatures
+
+### Impact
+
+**Development**: ⚠️ Medium – Tests may fail or give false positives  
+**Quality**: ⚠️ Medium – Reduced confidence in code changes  
+**CI/CD**: ⚠️ Low – No automated CI yet, but will block future setup
+
+### Action Required
+
+1. **Run all backend tests** and document failures:
+   ```bash
+   ./scripts/run_backend_tests.sh staging
+   ```
+
+2. **Run iOS unit tests** in Xcode and document failures:
+   - Product → Test (⌘U)
+
+3. **Update failing tests** to match new function signatures and expected values
+
+4. **Add new tests** for:
+   - `rpc_preview_max_charge` - verify returns correct bounded values
+   - `BackendClient.previewMaxCharge()` - verify iOS can call the preview RPC
+   - `calculate_max_charge_cents` - verify bounds ($5 min, $1000 max)
+
+5. **Remove/update deprecated tests** that test old calculation logic
+
+### When to Fix
+
+**Priority**: Medium  
+**Suggested Timeline**: Before next major feature work, to ensure test coverage is reliable
+
+---
+
 ## Future Issues
 
 _Add new issues here as they are discovered..._
