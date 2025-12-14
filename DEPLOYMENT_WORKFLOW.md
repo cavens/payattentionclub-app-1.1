@@ -176,37 +176,43 @@ Deploys all SQL/RPC functions from `supabase/remote_rpcs/` to production.
 
 ---
 
+## Key Concept: Git vs Deployment
+
+**Git is for version control, NOT deployment.**
+
+- ✅ Git stores code history and enables collaboration
+- ❌ Git does NOT automatically deploy to Supabase
+- ✅ We deploy directly from local to Supabase using scripts/API calls
+- ✅ iOS builds happen locally in Xcode (Archive → App Store Connect)
+
+**Deployment Flow:**
+```
+Local Code → Git (version control) → Local Script → Supabase (direct API)
+Local Code → Git (version control) → Xcode Archive → App Store Connect
+```
+
+---
+
 ## Implementation Plan
 
-### Phase 1: Branch Strategy
+### Essential Scripts (Priority)
+| Task | Status | Description |
+|------|--------|-------------|
+| 3.1 | ⬜ | **CRITICAL**: Create `scripts/check_secrets.sh` - scan for exposed secrets |
+| 2.1 | ⬜ | Create `scripts/deploy_to_staging.sh` - deploy SQL/RPC to staging |
+| 2.2 | ⬜ | Create `scripts/deploy_to_production.sh` - deploy SQL/RPC to production |
+
+### Optional Scripts
+| Task | Status | Description |
+|------|--------|-------------|
+| 3.4 | ⬜ | Add git pre-push hook (auto-runs check_secrets.sh) |
+| 3.2 | ⬜ | Create `scripts/test_staging.sh` - run tests against staging |
+
+### Branch Setup
 | Task | Status | Description |
 |------|--------|-------------|
 | 1.1 | ⬜ | Create `develop` branch for staging work |
-| 1.2 | ⬜ | Protect `main` branch (production-ready only) |
-| 1.3 | ⬜ | Document branching conventions |
-
-### Phase 2: Deployment Scripts
-| Task | Status | Description |
-|------|--------|-------------|
-| 2.1 | ⬜ | Create `scripts/deploy_to_staging.sh` |
-| 2.2 | ⬜ | Create `scripts/deploy_to_production.sh` |
-| 2.3 | ⬜ | Create `scripts/deploy_edge_functions.sh` |
-| 2.4 | ⬜ | Create `scripts/deploy_all.sh` (master script) |
-
-### Phase 3: Pre-Commit Safety Checks
-| Task | Status | Description |
-|------|--------|-------------|
-| 3.1 | ⬜ | Create `scripts/check_secrets.sh` - scan for exposed secrets |
-| 3.2 | ⬜ | Create `scripts/test_staging.sh` - run tests against staging |
-| 3.3 | ⬜ | Create `scripts/pre_commit_check.sh` - runs secrets check + tests |
-| 3.4 | ⬜ | Add git pre-commit hook (auto-runs check_secrets.sh) |
-
-### Phase 4: Documentation
-| Task | Status | Description |
-|------|--------|-------------|
-| 4.1 | ✅ | Create `DEPLOYMENT_WORKFLOW.md` (this file) |
-| 4.2 | ⬜ | Create `docs/BRANCHING_STRATEGY.md` |
-| 4.3 | ⬜ | Update `README.md` with workflow overview |
+| 1.2 | ⬜ | (Optional) Protect `main` branch on GitHub |
 
 ---
 
@@ -352,12 +358,27 @@ git checkout HEAD~1 -- supabase/remote_rpcs/[function].sql
 
 ---
 
-## Questions to Decide
+## Important Notes
 
-1. **Branch strategy**: Use `develop` branch or just `main` + feature branches?
-2. **Automation level**: Basic scripts, pre-commit hooks, or GitHub Actions?
-3. **Edge Functions**: Keep manual or try CLI deployment?
-4. **iOS deployment**: Keep separate from this flow?
+### Why Manual Deployment?
+
+- **Supabase**: No built-in git integration, requires API calls from local machine
+- **iOS**: Requires Xcode to build/archive, manual upload to App Store Connect
+- **Control**: Manual deployment gives you full control over when/what gets deployed
+
+### What We're NOT Doing
+
+- ❌ Complex CI/CD pipelines (not needed for manual deployment)
+- ❌ Automated testing gates (run tests manually when needed)
+- ❌ GitHub Actions workflows (unless you really want them)
+- ❌ Complex branch protection (optional, can add later)
+
+### What We ARE Doing
+
+- ✅ Simple two-branch structure (`develop` for staging, `main` for production)
+- ✅ Secrets checking (critical for security)
+- ✅ Deployment scripts (make deployment easy)
+- ✅ Clear workflow documentation
 
 ---
 
