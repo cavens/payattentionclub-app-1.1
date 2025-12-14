@@ -120,17 +120,34 @@ git push origin develop
 # Test thoroughly in staging before proceeding
 ```
 
-### 6. MERGE TO MAIN (Production)
+### 6. TEST PRODUCTION FRONTEND WITH STAGING BACKEND ⚠️ MANDATORY
 
 ```bash
-# Only when staging is fully tested and ready!
+# ⚠️ CRITICAL: Test current production frontend with new staging backend
+# This ensures backward compatibility before deploying to production
+
+./scripts/test_production_frontend_with_staging.sh
+```
+
+**What this does:**
+1. Builds current production iOS version (e.g., 1.1.0)
+2. Connects it to staging backend (using override)
+3. Provides checklist of critical flows to test manually
+4. Blocks deployment until tests pass
+
+**This is MANDATORY** - ensures old app versions won't break when you deploy new backend.
+
+### 7. MERGE TO MAIN (Production)
+
+```bash
+# Only after production frontend compatibility test passes!
 git checkout main
 git pull origin main
 git merge develop
 git push origin main
 ```
 
-### 7. DEPLOY TO PRODUCTION
+### 8. DEPLOY TO PRODUCTION
 
 ```bash
 # Deploy SQL/RPC functions to production
@@ -142,7 +159,7 @@ git push origin main
 # Verify in production
 ```
 
-### 8. RELEASE (Optional)
+### 9. RELEASE (Optional)
 
 ```bash
 # Tag the release
@@ -173,6 +190,12 @@ Deploys all SQL/RPC functions from `supabase/remote_rpcs/` to production.
 ./scripts/run_backend_tests.sh staging      # Test against staging
 ./scripts/run_backend_tests.sh production   # Test against production (careful!)
 ```
+
+### Test Production Frontend with Staging Backend
+```bash
+./scripts/test_production_frontend_with_staging.sh
+```
+**MANDATORY** before deploying backend to production. Tests current production iOS version with new staging backend to ensure backward compatibility.
 
 ---
 
