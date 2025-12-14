@@ -559,6 +559,106 @@ The test harness (backend Deno tests and iOS unit tests) may be out of sync with
 
 ---
 
+## Git Branching & CI/CD Pipeline Setup
+
+**Status**: Known Issue - Infrastructure  
+**Severity**: Medium (Development Process)  
+**Date Identified**: 2025-12-14  
+**Phase**: Development Infrastructure
+
+### Description
+
+Currently all development happens directly on `main` branch with no separation between staging and production code. We need to implement proper Git branching strategy and CI/CD pipeline with automated testing and secrets checking before code reaches the remote repository.
+
+### Current State
+
+- ❌ Single `main` branch for everything
+- ❌ No automated testing before push
+- ❌ No automated secrets scanning
+- ❌ Manual deployment to staging/production
+- ❌ No branch protection rules
+
+### Required Setup
+
+**1. Git Branching Strategy**
+- `main` branch = production-ready code only
+- `develop` branch = staging/integration branch
+- `feat/*` branches = feature development
+- `fix/*` branches = bug fixes
+- `hotfix/*` branches = urgent production fixes
+
+**2. Pre-Push Hooks (Local)**
+- Run secrets scan before any push
+- Block push if secrets detected
+- Optionally run tests before push
+
+**3. Secrets Scanning**
+Must check for and block:
+| Pattern | Description |
+|---------|-------------|
+| `sk_live_*` | Stripe live secret key |
+| `sk_test_*` | Stripe test secret key |
+| `whsec_*` | Stripe webhook secret |
+| `eyJ*` (long JWT) | Service role keys |
+| `sbp_*` | Supabase project tokens |
+| Passwords in URLs | Database connection strings |
+
+**4. CI/CD Pipeline (GitHub Actions)**
+- On PR to `develop`: Run tests, block merge if failing
+- On PR to `main`: Run tests + secrets scan, require approval
+- On merge to `develop`: Auto-deploy to staging
+- On merge to `main`: Auto-deploy to production (with approval gate)
+
+### Implementation Steps
+
+1. **Create `develop` branch**
+   ```bash
+   git checkout -b develop
+   git push -u origin develop
+   ```
+
+2. **Create `scripts/check_secrets.sh`**
+   - Scan staged files for secret patterns
+   - Exit with error if secrets found
+   - Print clear message about what was found
+
+3. **Set up Git pre-push hook**
+   ```bash
+   # .git/hooks/pre-push
+   #!/bin/bash
+   ./scripts/check_secrets.sh || exit 1
+   ```
+
+4. **Add branch protection on GitHub**
+   - Settings → Branches → Add rule for `main`
+   - Require PR reviews
+   - Require status checks to pass
+
+5. **Create GitHub Actions workflow** (`.github/workflows/ci.yml`)
+   - Run on PR to `main` and `develop`
+   - Run backend tests
+   - Run secrets scan
+   - Report results
+
+### Impact
+
+**Development**: ⚠️ Medium – Risk of pushing secrets or broken code  
+**Security**: ⚠️ High – No automated secrets scanning  
+**Quality**: ⚠️ Medium – No automated test gates  
+**Collaboration**: ⚠️ Low – Solo dev currently, but blocks future team growth
+
+### When to Fix
+
+**Priority**: Medium  
+**Suggested Timeline**: Before adding team members or before production launch
+
+### Related Documentation
+
+- `DEPLOYMENT_WORKFLOW.md` - Contains the planned workflow (not yet implemented)
+- `docs/AUTHORIZATION_FEE_FIX.md` - Example of changes that should go through proper flow
+
+---
+
 ## Future Issues
 
 _Add new issues here as they are discovered..._
