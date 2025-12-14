@@ -94,7 +94,19 @@ git checkout -b feat/my-feature
 # - Any hardcoded credentials
 ```
 
-### 4. COMMIT & PUSH
+### 4. RUN TEST HARNESS
+
+```bash
+# Run backend tests against staging
+./scripts/run_backend_tests.sh staging
+
+# Run iOS unit tests (in Xcode)
+# Product → Test (⌘U)
+```
+
+**Why:** Catch bugs before committing to git.
+
+### 5. COMMIT & PUSH
 
 ```bash
 # Only after staging tests pass AND secrets check passes!
@@ -105,7 +117,7 @@ git push origin feat/my-feature
 # Create Pull Request: feat/my-feature → develop (staging)
 ```
 
-### 5. MERGE TO DEVELOP (Staging)
+### 6. MERGE TO DEVELOP (Staging)
 
 ```bash
 # After PR approval (or directly for solo dev)
@@ -120,7 +132,7 @@ git push origin develop
 # Test thoroughly in staging before proceeding
 ```
 
-### 6. TEST PRODUCTION FRONTEND WITH STAGING BACKEND ⚠️ MANDATORY
+### 7. TEST PRODUCTION FRONTEND WITH STAGING BACKEND ⚠️ MANDATORY
 
 ```bash
 # ⚠️ CRITICAL: Test current production frontend with new staging backend
@@ -137,7 +149,7 @@ git push origin develop
 
 **This is MANDATORY** - ensures old app versions won't break when you deploy new backend.
 
-### 7. MERGE TO MAIN (Production)
+### 8. MERGE TO MAIN (Production)
 
 ```bash
 # Only after production frontend compatibility test passes!
@@ -147,7 +159,22 @@ git merge develop
 git push origin main
 ```
 
-### 8. DEPLOY TO PRODUCTION
+### 9. DEPLOY BACKEND TO PRODUCTION
+
+```bash
+# Deploy SQL/RPC functions to production
+./scripts/deploy_to_production.sh
+```
+
+**What this does:**
+- Reads SQL files from local git repo (`supabase/remote_rpcs/*.sql`)
+- Sources production credentials from `.env`
+- Calls Supabase API directly: `POST /rest/v1/rpc/rpc_execute_sql`
+- Executes SQL in production database
+
+**Note:** This is a **shell script**, not a Deno script. It uses `curl` to call Supabase REST API.
+
+### 10. DEPLOY EDGE FUNCTIONS (Manual)
 
 ```bash
 # Deploy SQL/RPC functions to production
@@ -159,7 +186,30 @@ git push origin main
 # Verify in production
 ```
 
-### 9. RELEASE (Optional)
+### 11. DEPLOY FRONTEND TO PRODUCTION (iOS)
+
+```bash
+# 1. Build in Xcode (RELEASE mode)
+#    Product → Archive
+
+# 2. Distribute App
+#    - Choose: App Store Connect
+#    - Upload .ipa file
+
+# 3. Submit for Review
+#    - Go to App Store Connect web UI
+#    - Submit new version for review
+```
+
+**What happens:**
+- Xcode builds RELEASE mode → connects to production backend
+- Creates `.xcarchive` file
+- Uploads to App Store Connect
+- You submit for review (separate process)
+
+**Note:** Frontend deployment is separate from backend. You can deploy backend without deploying frontend, and vice versa.
+
+### 12. RELEASE (Optional)
 
 ```bash
 # Tag the release
@@ -184,6 +234,13 @@ Deploys all SQL/RPC functions from `supabase/remote_rpcs/` to staging.
 ./scripts/deploy_to_production.sh
 ```
 Deploys all SQL/RPC functions from `supabase/remote_rpcs/` to production.
+
+**How it works:**
+- Shell script (not Deno)
+- Reads SQL files from local git repo
+- Uses `curl` to call Supabase REST API: `POST /rest/v1/rpc/rpc_execute_sql`
+- Sources credentials from `.env` file
+- Executes SQL directly in production database
 
 ### Run Backend Tests
 ```bash
