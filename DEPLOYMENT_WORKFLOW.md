@@ -9,6 +9,25 @@ This document describes the development, testing, and deployment workflow for th
 | **Staging** | Testing before production | `auqujbppoytkeqdsgrbl` | DEBUG mode |
 | **Production** | Live users | `whdftvcrtrsnefhprebj` | RELEASE mode |
 
+## Git Branching Strategy
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Feature   │ --> │   Develop    │ --> │    Main      │
+│   Branch    │     │  (Staging)   │     │ (Production) │
+└─────────────┘     └─────────────┘     └─────────────┘
+     │                    │                    │
+     │                    │                    │
+     v                    v                    v
+  Local Dev          Staging Env          Production Env
+```
+
+| Branch | Supabase Environment | iOS Build Mode | Purpose |
+|--------|---------------------|----------------|---------|
+| `feat/*` | Local only | DEBUG | Feature development |
+| `develop` | **Staging** | DEBUG | Integration testing |
+| `main` | **Production** | RELEASE | Live users |
+
 ## Current Architecture
 
 ```
@@ -21,7 +40,10 @@ This document describes the development, testing, and deployment workflow for th
          │                       │                       │
          └───────────────────────┴───────────────────────┘
                                  │
-                           GitHub (main)
+                    ┌────────────┴────────────┐
+                    │                         │
+              GitHub (develop)          GitHub (main)
+              (Staging branch)          (Production branch)
 ```
 
 ---
@@ -31,7 +53,11 @@ This document describes the development, testing, and deployment workflow for th
 ### 1. DEVELOP (Local)
 
 ```bash
-# Start new feature
+# Start from develop branch (staging)
+git checkout develop
+git pull origin develop
+
+# Create feature branch
 git checkout -b feat/my-feature
 
 # Make code changes
@@ -76,20 +102,35 @@ git add -A
 git commit -m "feat: description of changes"
 git push origin feat/my-feature
 
-# Create Pull Request on GitHub (optional for solo dev)
+# Create Pull Request: feat/my-feature → develop (staging)
 ```
 
-### 5. MERGE TO MAIN
+### 5. MERGE TO DEVELOP (Staging)
 
 ```bash
 # After PR approval (or directly for solo dev)
-git checkout main
-git pull
+git checkout develop
+git pull origin develop
 git merge feat/my-feature
-git push
+git push origin develop
+
+# Deploy to staging Supabase
+./scripts/deploy_to_staging.sh
+
+# Test thoroughly in staging before proceeding
 ```
 
-### 6. DEPLOY TO PRODUCTION
+### 6. MERGE TO MAIN (Production)
+
+```bash
+# Only when staging is fully tested and ready!
+git checkout main
+git pull origin main
+git merge develop
+git push origin main
+```
+
+### 7. DEPLOY TO PRODUCTION
 
 ```bash
 # Deploy SQL/RPC functions to production
@@ -101,7 +142,7 @@ git push
 # Verify in production
 ```
 
-### 7. RELEASE (Optional)
+### 8. RELEASE (Optional)
 
 ```bash
 # Tag the release
@@ -174,7 +215,8 @@ Deploys all SQL/RPC functions from `supabase/remote_rpcs/` to production.
 ```bash
 # === TYPICAL DEVELOPMENT CYCLE ===
 
-# 1. Start feature
+# 1. Start feature from develop (staging branch)
+git checkout develop && git pull
 git checkout -b feat/my-feature
 
 # 2. Make changes, deploy to staging
@@ -183,18 +225,24 @@ git checkout -b feat/my-feature
 # 3. Test in Xcode (DEBUG mode → staging)
 # Build and run on device
 
-# 4. If tests pass, commit
+# 4. Check for secrets, then commit
+./scripts/check_secrets.sh
 git add -A && git commit -m "feat: my feature"
 git push origin feat/my-feature
 
-# 5. Merge to main
-git checkout main && git pull
-git merge feat/my-feature && git push
+# 5. Merge to develop (staging)
+git checkout develop && git pull
+git merge feat/my-feature && git push origin develop
+./scripts/deploy_to_staging.sh  # Deploy to staging Supabase
 
-# 6. Deploy to production
+# 6. After staging is tested, merge to main (production)
+git checkout main && git pull
+git merge develop && git push origin main
+
+# 7. Deploy to production
 ./scripts/deploy_to_production.sh
 
-# 7. Verify production works
+# 8. Verify production works
 ```
 
 ---
