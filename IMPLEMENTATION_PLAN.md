@@ -80,6 +80,7 @@ git branch -a
 **Purpose:** Deploy SQL/RPC functions to staging Supabase.
 
 **What it should do:**
+- **Mandatory safety check:** Run `check_secrets.sh` (BLOCK if secrets found)
 - Read all `.sql` files from `supabase/remote_rpcs/`
 - Source staging credentials from `.env`
 - For each SQL file:
@@ -97,6 +98,7 @@ git branch -a
 **Purpose:** Deploy SQL/RPC functions to production Supabase.
 
 **What it should do:**
+- **Mandatory safety check:** Run `check_secrets.sh` (BLOCK if secrets found)
 - Same as `deploy_to_staging.sh` but for production
 - **Add safety confirmation prompt** before deploying
 - Double-check environment variables
