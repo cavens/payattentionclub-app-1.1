@@ -559,16 +559,75 @@ The test harness (backend Deno tests and iOS unit tests) may be out of sync with
 
 ---
 
-## Git Branching & CI/CD Pipeline Setup
+## GitHub Repository Should Be Private
 
-**Status**: Known Issue - Infrastructure  
-**Severity**: Medium (Development Process)  
-**Date Identified**: 2025-12-14  
-**Phase**: Development Infrastructure
+**Status**: Known Issue - Security  
+**Severity**: High (Security)  
+**Date Identified**: 2025-12-15  
+**Phase**: Security & Infrastructure
 
 ### Description
 
-Currently all development happens directly on `main` branch with no separation between staging and production code. We need to implement proper Git branching strategy and CI/CD pipeline with automated testing and secrets checking before code reaches the remote repository.
+The GitHub repository is currently **public**, which means anyone can view the code, commit history, and potentially discover sensitive information. This is a security risk, especially given that:
+- The repository contains business logic and architecture details
+- Commit history may contain secrets or sensitive information
+- Public repos are scanned by bots for secrets and vulnerabilities
+- Competitors or malicious actors could analyze the codebase
+
+### Impact
+
+**Security**: ⚠️ High – Codebase is publicly accessible  
+**Privacy**: ⚠️ Medium – Business logic and architecture exposed  
+**Competitive**: ⚠️ Medium – Competitors can analyze implementation  
+**Compliance**: ⚠️ Low – May have compliance implications depending on data handling
+
+### Action Required
+
+1. **Make repository private** in GitHub:
+   - Go to: Repository Settings → General → Danger Zone
+   - Click "Change visibility" → Select "Make private"
+   - Confirm the change
+
+2. **Verify access** after making private:
+   - Ensure all team members have access
+   - Check that CI/CD (if any) still works
+   - Verify webhooks/integrations still function
+
+3. **Consider alternatives** if you need public visibility:
+   - Create a separate public demo/example repository
+   - Use GitHub's "Template repository" feature for public examples
+   - Keep main repository private, create public forks for demos
+
+### When to Fix
+
+**Priority**: High  
+**Suggested Timeline**: Immediately - security risk should be addressed as soon as possible
+
+---
+
+## Git Branching & CI/CD Pipeline Setup
+
+**Status**: ✅ **RESOLVED** - Completed 2025-12-15  
+**Severity**: Medium (Development Process)  
+**Date Identified**: 2025-12-14  
+**Date Resolved**: 2025-12-15
+
+### Description
+
+Previously all development happened directly on `main` branch with no separation between staging and production code. We needed to implement proper Git branching strategy and CI/CD pipeline with automated testing and secrets checking before code reaches the remote repository.
+
+### Resolution
+
+✅ **Completed**: Full deployment workflow implemented:
+- `develop` branch created for staging
+- `main` branch for production
+- `check_secrets.sh` script created and tested
+- `deploy_to_staging.sh` and `deploy_to_production.sh` scripts created
+- Git pre-commit hook: Auto checks secrets + runs tests
+- Git pre-push hook: Auto checks secrets
+- All scripts tested and working
+
+**See**: `DEPLOYMENT_WORKFLOW.md` for complete workflow documentation.
 
 ### Current State
 
