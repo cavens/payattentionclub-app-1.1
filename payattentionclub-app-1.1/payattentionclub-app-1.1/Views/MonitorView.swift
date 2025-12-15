@@ -4,6 +4,7 @@ import Foundation
 struct MonitorView: View {
     @EnvironmentObject var model: AppModel
     @State private var timer: Timer?
+    @State private var deadlineCheckTimer: Timer?
     
     var body: some View {
         NavigationView {
@@ -16,6 +17,11 @@ struct MonitorView: View {
                             .foregroundColor(.secondary)
                         if let countdownModel = model.countdownModel {
                             CountdownView(model: countdownModel)
+                                .onChange(of: countdownModel.nowSnapshot) { _ in
+                                    // Check deadline immediately when countdown updates
+                                    // This provides faster response than the 5-second timer
+                                    _ = model.checkDeadlineAndNavigate()
+                                }
                         } else {
                             Text("00:00:00:00")
                                 .font(.system(size: 32, weight: .bold, design: .monospaced))
@@ -115,10 +121,14 @@ struct MonitorView: View {
             .withLogoutButton()
             .onAppear {
                 startTimer()
+                startDeadlineCheckTimer()
                 model.refreshWeekStatus()
+                // Check deadline immediately when view appears
+                _ = model.checkDeadlineAndNavigate()
             }
             .onDisappear {
                 stopTimer()
+                stopDeadlineCheckTimer()
             }
         }
     }
@@ -154,6 +164,19 @@ struct MonitorView: View {
     private func stopTimer() {
         timer?.invalidate()
         timer = nil
+    }
+    
+    private func startDeadlineCheckTimer() {
+        stopDeadlineCheckTimer()
+        // Check deadline every 5 seconds (aligned with usage updates)
+        deadlineCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+            _ = model.checkDeadlineAndNavigate()
+        }
+    }
+    
+    private func stopDeadlineCheckTimer() {
+        deadlineCheckTimer?.invalidate()
+        deadlineCheckTimer = nil
     }
     
     private func formatTime(_ seconds: Double) -> String {

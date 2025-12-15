@@ -41,6 +41,7 @@ struct payattentionclub_app_1_1App: App {
 // This pattern ensures SwiftUI re-evaluates when model.currentScreen changes
 struct RootRouterView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.scenePhase) var scenePhase
     
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -65,6 +66,16 @@ struct RootRouterView: View {
             // STAGING badge - only visible in test mode
             if AppConfig.isTestMode {
                 StagingBadge()
+            }
+        }
+        .onChange(of: scenePhase) { newPhase in
+            // Check deadline when app becomes active (foreground)
+            if newPhase == .active {
+                // Small delay to let app fully activate
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                    _ = model.checkDeadlineAndNavigate()
+                }
             }
         }
     }

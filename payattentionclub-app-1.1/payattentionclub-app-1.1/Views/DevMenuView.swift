@@ -16,6 +16,8 @@ struct DevMenuView: View {
     @State private var resetResult: String = ""
     @State private var isTriggeringClose = false
     @State private var closeResult: String = ""
+    @State private var selectedTestDeadlineMinutes: Int = 1
+    @State private var testDeadlineResult: String = ""
     
     var body: some View {
         NavigationView {
@@ -169,6 +171,47 @@ struct DevMenuView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Week Controls")
                 .font(.headline)
+            
+            // Set Test Deadline
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: "clock.badge")
+                    Text("Set Test Deadline")
+                        .font(.headline)
+                    Spacer()
+                }
+                
+                HStack {
+                    Picker("Minutes", selection: $selectedTestDeadlineMinutes) {
+                        Text("1 min").tag(1)
+                        Text("2 min").tag(2)
+                        Text("5 min").tag(5)
+                        Text("10 min").tag(10)
+                        Text("30 min").tag(30)
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 120)
+                    
+                    Button(action: setTestDeadline) {
+                        Text("Set")
+                            .font(.subheadline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.blue)
+                            .cornerRadius(8)
+                    }
+                }
+                
+                if !testDeadlineResult.isEmpty {
+                    Text(testDeadlineResult)
+                        .font(.caption)
+                        .foregroundColor(testDeadlineResult.contains("✅") ? .green : .red)
+                }
+            }
+            .padding()
+            .background(Color.blue.opacity(0.1))
+            .cornerRadius(8)
             
             // Skip to Deadline / Bulletin
             Button(action: {
@@ -386,6 +429,46 @@ struct DevMenuView: View {
         }
     }
     
+    private func setTestDeadline() {
+        testDeadlineResult = ""
+        
+        // Calculate deadline: current time + selected minutes
+        let deadline = Date().addingTimeInterval(TimeInterval(selectedTestDeadlineMinutes * 60))
+        
+        // Store the test deadline
+        UsageTracker.shared.storeCommitmentDeadline(deadline)
+        
+        // Ensure monitoring is active (set the flag if not already set)
+        guard let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub.app") else {
+            testDeadlineResult = "❌ Failed to access App Group"
+            return
+        }
+        
+        // Set monitoring flag if not already set
+        if !userDefaults.bool(forKey: "monitoringSelectionSet") {
+            userDefaults.set(true, forKey: "monitoringSelectionSet")
+            userDefaults.synchronize()
+        }
+        
+        // Update countdown model with test deadline (don't call refreshCachedDeadline as it would recalculate)
+        if let countdownModel = model.countdownModel {
+            countdownModel.updateDeadline(deadline)
+        } else {
+            // Create countdown model if it doesn't exist
+            model.countdownModel = CountdownModel(deadline: deadline)
+        }
+        
+        // Navigate to monitor screen if not already there
+        if model.currentScreen != .monitor {
+            model.navigate(.monitor)
+        }
+        
+        let deadlineFormatted = deadline.formatted(date: .omitted, time: .shortened)
+        testDeadlineResult = "✅ Test deadline set: \(deadlineFormatted) (\(selectedTestDeadlineMinutes) min from now)"
+        
+        NSLog("DEVMENU: Test deadline set to \(deadlineFormatted) (\(selectedTestDeadlineMinutes) minutes from now)")
+    }
+    
     private func resetTestData() {
         isResettingData = true
         resetResult = ""
@@ -415,6 +498,7 @@ struct DevMenuView: View {
     DevMenuView()
         .environmentObject(AppModel())
 }
+
 
 
 

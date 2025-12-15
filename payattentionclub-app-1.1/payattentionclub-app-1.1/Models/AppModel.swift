@@ -176,6 +176,35 @@ final class AppModel: ObservableObject {
         }
     }
     
+    /// Check if deadline has passed and navigate to bulletin if needed
+    /// Returns true if navigation occurred, false otherwise
+    func checkDeadlineAndNavigate() -> Bool {
+        // Only check if we're on the monitor screen
+        guard currentScreen == .monitor else {
+            return false
+        }
+        
+        // Check if deadline has passed using UsageTracker
+        if UsageTracker.shared.isCommitmentDeadlinePassed() {
+            #if DEBUG
+            NSLog("DEADLINE: Deadline has passed - navigating to bulletin")
+            #endif
+            
+            // Clear expired monitoring state
+            UsageTracker.shared.clearExpiredMonitoringState()
+            
+            // Navigate to bulletin
+            navigate(.bulletin)
+            
+            // Refresh cached deadline for next week
+            refreshCachedDeadline()
+            
+            return true
+        }
+        
+        return false
+    }
+    
     // MARK: - Deep Link Handling
     
     /// Handle custom URL deep links (payattentionclub://...)
