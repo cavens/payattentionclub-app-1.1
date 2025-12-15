@@ -135,21 +135,102 @@ git branch -a
 
 ---
 
-### Phase 4: Git Hooks (Optional, 10 minutes)
+### Phase 4: Git Hooks (10 minutes) ⚠️ CRITICAL
 
-**Goal:** Automate secrets check before pushing.
+**Goal:** Automatically prevent secrets and broken code from reaching GitHub.
 
-#### Step 4.1: Create Git Pre-Push Hook
+#### Step 4.1: Create Pre-Commit Hook
 
-**Purpose:** Automatically run `check_secrets.sh` before `git push`.
+**Purpose:** Automatically run checks before `git commit`.
 
 **What it should do:**
-- Create `.git/hooks/pre-push`
-- Run `./scripts/check_secrets.sh`
-- Block push if secrets found
-- Allow bypass with `--no-verify` flag
+1. Run `./scripts/check_secrets.sh` → Block commit if secrets found
+2. Run `./supabase/tests/run_backend_tests.sh staging` → Block commit if tests fail
+3. Allow bypass with `--no-verify` flag (for emergencies only)
+
+**File:** `.git/hooks/pre-commit`
+
+**Implementation:**
+```bash
+#!/bin/bash
+# Pre-commit hook: Check secrets and run tests before committing
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+cd "$PROJECT_ROOT"
+
+# 1. Check for secrets
+echo "🔒 Checking for secrets..."
+if ! "$PROJECT_ROOT/scripts/check_secrets.sh"; then
+    echo ""
+    echo "❌ Commit blocked: Secrets found in code"
+    echo "   Remove secrets before committing"
+    exit 1
+fi
+
+# 2. Run backend tests
+echo ""
+echo "🧪 Running backend tests..."
+if ! "$PROJECT_ROOT/supabase/tests/run_backend_tests.sh" staging; then
+    echo ""
+    echo "❌ Commit blocked: Tests failed"
+    echo "   Fix tests before committing"
+    exit 1
+fi
+
+# 3. All checks passed
+echo ""
+echo "✅ All checks passed. Proceeding with commit..."
+exit 0
+```
+
+**Steps:**
+1. Create file: `.git/hooks/pre-commit`
+2. Paste the code above
+3. Make executable: `chmod +x .git/hooks/pre-commit`
 
 **Status:** ⬜ Not started
+
+#### Step 4.2: Create Pre-Push Hook (Optional Backup)
+
+**Purpose:** Extra safety net before `git push`.
+
+**What it should do:**
+1. Run `./scripts/check_secrets.sh` → Block push if secrets found
+2. Allow bypass with `--no-verify` flag
+
+**File:** `.git/hooks/pre-push`
+
+**Implementation:**
+```bash
+#!/bin/bash
+# Pre-push hook: Check secrets before pushing to GitHub
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+cd "$PROJECT_ROOT"
+
+# Check for secrets
+echo "🔒 Checking for secrets before push..."
+if ! "$PROJECT_ROOT/scripts/check_secrets.sh"; then
+    echo ""
+    echo "❌ Push blocked: Secrets found in code"
+    echo "   Remove secrets before pushing"
+    exit 1
+fi
+
+echo "✅ Secrets check passed. Proceeding with push..."
+exit 0
+```
+
+**Steps:**
+1. Create file: `.git/hooks/pre-push`
+2. Paste the code above
+3. Make executable: `chmod +x .git/hooks/pre-push`
+
+**Status:** ⬜ Not started (optional)
 
 ---
 
