@@ -1,210 +1,359 @@
-# Deployment Workflow Implementation Plan
+# Step-by-Step Implementation Plan
 
-This is a clean, actionable checklist for implementing the deployment workflow.
+This document provides a concrete, actionable checklist for implementing the deployment workflow defined in `DEPLOYMENT_WORKFLOW.md`.
 
 ---
 
-## Overview
+## Current Status
 
-**Goal:** Set up a simple, manual deployment workflow with staging and production environments.
+### ✅ Already in Place
 
-**Key Principles:**
-- Git = version control only (not automatic deployment)
-- Manual deployment from local machine
-- Simple two-branch structure (develop → main)
-- Mandatory testing before production
+| Item | Status | Notes |
+|------|--------|-------|
+| `test_production_frontend_with_staging.sh` | ✅ Exists | Already implemented |
+| `run_all_tests.sh` | ✅ Exists | Runs backend + iOS tests |
+| `run_sql_via_api.sh` | ✅ Exists | Can execute SQL via API |
+| `deploy_rpc_functions.sh` | ⚠️ Exists but needs update | Uses psql/manual, should use API |
+
+### ❌ Missing
+
+| Item | Status | Priority |
+|------|--------|----------|
+| `develop` branch | ❌ Missing | **CRITICAL** |
+| `check_secrets.sh` | ❌ Missing | **CRITICAL** |
+| `deploy_to_staging.sh` | ❌ Missing | **CRITICAL** |
+| `deploy_to_production.sh` | ❌ Missing | **CRITICAL** |
+| `run_backend_tests.sh` | ⚠️ Check | Medium |
+| Git pre-push hook | ❌ Missing | Optional |
 
 ---
 
 ## Implementation Steps
 
-### Phase 1: Branch Setup ⏱️ 10 minutes
+### Phase 1: Git Branch Setup (5 minutes) ⚠️ CRITICAL
 
-- [ ] **1.1** Create `develop` branch
-  ```bash
-  git checkout main
-  git pull origin main
-  git checkout -b develop
-  git push -u origin develop
-  ```
+**Goal:** Create `develop` branch for staging work.
 
-- [ ] **1.2** (Optional) Set branch protection on GitHub
-  - Go to: Settings → Branches
-  - Add rule for `main`: Require pull request reviews
+#### Step 1.1: Create `develop` Branch
 
----
-
-### Phase 2: Essential Scripts ⏱️ 30 minutes
-
-- [ ] **2.1** Create `scripts/check_secrets.sh`
-  - Scan staged files for secrets (sk_live_, eyJ*, whsec_, etc.)
-  - Exit with error if secrets found
-  - Block commit if secrets detected
-
-- [ ] **2.2** Create `scripts/deploy_to_staging.sh`
-  - Deploy all SQL/RPC from `supabase/remote_rpcs/` to staging
-  - Use `rpc_execute_sql` or direct API calls
-  - Source `.env` for staging credentials
-
-- [ ] **2.3** Create `scripts/deploy_to_production.sh`
-  - Deploy all SQL/RPC from `supabase/remote_rpcs/` to production
-  - Use `rpc_execute_sql` or direct API calls
-  - Source `.env` for production credentials
-
-- [ ] **2.4** Test scripts work
-  ```bash
-  ./scripts/check_secrets.sh
-  ./scripts/deploy_to_staging.sh
-  ```
-
----
-
-### Phase 3: Testing Scripts ⏱️ 15 minutes
-
-- [ ] **3.1** Verify `scripts/test_production_frontend_with_staging.sh` exists
-  - ✅ Already created
-  - Guides manual testing of production frontend with staging backend
-
-- [ ] **3.2** (Optional) Add git pre-push hook
-  - Create `.git/hooks/pre-push`
-  - Auto-run `check_secrets.sh` before push
-  - Make executable: `chmod +x .git/hooks/pre-push`
-
----
-
-### Phase 4: iOS Staging Override Setup ⏱️ 15 minutes
-
-- [ ] **4.1** Set up Xcode scheme for staging override
-  - Open Xcode
-  - Product → Scheme → Manage Schemes
-  - Duplicate `payattentionclub-app-1.1` scheme
-  - Rename to: `Release (Staging)`
-  - Edit scheme → Run → Arguments → Environment Variables
-  - Add: `USE_STAGING = true`
-
-- [ ] **4.2** Update `Config.swift` to support override
-  ```swift
-  static var current: AppEnvironment {
-      #if DEBUG
-          return .staging
-      #else
-          // Check for override
-          if ProcessInfo.processInfo.environment["USE_STAGING"] == "true" {
-              return .staging
-          }
-          return .production
-      #endif
-  }
-  ```
-
----
-
-### Phase 5: Documentation ⏱️ 5 minutes
-
-- [ ] **5.1** Review `DEPLOYMENT_WORKFLOW.md`
-  - ✅ Already created and updated
-  - Contains full workflow documentation
-
-- [ ] **5.2** (Optional) Update `README.md`
-  - Add link to `DEPLOYMENT_WORKFLOW.md`
-  - Quick reference for deployment
-
----
-
-## Quick Start: First Deployment
-
-Once implementation is complete, here's your first deployment:
-
-### 1. Develop on Staging
 ```bash
-git checkout develop
-git checkout -b feat/my-feature
-# ... make changes ...
-./scripts/deploy_to_staging.sh
-# Test in Xcode (DEBUG mode = staging)
-```
-
-### 2. Commit
-```bash
-./scripts/check_secrets.sh  # ⚠️ Must pass!
-git add -A
-git commit -m "feat: my feature"
-git checkout develop
-git merge feat/my-feature
-git push origin develop
-```
-
-### 3. Test Production Frontend with Staging Backend
-```bash
-./scripts/test_production_frontend_with_staging.sh
-# Follow checklist, test manually
-```
-
-### 4. Deploy to Production
-```bash
+# From main branch
 git checkout main
-git merge develop
-git push origin main
-./scripts/deploy_to_production.sh
-# Archive iOS in Xcode (RELEASE mode)
-# Upload to App Store Connect
+git pull origin main
+
+# Create develop branch from main
+git checkout -b develop
+git push -u origin develop
+
+# Verify
+git branch -a
+# Should show: * develop, main, remotes/origin/develop, remotes/origin/main
 ```
 
----
-
-## Priority Order
-
-**Must Have (Critical):**
-1. ✅ Branch setup (develop branch)
-2. ✅ Secrets check script
-3. ✅ Deployment scripts (staging + production)
-
-**Should Have (Important):**
-4. ✅ Testing script (production frontend with staging backend)
-5. ✅ iOS staging override setup
-
-**Nice to Have (Optional):**
-6. Git pre-push hook
-7. Branch protection rules
-8. README updates
+**Status:** ⬜ Not started
 
 ---
 
-## Estimated Time
+### Phase 2: Essential Scripts (30 minutes) ⚠️ CRITICAL
 
-- **Phase 1:** 10 minutes
-- **Phase 2:** 30 minutes
-- **Phase 3:** 15 minutes
-- **Phase 4:** 15 minutes
-- **Phase 5:** 5 minutes
+**Goal:** Create deployment and safety scripts.
 
-**Total: ~75 minutes** (1.25 hours)
+#### Step 2.1: Create `scripts/check_secrets.sh` ⚠️ CRITICAL
+
+**Purpose:** Scan codebase for exposed secrets before committing.
+
+**What it should do:**
+- Scan all tracked files (not .gitignore files)
+- Check for common secret patterns:
+  - `sk_live_*` (Stripe live keys)
+  - `sk_test_*` (Stripe test keys)
+  - `whsec_*` (Stripe webhook secrets)
+  - `eyJ*` (JWT tokens, long strings)
+  - `sbp_*` (Supabase project tokens)
+- Exit with error if secrets found
+- Print file names and line numbers
+
+**Status:** ⬜ Not started
+
+#### Step 2.2: Create `scripts/deploy_to_staging.sh`
+
+**Purpose:** Deploy SQL/RPC functions to staging Supabase.
+
+**What it should do:**
+- Read all `.sql` files from `supabase/remote_rpcs/`
+- Source staging credentials from `.env`
+- For each SQL file:
+  - Call `run_sql_via_api.sh staging "$(cat file.sql)"`
+  - Or directly call Supabase API: `POST /rest/v1/rpc/rpc_execute_sql`
+- Report success/failure for each file
+- Exit with error if any file fails
+
+**Note:** Can adapt `deploy_rpc_functions.sh` or create new one.
+
+**Status:** ⬜ Not started
+
+#### Step 2.3: Create `scripts/deploy_to_production.sh`
+
+**Purpose:** Deploy SQL/RPC functions to production Supabase.
+
+**What it should do:**
+- Same as `deploy_to_staging.sh` but for production
+- **Add safety confirmation prompt** before deploying
+- Double-check environment variables
+- Report success/failure
+
+**Status:** ⬜ Not started
+
+#### Step 2.4: Create `scripts/run_backend_tests.sh`
+
+**Purpose:** Run backend tests against specified environment.
+
+**What it should do:**
+- Accept argument: `staging` or `production`
+- Call `supabase/tests/run_backend_tests.sh` with environment
+- Exit with error if tests fail
+
+**Note:** ✅ `supabase/tests/run_backend_tests.sh` already exists and accepts environment argument. Just need wrapper.
+
+**Status:** ⬜ Not started
 
 ---
 
-## Files to Create
+### Phase 3: Script Updates (15 minutes)
 
-1. `scripts/check_secrets.sh` - Secrets scanning
-2. `scripts/deploy_to_staging.sh` - Deploy to staging
-3. `scripts/deploy_to_production.sh` - Deploy to production
-4. `.git/hooks/pre-push` - (Optional) Auto secrets check
+**Goal:** Update existing scripts to match workflow.
+
+#### Step 3.1: Update `scripts/deploy_rpc_functions.sh` (Optional)
+
+**Decision:** Keep as-is OR replace with new `deploy_to_staging.sh`/`deploy_to_production.sh`.
+
+**Recommendation:** Create new scripts, keep old one as backup.
+
+**Status:** ⬜ Not started
 
 ---
 
-## Files Already Created
+### Phase 4: Git Hooks (Optional, 10 minutes)
 
-- ✅ `DEPLOYMENT_WORKFLOW.md` - Full workflow documentation
-- ✅ `scripts/test_production_frontend_with_staging.sh` - Testing helper
-- ✅ `docs/DEPLOYMENT_EXPLAINED.md` - How deployment works
+**Goal:** Automate secrets check before pushing.
+
+#### Step 4.1: Create Git Pre-Push Hook
+
+**Purpose:** Automatically run `check_secrets.sh` before `git push`.
+
+**What it should do:**
+- Create `.git/hooks/pre-push`
+- Run `./scripts/check_secrets.sh`
+- Block push if secrets found
+- Allow bypass with `--no-verify` flag
+
+**Status:** ⬜ Not started
+
+---
+
+### Phase 5: Documentation Updates (10 minutes)
+
+**Goal:** Update docs to reflect implementation status.
+
+#### Step 5.1: Update `DEPLOYMENT_WORKFLOW.md`
+
+- Mark completed items in Implementation Plan section
+- Update script references if names changed
+
+**Status:** ⬜ Not started
+
+---
+
+## Detailed Implementation
+
+### Step 2.1: Create `scripts/check_secrets.sh`
+
+**File:** `scripts/check_secrets.sh`
+
+**Requirements:**
+- Scan all files in git (not .gitignore)
+- Check for secret patterns
+- Print matches with file:line
+- Exit 1 if secrets found, 0 if clean
+
+**Patterns to check:**
+```bash
+# Stripe keys
+sk_live_[a-zA-Z0-9]{24,}
+sk_test_[a-zA-Z0-9]{24,}
+
+# Stripe webhook secrets
+whsec_[a-zA-Z0-9]{32,}
+
+# JWT tokens (long base64 strings starting with eyJ)
+eyJ[A-Za-z0-9_-]{100,}
+
+# Supabase project tokens
+sbp_[a-zA-Z0-9]{32,}
+
+# Generic API keys (if they look suspicious)
+# But be careful not to flag false positives
+```
+
+**Implementation approach:**
+- Use `git ls-files` to get tracked files
+- Use `grep -E` with patterns
+- Exclude binary files
+- Exclude `.env` (already gitignored, but double-check)
+
+---
+
+### Step 2.2: Create `scripts/deploy_to_staging.sh`
+
+**File:** `scripts/deploy_to_staging.sh`
+
+**Requirements:**
+- Read all `.sql` files from `supabase/remote_rpcs/`
+- Source `.env` file
+- For each file:
+  - Read SQL content
+  - Call Supabase API: `POST /rest/v1/rpc/rpc_execute_sql`
+  - Use `STAGING_SUPABASE_URL` and `STAGING_SUPABASE_SECRET_KEY`
+  - Check response for success
+- Print progress for each file
+- Exit 1 if any file fails
+
+**Can reuse:** `run_sql_via_api.sh` logic
+
+---
+
+### Step 2.3: Create `scripts/deploy_to_production.sh`
+
+**File:** `scripts/deploy_to_production.sh`
+
+**Requirements:**
+- Same as `deploy_to_staging.sh` but for production
+- **Add safety checks:**
+  - Confirm you're on `main` branch
+  - Prompt: "Deploy to PRODUCTION? (yes/no)"
+  - Double-check environment variables are production
+- Use `PRODUCTION_SUPABASE_URL` and `PRODUCTION_SUPABASE_SECRET_KEY`
+- Print warnings in red/yellow
+
+---
+
+### Step 2.4: Create `scripts/run_backend_tests.sh`
+
+**File:** `scripts/run_backend_tests.sh`
+
+**Requirements:**
+- Accept argument: `staging` or `production`
+- Call existing test script: `supabase/tests/run_backend_tests.sh $ENV`
+- Or run Deno tests directly
+- Exit with same code as test script
+
+**Check first:** Does `supabase/tests/run_backend_tests.sh` already accept environment argument?
+
+---
+
+## Testing the Implementation
+
+### Test Checklist
+
+After implementing each phase:
+
+#### Phase 1 Test
+- [ ] `git branch -a` shows `develop` branch
+- [ ] Can checkout `develop` and `main`
+- [ ] Both branches exist on remote
+
+#### Phase 2 Test
+- [ ] `./scripts/check_secrets.sh` runs without errors
+- [ ] `./scripts/check_secrets.sh` detects test secrets (if you add one temporarily)
+- [ ] `./scripts/deploy_to_staging.sh` deploys SQL files
+- [ ] `./scripts/deploy_to_production.sh` asks for confirmation
+- [ ] `./scripts/run_backend_tests.sh staging` runs tests
+
+#### Phase 3 Test
+- [ ] Old scripts still work (if kept)
+- [ ] New scripts work as expected
+
+#### Phase 4 Test
+- [ ] `git push` runs secrets check automatically
+- [ ] Secrets check blocks push if secrets found
+- [ ] `git push --no-verify` bypasses check
+
+---
+
+## Quick Start: Minimal Implementation
+
+**If you want to get started quickly, implement in this order:**
+
+1. **Phase 1** (5 min): Create `develop` branch
+2. **Step 2.1** (10 min): Create `check_secrets.sh` - **CRITICAL for security**
+3. **Step 2.2** (10 min): Create `deploy_to_staging.sh`
+4. **Step 2.3** (10 min): Create `deploy_to_production.sh`
+
+**Total: ~35 minutes for essential setup**
+
+Then you can:
+- Start using the workflow
+- Add optional scripts later
+- Add git hooks later
+
+---
+
+## Script Naming Convention
+
+**Current scripts:**
+- `deploy_rpc_functions.sh` - Old, uses psql/manual
+- `test_production_frontend_with_staging.sh` - ✅ Already correct
+- `run_all_tests.sh` - ✅ Already correct
+
+**New scripts (recommended):**
+- `check_secrets.sh` - ✅ Matches workflow
+- `deploy_to_staging.sh` - ✅ Matches workflow
+- `deploy_to_production.sh` - ✅ Matches workflow
+- `run_backend_tests.sh` - ✅ Matches workflow (wrapper)
+
+**Decision:** Keep old scripts as backup, or remove them?
 
 ---
 
 ## Next Steps
 
-1. Start with Phase 1 (branch setup) - 10 minutes
-2. Then Phase 2 (essential scripts) - 30 minutes
-3. Test everything works
-4. Proceed with first deployment
+1. **Review this plan** - Does it match your needs?
+2. **Start with Phase 1** - Create `develop` branch
+3. **Implement Phase 2** - Essential scripts
+4. **Test everything** - Run through workflow once
+5. **Update documentation** - Mark items as complete
 
-Ready to start? Begin with Phase 1!
+---
 
+## Questions to Resolve
+
+1. **Keep `deploy_rpc_functions.sh`?** 
+   - Option A: Keep as backup
+   - Option B: Remove it
+   - Option C: Update it to use API method
+
+2. **Git pre-push hook?**
+   - Option A: Implement now
+   - Option B: Manual check for now
+   - Option C: Skip entirely
+
+3. **Backend tests script?**
+   - ✅ `supabase/tests/run_backend_tests.sh` already works and accepts environment
+   - Just create wrapper script in `scripts/` that calls it
+
+---
+
+## Summary
+
+**Must Have (Critical):**
+- ✅ `develop` branch
+- ✅ `check_secrets.sh`
+- ✅ `deploy_to_staging.sh`
+- ✅ `deploy_to_production.sh`
+
+**Nice to Have (Optional):**
+- ⚠️ `run_backend_tests.sh` (wrapper)
+- ⚠️ Git pre-push hook
+- ⚠️ Update old scripts
+
+**Total Time:** ~1 hour for critical items, ~1.5 hours for everything.
