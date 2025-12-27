@@ -22,14 +22,6 @@ struct BulletinView: View {
                     }
                     .padding(.top, 20)
 
-                    SettlementStatusView(
-                        status: model.weekStatus,
-                        isLoading: model.isLoadingWeekStatus,
-                        errorMessage: model.weekStatusError,
-                        onRefresh: { model.refreshWeekStatus() }
-                    )
-                    .padding(.horizontal)
-
                     // Recap
                     VStack(spacing: 20) {
                         Text("Week Recap")
