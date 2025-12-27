@@ -37,7 +37,7 @@ echo -e "${BLUE}📦 Backend Tests (Deno)${NC}"
 echo "------------------------"
 
 if [ -f "$PROJECT_ROOT/supabase/tests/run_backend_tests.sh" ]; then
-    if "$PROJECT_ROOT/supabase/tests/run_backend_tests.sh" staging; then
+    if "$PROJECT_ROOT/supabase/tests/run_backend_tests.sh"; then
         echo -e "${GREEN}✅ Backend tests passed${NC}"
     else
         echo -e "${RED}❌ Backend tests failed${NC}"
@@ -56,7 +56,7 @@ echo -e "${BLUE}📱 iOS Unit Tests (Xcode)${NC}"
 echo "-------------------------"
 
 # Find Xcode project
-XCODE_PROJECT="payattentionclub-app-1.1/payattentionclub-app-1.1.xcodeproj"
+XCODE_PROJECT="$PROJECT_ROOT/payattentionclub-app-1.1/payattentionclub-app-1.1.xcodeproj"
 
 if [ -d "$XCODE_PROJECT" ]; then
     echo "Building and testing..."

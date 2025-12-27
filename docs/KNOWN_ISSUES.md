@@ -4,76 +4,6 @@ This document tracks known bugs and issues that are not critical enough to block
 
 ---
 
-## App Startup Delay
-
-**Status**: Known Issue - Performance  
-**Severity**: Medium (User Experience)  
-**Date Identified**: 2025-12-11  
-**Phase**: App Initialization
-
-### Description
-
-The app takes approximately one minute to show the landing screen (PayAttentionClub logo) when launched on a physical device. This delay occurs during app initialization, likely due to network operations or synchronization tasks running on startup.
-
-### Symptoms
-
-- App launches but shows loading screen for ~60 seconds
-- Landing screen appears after significant delay
-- Occurs on physical devices (may not reproduce in simulator)
-- User experiences long wait time before app becomes interactive
-
-### Impact
-
-**User Experience**: ⚠️ Medium – Users wait ~60 seconds before seeing the main screen  
-**Product**: ⚠️ Medium – Poor first impression, may cause users to think app is frozen  
-**Functional**: ✅ None – App eventually loads and works correctly
-
-### Root Cause Analysis
-
-**Suspected Causes**:
-1. Network sync operation (`UsageSyncManager.syncToBackend()`) may be timing out (default URLSession timeout is 60 seconds)
-2. Supabase client initialization may be slow on first launch
-3. Network connectivity issues to staging/production environment
-4. Synchronous operations blocking main thread during initialization
-
-**Attempted Fixes**:
-- Added 5-second timeout to sync operation
-- Made sync non-blocking (runs in background)
-- Moved navigation before sync to prevent blocking
-- Issue persists, suggesting deeper network or initialization problem
-
-### Code Locations
-
-- `AppModel.swift`: `finishInitialization()` method
-- `UsageSyncManager.swift`: `syncToBackend()` method
-- `BackendClient.swift`: Supabase client initialization
-
-### When to Fix
-
-**Priority**: Medium  
-**Suggested Timeline**: Before production release, or when:
-- User complaints about slow startup increase
-- Performance becomes a blocker for user adoption
-- Root cause can be identified through profiling
-
-### Proposed Fix
-
-1. **Profile app startup** using Instruments to identify exact bottleneck
-2. **Add startup logging** to track which operation is taking time
-3. **Consider lazy initialization** of network clients (only when needed)
-4. **Skip sync on first launch** if user isn't authenticated
-5. **Add progress indicator** during startup to show app is working
-6. **Investigate Supabase client** initialization time
-
-### Testing
-
-- Measure startup time on physical device
-- Test with network disabled (airplane mode) to isolate network issues
-- Test with staging vs production environments
-- Profile with Instruments to identify slow operations
-
----
-
 ## Phase 3: Multiple Concurrent Syncs Issue
 
 **Status**: Known Issue - Non-Critical  
@@ -311,31 +241,6 @@ The live `call_weekly_close` function body includes the Supabase `service_role` 
 
 ---
 
-## Rename Supabase Key Variables to Match New Naming Convention
-
-**Status**: ✅ **RESOLVED** - Completed 2025-12-12  
-**Severity**: Low (Naming Consistency)  
-**Date Identified**: 2025-12-12  
-**Date Resolved**: 2025-12-12
-
-### Description
-
-We are already using Supabase's new publishable/secret key system, but our variable names still use the legacy naming convention. We need to rename:
-- `SUPABASE_ANON_KEY` → `SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` → `SUPABASE_SECRET_KEY`
-
-### Resolution
-
-✅ **Completed**: All variable names have been updated across the codebase:
-- Swift code: `anonKey` → `publishableKey` in `Config.swift` and `BackendClient.swift`
-- Shell scripts: All references updated to use `SUPABASE_SECRET_KEY` and `SUPABASE_PUBLISHABLE_KEY`
-- TypeScript/Deno tests: Updated `config.ts` to use new naming
-- Edge Functions: Updated `weekly-close/index.ts` to use `SUPABASE_SECRET_KEY`
-
-**Note**: The `.env` file needs to be manually updated with the new variable names (not committed to git).
-
----
-
 ## Phase 2: Weekly Grace Window Needs Pre-Week Buffer
 
 **Status**: Known Issue - UX/Behavioral  
@@ -381,364 +286,111 @@ Weekly commitments currently apply a **24-hour grace period only *after* the wee
 
 ---
 
-## Authorization Fee Calculation Incorrect
+## Phase 1: App Startup Loading Screen Delay
 
-**Status**: Known Issue - Critical Bug  
-**Severity**: High (Financial/User Experience)  
-**Date Identified**: 2025-12-10  
-**Phase**: Commitment Creation Flow
+**Status**: Known Issue - UX/Performance  
+**Severity**: Low (User Experience)  
+**Date Identified**: 2025-12-25  
+**Phase**: Phase 1 - App Launch
 
 ### Description
 
-The calculation of the authorization fee when making a commitment is way too high or way off. This affects the amount charged to users when they create a commitment, potentially charging significantly more than intended.
+When starting the app, there is a prolonged white/loading screen that appears before the logo or any UI elements are shown. This creates a poor first impression and makes the app feel slow to launch.
 
 ### Symptoms
 
-- Authorization fee displayed/charged is incorrect (too high)
-- Users may be overcharged when creating commitments
-- Fee calculation does not match expected values
+- White/blank screen visible for several seconds on app launch
+- Logo or initial UI elements take too long to appear
+- Users may think the app is frozen or not responding
+- Occurs before any content is displayed
 
 ### Impact
 
-**Financial**: ⚠️ High – Users may be incorrectly charged  
-**User Experience**: ⚠️ High – Users see incorrect fees, may abandon commitment creation  
-**Product**: ⚠️ High – Core payment flow is broken  
-**Data Integrity**: ⚠️ Medium – Incorrect charges may be recorded
-
-### Code Locations
-
-- Commitment creation flow (likely in `AppModel.swift` or commitment-related views)
-- Payment/Stripe integration code
-- Authorization fee calculation logic
-
-### When to Fix
-
-**Priority**: High  
-**Suggested Timeline**: Fix immediately - this affects core payment functionality
+**User Experience**: ⚠️ Medium - Poor first impression, feels unresponsive  
+**Functional**: ✅ None - App eventually loads correctly  
+**Performance**: ⚠️ Low - Perceived slowness even if actual load time is acceptable
 
 ### Proposed Fix
 
-1. Review authorization fee calculation logic
-2. Compare calculated values with expected/design specifications
-3. Identify where the calculation goes wrong (formula error, unit conversion, etc.)
-4. Fix the calculation and add unit tests to prevent regression
-5. Verify with test commitments before deploying
+1. Investigate app initialization sequence - identify what's blocking UI rendering
+2. Show splash screen or logo immediately on app launch
+3. Optimize initial data loading (move non-critical operations to background)
+4. Consider showing a loading indicator or branded splash screen during initialization
+5. Profile app startup time to identify bottlenecks
+
+### Code Locations
+
+- `payattentionclub_app_1_1App.swift` (app initialization)
+- `RootRouterView.swift` (initial screen routing)
+- `AppModel.swift` (initial data loading)
+- `LoadingView.swift` (loading screen implementation)
 
 ### Testing
 
-- Create test commitments and verify authorization fees match expected amounts
-- Test with various commitment amounts/parameters
-- Verify Stripe charges match calculated authorization fees
+1. Measure time from app launch to first UI element appearing
+2. Test on different device models to identify device-specific delays
+3. Profile with Instruments to find startup bottlenecks
+4. Verify splash screen appears immediately if implemented
 
 ---
 
-## App Selection Group Display Issue
+## Phase 1: FamilyActivityPicker Permission Screen Delay
 
-**Status**: Known Issue - UI/UX Bug  
-**Severity**: Medium (User Experience)  
-**Date Identified**: 2025-12-11  
-**Phase**: App Selection Flow
+**Status**: Known Issue - UX/Performance  
+**Severity**: Low (User Experience)  
+**Date Identified**: 2025-12-25  
+**Phase**: Phase 1 - App Selection & Permissions
 
 ### Description
 
-When selecting the "Select apps to limit" button, users sometimes see a list of app groups. When opening one of these groups for the first time, the apps within that group do not display. Users must exit the screen, press the "Select apps to limit" button again, and then open the group a second time for the apps to appear.
+When pressing the "Select Apps" button for the first time (to grant FamilyControls permission), there is a 2-3 second delay before the system permission screen appears. This delay makes the app feel unresponsive and may cause users to tap the button multiple times.
 
 ### Symptoms
 
-- First attempt: User taps "Select apps to limit" → sees groups → opens a group → apps don't show
-- Second attempt: User exits screen → taps "Select apps to limit" again → opens same group → apps now display correctly
-- Inconsistent behavior - doesn't happen every time
-- Requires user to perform the action twice to see apps in groups
+- 2-3 second delay between button tap and permission screen appearing
+- No immediate feedback when button is pressed
+- Users may think the button didn't work and tap again
+- Only occurs on first-time permission request
 
 ### Impact
 
-**User Experience**: ⚠️ Medium – Users must repeat the action to see apps, creating confusion and friction  
-**Product**: ⚠️ Medium – Poor UX may cause users to think the feature is broken  
-**Functional**: ✅ None – Feature works correctly on second attempt  
-**Data Integrity**: ✅ None – No data loss, just display issue
+**User Experience**: ⚠️ Medium - Feels unresponsive, may cause confusion  
+**Functional**: ✅ None - Permission screen eventually appears  
+**Performance**: ⚠️ Low - System-level delay, not app code issue
 
-### Root Cause Analysis
+### Root Cause
 
-**Suspected Causes**:
-1. Race condition in loading app groups/apps data
-2. Initial state not properly initialized when group is first opened
-3. FamilyActivityPicker or app selection view not refreshing properly on first load
-4. Async data loading completing after UI renders
-
-### Code Locations
-
-- App selection view (likely related to FamilyActivityPicker or app limiting flow)
-- Group/app data loading logic
-- Navigation/view state management for app selection screen
-
-### When to Fix
-
-**Priority**: Medium  
-**Suggested Timeline**: Before production release, or when:
-- User complaints about the feature increase
-- UX becomes a blocker for user adoption
-- Root cause can be identified through debugging
+This is likely a system-level delay when iOS first presents the FamilyControls authorization screen. The system may need to:
+- Initialize the FamilyControls framework
+- Load the app selection UI
+- Prepare system-level permission dialogs
 
 ### Proposed Fix
 
-1. **Investigate app group loading logic** - Check if data is loaded before UI renders
-2. **Add proper state management** - Ensure view state is correctly initialized when groups are opened
-3. **Add loading indicators** - Show loading state while apps are being fetched
-4. **Review FamilyActivityPicker integration** - Check if there's a refresh or reload mechanism needed
-5. **Add logging** - Track when groups are opened and when apps are loaded to identify timing issues
-6. **Consider preloading** - Load app data when groups are displayed, not when opened
+1. Add immediate visual feedback when button is pressed (loading indicator, button state change)
+2. Show a brief message explaining that the permission screen will appear shortly
+3. Disable button during the delay to prevent multiple taps
+4. Consider showing a small loading spinner or "Preparing..." message
+5. Investigate if there's a way to pre-warm the FamilyControls framework
+
+### Code Locations
+
+- `SetupView.swift` (app selection button)
+- `AuthorizationView.swift` (if used for permissions)
+- Any view that triggers `AuthorizationCenter.shared.requestAuthorization()`
 
 ### Testing
 
-- Test app selection flow multiple times to reproduce the issue
-- Verify apps display correctly on first group open attempt
-- Test with different numbers of apps/groups
-- Test on physical devices (may not reproduce in simulator)
-- Verify fix works consistently across multiple attempts
-
----
-
-## Test Harness Needs Update
-
-**Status**: Known Issue - Technical Debt  
-**Severity**: Medium (Development Velocity)  
-**Date Identified**: 2025-12-14  
-**Phase**: Testing Infrastructure
-
-### Description
-
-The test harness (backend Deno tests and iOS unit tests) may be out of sync with the actual codebase after recent major changes including:
-- Authorization fee calculation moved to backend (`calculate_max_charge_cents`, `rpc_preview_max_charge`)
-- Environment variable naming changes (`ANON_KEY` → `PUBLISHABLE_KEY`, `SERVICE_ROLE_KEY` → `SECRET_KEY`)
-- New RPC functions added (`rpc_execute_sql`, `rpc_list_cron_jobs`, `rpc_get_cron_history`, `rpc_verify_setup`)
-- Updated `rpc_create_commitment` to use shared calculation function
-- Frontend `AppModel` changes (async `fetchAuthorizationAmount()` vs old sync method)
-- `PenaltyCalculator.calculateAuthorizationAmount()` deprecated
-
-### Tests Potentially Affected
-
-**Backend (Deno)**:
-- `supabase/tests/test_create_commitment.ts` - May need update for new calculation logic
-- `supabase/tests/reset_my_user.ts` - ✅ Already updated for `SECRET_KEY` naming
-- Other test files may reference old function signatures or env vars
-
-**Frontend (iOS)**:
-- `AppModelTests.swift` - Tests `PenaltyCalculator.calculateAuthorizationAmount()` which is now deprecated
-- `BackendClientTests.swift` - May need tests for new `previewMaxCharge()` method
-- Tests may fail if they expect old return values or method signatures
-
-### Impact
-
-**Development**: ⚠️ Medium – Tests may fail or give false positives  
-**Quality**: ⚠️ Medium – Reduced confidence in code changes  
-**CI/CD**: ⚠️ Low – No automated CI yet, but will block future setup
-
-### Action Required
-
-1. **Run all backend tests** and document failures:
-   ```bash
-   ./scripts/run_backend_tests.sh staging
-   ```
-
-2. **Run iOS unit tests** in Xcode and document failures:
-   - Product → Test (⌘U)
-
-3. **Update failing tests** to match new function signatures and expected values
-
-4. **Add new tests** for:
-   - `rpc_preview_max_charge` - verify returns correct bounded values
-   - `BackendClient.previewMaxCharge()` - verify iOS can call the preview RPC
-   - `calculate_max_charge_cents` - verify bounds ($5 min, $1000 max)
-
-5. **Remove/update deprecated tests** that test old calculation logic
-
-### When to Fix
-
-**Priority**: Medium  
-**Suggested Timeline**: Before next major feature work, to ensure test coverage is reliable
-
----
-
-## GitHub Repository Should Be Private
-
-**Status**: Known Issue - Security  
-**Severity**: High (Security)  
-**Date Identified**: 2025-12-15  
-**Phase**: Security & Infrastructure
-
-### Description
-
-The GitHub repository is currently **public**, which means anyone can view the code, commit history, and potentially discover sensitive information. This is a security risk, especially given that:
-- The repository contains business logic and architecture details
-- Commit history may contain secrets or sensitive information
-- Public repos are scanned by bots for secrets and vulnerabilities
-- Competitors or malicious actors could analyze the codebase
-
-### Impact
-
-**Security**: ⚠️ High – Codebase is publicly accessible  
-**Privacy**: ⚠️ Medium – Business logic and architecture exposed  
-**Competitive**: ⚠️ Medium – Competitors can analyze implementation  
-**Compliance**: ⚠️ Low – May have compliance implications depending on data handling
-
-### Action Required
-
-1. **Make repository private** in GitHub:
-   - Go to: Repository Settings → General → Danger Zone
-   - Click "Change visibility" → Select "Make private"
-   - Confirm the change
-
-2. **Verify access** after making private:
-   - Ensure all team members have access
-   - Check that CI/CD (if any) still works
-   - Verify webhooks/integrations still function
-
-3. **Consider alternatives** if you need public visibility:
-   - Create a separate public demo/example repository
-   - Use GitHub's "Template repository" feature for public examples
-   - Keep main repository private, create public forks for demos
-
-### When to Fix
-
-**Priority**: High  
-**Suggested Timeline**: Immediately - security risk should be addressed as soon as possible
-
----
-
-## Git Branching & CI/CD Pipeline Setup
-
-**Status**: ✅ **RESOLVED** - Completed 2025-12-15  
-**Severity**: Medium (Development Process)  
-**Date Identified**: 2025-12-14  
-**Date Resolved**: 2025-12-15
-
-### Description
-
-Previously all development happened directly on `main` branch with no separation between staging and production code. We needed to implement proper Git branching strategy and CI/CD pipeline with automated testing and secrets checking before code reaches the remote repository.
-
-### Resolution
-
-✅ **Completed**: Full deployment workflow implemented:
-- `develop` branch created for staging
-- `main` branch for production
-- `check_secrets.sh` script created and tested
-- `deploy_to_staging.sh` and `deploy_to_production.sh` scripts created
-- Git pre-commit hook: Auto checks secrets + runs tests
-- Git pre-push hook: Auto checks secrets
-- All scripts tested and working
-
-**See**: `DEPLOYMENT_WORKFLOW.md` for complete workflow documentation.
-
-### Current State
-
-- ❌ Single `main` branch for everything
-- ❌ No automated testing before push
-- ❌ No automated secrets scanning
-- ❌ Manual deployment to staging/production
-- ❌ No branch protection rules
-
-### Required Setup
-
-**1. Git Branching Strategy**
-- `main` branch = production-ready code only
-- `develop` branch = staging/integration branch
-- `feat/*` branches = feature development
-- `fix/*` branches = bug fixes
-- `hotfix/*` branches = urgent production fixes
-
-**2. Pre-Push Hooks (Local)**
-- Run secrets scan before any push
-- Block push if secrets detected
-- Optionally run tests before push
-
-**3. Secrets Scanning**
-Must check for and block:
-| Pattern | Description |
-|---------|-------------|
-| `sk_live_*` | Stripe live secret key |
-| `sk_test_*` | Stripe test secret key |
-| `whsec_*` | Stripe webhook secret |
-| `eyJ*` (long JWT) | Service role keys |
-| `sbp_*` | Supabase project tokens |
-| Passwords in URLs | Database connection strings |
-
-**4. CI/CD Pipeline (GitHub Actions)**
-- On PR to `develop`: Run tests, block merge if failing
-- On PR to `main`: Run tests + secrets scan, require approval
-- On merge to `develop`: Auto-deploy to staging
-- On merge to `main`: Auto-deploy to production (with approval gate)
-
-### Implementation Steps
-
-1. **Create `develop` branch**
-   ```bash
-   git checkout -b develop
-   git push -u origin develop
-   ```
-
-2. **Create `scripts/check_secrets.sh`**
-   - Scan staged files for secret patterns
-   - Exit with error if secrets found
-   - Print clear message about what was found
-
-3. **Set up Git pre-push hook**
-   ```bash
-   # .git/hooks/pre-push
-   #!/bin/bash
-   ./scripts/check_secrets.sh || exit 1
-   ```
-
-4. **Add branch protection on GitHub**
-   - Settings → Branches → Add rule for `main`
-   - Require PR reviews
-   - Require status checks to pass
-
-5. **Create GitHub Actions workflow** (`.github/workflows/ci.yml`)
-   - Run on PR to `main` and `develop`
-   - Run backend tests
-   - Run secrets scan
-   - Report results
-
-### Impact
-
-**Development**: ⚠️ Medium – Risk of pushing secrets or broken code  
-**Security**: ⚠️ High – No automated secrets scanning  
-**Quality**: ⚠️ Medium – No automated test gates  
-**Collaboration**: ⚠️ Low – Solo dev currently, but blocks future team growth
-
-### When to Fix
-
-**Priority**: Medium  
-**Suggested Timeline**: Before adding team members or before production launch
-
-### Related Documentation
-
-- `DEPLOYMENT_WORKFLOW.md` - Contains the planned workflow (not yet implemented)
-- `docs/AUTHORIZATION_FEE_FIX.md` - Example of changes that should go through proper flow
+1. Measure time from button tap to permission screen appearance
+2. Test on different iOS versions to see if delay varies
+3. Verify button provides immediate feedback
+4. Test with and without existing authorization to compare behavior
 
 ---
 
 ## Future Issues
 
 _Add new issues here as they are discovered..._
-
----
-
-## Ops: Loops.so Secrets Must Match in Production and Staging
-
-**Status**: Known Issue – Configuration  
-**Severity**: Low (Ops/Testing)  
-**Date Identified**: 2025-12-12  
-
-### Description
-
-The Loops.so API secrets must be identical in both **production** and **staging** Supabase environments. Since Loops.so is a single service (no separate staging environment), both Supabase projects need to use the same Loops API key to send emails.
-
-### Action Required
-
-Ensure the `LOOPS_API_KEY` (or equivalent secret name) is set to the same value in:
-- Production Supabase project secrets
-- Staging Supabase project secrets
 
 ---
 

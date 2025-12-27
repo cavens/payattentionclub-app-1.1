@@ -1,4 +1,6 @@
-# Backend Testing Guide
+# Testing Guide
+
+Frontend-to-backend integration testing guide for PayAttentionClub.
 
 ## How to Test Phase 2: `checkBillingStatus()`
 

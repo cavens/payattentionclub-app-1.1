@@ -26,7 +26,7 @@ I have an iOS app with a `DeviceActivityMonitorExtension` that is **not being in
 
 2. **App Group**: Main app can read/write to App Group
    - Keys like `commitmentId`, `baselineTimeSpent`, `supabaseAccessToken` exist
-   - App Group identifier: `group.com.payattentionclub.app`
+   - App Group identifier: `group.com.payattentionclub2.0.app`
 
 3. **Extension Configuration**: All configuration appears correct
    - Info.plist has correct `NSExtensionPointIdentifier`
@@ -75,7 +75,7 @@ I have an iOS app with a `DeviceActivityMonitorExtension` that is **not being in
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.payattentionclub.app</string>
+		<string>group.com.payattentionclub2.0.app</string>
 	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>
@@ -87,7 +87,7 @@ I have an iOS app with a `DeviceActivityMonitorExtension` that is **not being in
 @available(iOS 16.0, *)
 @objc(DeviceActivityMonitorExtension)
 class DeviceActivityMonitorExtension: DeviceActivityMonitor {
-    private let appGroupIdentifier = "group.com.payattentionclub.app"
+    private let appGroupIdentifier = "group.com.payattentionclub2.0.app"
     
     override init() {
         super.init()

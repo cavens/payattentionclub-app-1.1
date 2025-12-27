@@ -88,6 +88,16 @@ struct SetupView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        
+                        // Testing button to set limit to 1 minute
+                        Button(action: {
+                            model.limitMinutes = 1.0
+                        }) {
+                            Text("Set to 1 min (testing)")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                        .padding(.top, 4)
                     }
                     .padding()
                     .background(Color.gray.opacity(0.1))
@@ -133,7 +143,7 @@ struct SetupView: View {
                     Button(action: {
                         Task { @MainActor in
                             // Check authorization status
-                            let status = await AuthorizationCenter.shared.authorizationStatus
+                            let status = AuthorizationCenter.shared.authorizationStatus
                             NSLog("SETUP SetupView: Authorization status: \(status.rawValue)")
                             
                             if status == .approved {
@@ -145,7 +155,7 @@ struct SetupView: View {
                                 NSLog("SETUP SetupView: Authorization not approved (\(status.rawValue)), requesting...")
                                 do {
                                     try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
-                                    let newStatus = await AuthorizationCenter.shared.authorizationStatus
+                                    let newStatus = AuthorizationCenter.shared.authorizationStatus
                                     NSLog("SETUP SetupView: Authorization request completed, new status: \(newStatus.rawValue)")
                                     
                                     if newStatus == .approved {
@@ -331,14 +341,23 @@ struct SetupView: View {
         // Navigate to next screen based on ScreenTime authorization status
         let authorizationCenter = AuthorizationCenter.shared
         let status = authorizationCenter.authorizationStatus
+        NSLog("MARKERS SetupView: Authorization status: %@", String(describing: status))
+        print("MARKERS SetupView: Authorization status: \(status)")
+        fflush(stdout)
         
         if status == .approved {
             // Skip ScreenTime access view, go directly to authorization
+            NSLog("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
+            print("MARKERS SetupView: ScreenTime already approved, skipping to authorization")
+            fflush(stdout)
             await MainActor.run {
                 model.navigate(.authorization)
             }
         } else {
             // Need to request ScreenTime access
+            NSLog("MARKERS SetupView: ScreenTime not approved, showing access screen")
+            print("MARKERS SetupView: ScreenTime not approved, showing access screen")
+            fflush(stdout)
             await MainActor.run {
                 model.navigate(.screenTimeAccess)
             }

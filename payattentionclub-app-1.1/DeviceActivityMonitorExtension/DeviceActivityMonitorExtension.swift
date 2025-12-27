@@ -5,7 +5,7 @@ import Foundation
 /// Writes usage data to App Group so main app can read it
 @available(iOS 16.0, *)
 class DeviceActivityMonitorExtension: DeviceActivityMonitor {
-    private let appGroupIdentifier = "group.com.payattentionclub.app"
+    private let appGroupIdentifier = "group.com.payattentionclub2.0.app"
     
     override func intervalDidStart(for activity: DeviceActivityName) {
         super.intervalDidStart(for: activity)

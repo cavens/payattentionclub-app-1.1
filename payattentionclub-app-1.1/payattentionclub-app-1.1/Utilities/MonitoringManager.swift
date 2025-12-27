@@ -62,6 +62,10 @@ class MonitoringManager {
             )
         }
         
+        NSLog("MARKERS MonitoringManager: 📊 Built %d threshold events (limit: %d min, max undercount: ≤5 min)", 
+              events.count, Lcapped)
+        fflush(stdout)
+        
         return events
     }
     
@@ -70,6 +74,8 @@ class MonitoringManager {
     func prepareThresholds(selection: FamilyActivitySelection, limitMinutes: Int) async {
         // Check if already preparing or already cached
         if isPreparingThresholds {
+            NSLog("MARKERS MonitoringManager: ⏳ Thresholds already being prepared, waiting...")
+            fflush(stdout)
             // Wait for existing preparation to complete
             while isPreparingThresholds {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
@@ -82,6 +88,9 @@ class MonitoringManager {
            let cachedSel = cachedSelection,
            cachedSel.applicationTokens.count == selection.applicationTokens.count &&
            cachedSel.categoryTokens.count == selection.categoryTokens.count {
+            NSLog("MARKERS MonitoringManager: ✅ Using cached thresholds (selection count matches: %d apps, %d categories)", 
+                  selection.applicationTokens.count, selection.categoryTokens.count)
+            fflush(stdout)
             // Update cached selection to current (in case tokens changed but count same)
             await MainActor.run {
                 cachedSelection = selection
@@ -90,6 +99,8 @@ class MonitoringManager {
         }
         
         isPreparingThresholds = true
+        NSLog("MARKERS MonitoringManager: 🚀 Starting async threshold preparation (limit: %d min)...", limitMinutes)
+        fflush(stdout)
         
         // Create events in background (off main thread)
         let events = await Task.detached(priority: .userInitiated) { [selection, limitMinutes] in
@@ -139,31 +150,56 @@ class MonitoringManager {
             cachedSelection = selection
             isPreparingThresholds = false
         }
+        
+        NSLog("MARKERS MonitoringManager: ✅ Threshold preparation complete (%d events)", events.count)
+        fflush(stdout)
     }
     
     /// Check if thresholds are ready for the given selection
     func thresholdsAreReady(for selection: FamilyActivitySelection) -> Bool {
         guard let _ = cachedEvents,
               let cachedSel = cachedSelection else {
+            NSLog("MARKERS MonitoringManager: ❌ No cached thresholds available")
+            fflush(stdout)
             return false
         }
         
         // Check if selection count matches (simple check - tokens themselves can't be compared directly)
-        return cachedSel.applicationTokens.count == selection.applicationTokens.count &&
-               cachedSel.categoryTokens.count == selection.categoryTokens.count
+        let matches = cachedSel.applicationTokens.count == selection.applicationTokens.count &&
+                      cachedSel.categoryTokens.count == selection.categoryTokens.count
+        
+        if matches {
+            NSLog("MARKERS MonitoringManager: ✅ Cached thresholds ready (count matches: %d apps, %d categories)", 
+                  selection.applicationTokens.count, selection.categoryTokens.count)
+        } else {
+            NSLog("MARKERS MonitoringManager: ⚠️ Cached thresholds don't match (cached: %d/%d, current: %d/%d)", 
+                  cachedSel.applicationTokens.count, cachedSel.categoryTokens.count,
+                  selection.applicationTokens.count, selection.categoryTokens.count)
+        }
+        fflush(stdout)
+        
+        return matches
     }
     
     /// Start monitoring with the selected apps (uses cached thresholds if available)
     /// Uses smart threshold distribution: ~140-145 events for fast startMonitoring()
     func startMonitoring(selection: FamilyActivitySelection, limitMinutes: Int) async {
+        NSLog("MARKERS MonitoringManager: 🔵🔵🔵 Starting monitoring...")
+        NSLog("MARKERS MonitoringManager: Selected apps count: %d", selection.applicationTokens.count)
+        fflush(stdout)
+        
         // Store selection in App Group for Monitor Extension
         storeSelectionInAppGroups(selection: selection)
         
         // Get events (use cached if available, otherwise create now)
         let events: [DeviceActivityEvent.Name: DeviceActivityEvent]
         if thresholdsAreReady(for: selection), let cached = cachedEvents {
+            NSLog("MARKERS MonitoringManager: ⚡ Using cached thresholds - instant start!")
+            fflush(stdout)
             events = cached
         } else {
+            NSLog("MARKERS MonitoringManager: ⚠️ No cached thresholds, creating now...")
+            fflush(stdout)
             await prepareThresholds(selection: selection, limitMinutes: limitMinutes)
             events = cachedEvents ?? [:]
         }
@@ -175,21 +211,63 @@ class MonitoringManager {
             repeats: true
         )
         
+        NSLog("MARKERS MonitoringManager: 📊 Starting monitoring with %d threshold events (limit: %d min)", 
+              events.count, limitMinutes)
+        fflush(stdout)
+        
+        // Log first, middle, and last event names for verification (off main thread to avoid blocking)
+        Task.detached(priority: .utility) { [events] in
+            let eventNames = Array(events.keys).sorted { event1, event2 in
+                let sec1 = MonitoringManager.extractSecondsFromEventNameStatic(event1.rawValue)
+                let sec2 = MonitoringManager.extractSecondsFromEventNameStatic(event2.rawValue)
+                return sec1 < sec2
+            }
+            
+            if eventNames.count > 0 {
+                NSLog("MARKERS MonitoringManager: First event: %@", eventNames[0].rawValue)
+                if eventNames.count > 1 {
+                    let middleIndex = eventNames.count / 2
+                    NSLog("MARKERS MonitoringManager: Middle event: %@", eventNames[middleIndex].rawValue)
+                }
+                NSLog("MARKERS MonitoringManager: Last event: %@", eventNames[eventNames.count - 1].rawValue)
+                fflush(stdout)
+            }
+        }
+        
+        NSLog("MARKERS MonitoringManager: ⏱️ About to call center.startMonitoring()...")
+        fflush(stdout)
+        
+        // Call startMonitoring on main thread (required by DeviceActivityCenter)
+        // With ~140 events, this should be fast (~2-3 seconds instead of 31 seconds)
         do {
+            NSLog("MARKERS MonitoringManager: Attempting to start monitoring...")
+            NSLog("MARKERS MonitoringManager: Activity name: %@", activityName.rawValue)
+            let startHour = schedule.intervalStart.hour ?? 0
+            let startMin = schedule.intervalStart.minute ?? 0
+            let endHour = schedule.intervalEnd.hour ?? 23
+            let endMin = schedule.intervalEnd.minute ?? 59
+            NSLog("MARKERS MonitoringManager: Schedule: %02d:%02d to %02d:%02d, repeats: %@", 
+                  startHour, startMin, endHour, endMin, schedule.repeats ? "YES" : "NO")
             try center.startMonitoring(activityName, during: schedule, events: events)
-            #if DEBUG
-            NSLog("MonitoringManager: Started monitoring with %d events", events.count)
-            #endif
+            NSLog("MARKERS MonitoringManager: ✅✅✅ SUCCESS - Started monitoring with %d events", events.count)
+            NSLog("MARKERS MonitoringManager: ⚠️ NOTE: Extension will be invoked when interval starts or threshold is reached")
+            NSLog("MARKERS MonitoringManager: ⚠️ Look for: EXTENSION DeviceActivityMonitorExtension logs in console")
+            fflush(stdout)
         } catch {
-            #if DEBUG
-            NSLog("MonitoringManager: Failed to start monitoring: %@", error.localizedDescription)
-            #endif
+            NSLog("MARKERS MonitoringManager: ❌❌❌ FAILED to start monitoring: %@", error.localizedDescription)
+            NSLog("MARKERS MonitoringManager: Error details: %@", String(describing: error))
+            fflush(stdout)
         }
     }
     
     /// Debug monitoring function - starts monitoring in 1 minute, ends in 20 minutes
+    /// This is a minimal test to verify extension is being invoked
     func startDebugMonitoring() async {
         let center = DeviceActivityCenter()
+        
+        // Log the authorization status just to be sure
+        let status = AuthorizationCenter.shared.authorizationStatus
+        NSLog("MARKERS MonitoringManager: FamilyControls status = %d", status.rawValue)
         
         let now = Date()
         let calendar = Calendar.current
@@ -206,14 +284,15 @@ class MonitoringManager {
         let activityName = DeviceActivityName("PAC.DebugActivity")
         
         do {
+            NSLog("MARKERS MonitoringManager: About to call startMonitoring...")
             try center.startMonitoring(activityName, during: schedule)
-            #if DEBUG
-            NSLog("MonitoringManager: Started debug monitoring")
-            #endif
+            NSLog("MARKERS MonitoringManager: ✅ started debug monitoring")
+            print("MARKERS MonitoringManager: ✅ started debug monitoring")
+            fflush(stdout)
         } catch {
-            #if DEBUG
-            NSLog("MonitoringManager: Failed debug monitoring: %@", error.localizedDescription)
-            #endif
+            NSLog("MARKERS MonitoringManager: ❌ failed debug monitoring: %@", error.localizedDescription)
+            print("MARKERS MonitoringManager: ❌ failed debug monitoring: \(error.localizedDescription)")
+            fflush(stdout)
         }
     }
     
@@ -248,12 +327,16 @@ class MonitoringManager {
     
     /// Stop monitoring
     func stopMonitoring() {
+        NSLog("MARKERS MonitoringManager: 🛑 Stopping monitoring before reset")
+        fflush(stdout)
         center.stopMonitoring([activityName])
+        NSLog("MARKERS MonitoringManager: ✅ Monitoring stopped")
+        fflush(stdout)
     }
     
     /// Store FamilyActivitySelection in App Groups for Monitor Extension to read
     private func storeSelectionInAppGroups(selection: FamilyActivitySelection) {
-        let appGroupIdentifier = "group.com.payattentionclub.app"
+        let appGroupIdentifier = "group.com.payattentionclub2.0.app"
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return
         }

@@ -4,7 +4,7 @@
 
 - [ ] All files added to correct targets
 - [ ] App Group capability enabled for both targets
-- [ ] App Group name matches: `group.com.payattentionclub.app`
+- [ ] App Group name matches: `group.com.payattentionclub2.0.app`
 - [ ] Deployment target is iOS 16.0+
 - [ ] DeviceActivityMonitorExtension target exists and is active
 

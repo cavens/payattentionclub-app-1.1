@@ -15,7 +15,14 @@ struct LoadingView: View {
         }
         .onAppear {
             // Finish initialization after UI has rendered
+            // This allows the logo to appear immediately
+            NSLog("SYNC LoadingView: 🎬 onAppear called, calling finishInitialization()")
+            print("SYNC LoadingView: 🎬 onAppear called, calling finishInitialization()")
+            fflush(stdout)
             model.finishInitialization()
+            NSLog("SYNC LoadingView: ✅ finishInitialization() call completed")
+            print("SYNC LoadingView: ✅ finishInitialization() call completed")
+            fflush(stdout)
         }
     }
 }

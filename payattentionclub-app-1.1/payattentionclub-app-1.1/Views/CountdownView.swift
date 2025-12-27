@@ -3,12 +3,6 @@ import SwiftUI
 struct CountdownView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var model: CountdownModel
-    @State private var showDevMenu = false
-    
-    /// Only show dev menu in staging mode
-    private var canShowDevMenu: Bool {
-        AppConfig.isTestMode
-    }
     
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -25,26 +19,17 @@ struct CountdownView: View {
                 .font(.system(size: 32, weight: .bold, design: .monospaced))
                 TimeUnit(value: components.seconds, label: "S")
             }
-            .contentShape(Rectangle()) // Make entire area tappable
-            .onTapGesture(count: 3) {
-                if canShowDevMenu {
-                    showDevMenu = true
+                .onChange(of: scenePhase) { newPhase in
+                    if newPhase == .active {
+                        // one-shot resync: nudge model so we re-render immediately
+                        // (TimelineView will tick anyway, this just snaps after resume)
+                        model.resync()
+                    }
                 }
-            }
-            .onChange(of: scenePhase) { newPhase in
-                if newPhase == .active {
-                    // one-shot resync: nudge model so we re-render immediately
-                    // (TimelineView will tick anyway, this just snaps after resume)
-                    model.resync()
-                }
-            }
         }
         // Optional: also listen to model.nowSnapshot to trigger an immediate refresh
         // in case TimelineView coalesces; usually not necessary, but harmless:
         .id(model.nowSnapshot.timeIntervalSince1970.rounded())
-        .sheet(isPresented: $showDevMenu) {
-            DevMenuView()
-        }
     }
     
     private func format(deadline: Date, now: Date) -> (days: Int, hours: Int, minutes: Int, seconds: Int) {

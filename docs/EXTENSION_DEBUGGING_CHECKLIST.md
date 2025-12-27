@@ -124,12 +124,12 @@ log stream --device "Your iPhone" --predicate 'process == "DeviceActivityMonitor
 
 **Verify `DeviceActivityMonitorExtension.entitlements` contains:**
 - ✅ `com.apple.developer.family-controls` = `true`
-- ✅ `com.apple.security.application-groups` = `["group.com.payattentionclub.app"]`
+- ✅ `com.apple.security.application-groups` = `["group.com.payattentionclub2.0.app"]`
 - ✅ `com.apple.security.network.client` = `true` (if needed)
 
 **Verify main app entitlements also have:**
 - ✅ `com.apple.developer.family-controls` = `true`
-- ✅ `com.apple.security.application-groups` = `["group.com.payattentionclub.app"]`
+- ✅ `com.apple.security.application-groups` = `["group.com.payattentionclub2.0.app"]`
 
 ---
 
@@ -144,7 +144,7 @@ Task {
     try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
     
     // Check if extension has written anything to App Group
-    if let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub.app") {
+    if let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub2.0.app") {
         let allKeys = userDefaults.dictionaryRepresentation().keys
         let extensionKeys = allKeys.filter { $0.hasPrefix("monitorIntervalStart_") }
         NSLog("TEST: Extension keys found: \(extensionKeys.count)")

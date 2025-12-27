@@ -10,7 +10,6 @@ struct AuthorizationView: View {
     @State private var isLockingIn = false
     @State private var lockInError: String?
     @State private var isPresentingPaymentSheet = false
-    @State private var isLoadingAmount = true
     
     var body: some View {
         NavigationView {
@@ -22,14 +21,9 @@ struct AuthorizationView: View {
                         .font(.title2)
                         .fontWeight(.semibold)
                     
-                    if isLoadingAmount {
-                        ProgressView()
-                            .frame(height: 52)
-                    } else {
-                        Text("$\(calculatedAmount, specifier: "%.2f")")
-                            .font(.system(size: 44, weight: .bold))
-                            .foregroundColor(.pink)
-                    }
+                    Text("$\(calculatedAmount, specifier: "%.2f")")
+                        .font(.system(size: 44, weight: .bold))
+                        .foregroundColor(.pink)
                     
                     Text("""
 We save your card with Stripe today (Setup Intent) so the weekly settlement can run automatically:
@@ -132,12 +126,9 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
             }
             .navigationTitle("Authorization")
             .navigationBarTitleDisplayMode(.inline)
-            .task {
-                // Fetch authorization amount from backend (single source of truth)
-                isLoadingAmount = true
-                calculatedAmount = await model.fetchAuthorizationAmount()
+            .onAppear {
+                calculatedAmount = model.calculateAuthorizationAmount()
                 model.authorizationAmount = calculatedAmount
-                isLoadingAmount = false
             }
         }
     }
@@ -257,11 +248,29 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
             
             // Store commitment deadline (next Monday noon EST)
             let deadline = await MainActor.run { model.getNextMondayNoonEST() }
+            NSLog("RESET AuthorizationView: 🔒 Storing commitment deadline: %@", String(describing: deadline))
+            print("RESET AuthorizationView: 🔒 Storing commitment deadline: \(deadline)")
+            fflush(stdout)
             UsageTracker.shared.storeCommitmentDeadline(deadline)
+            
+            // Verify deadline was stored
+            let storedDeadline = UsageTracker.shared.getCommitmentDeadline()
+            if let storedDeadline = storedDeadline {
+                NSLog("RESET AuthorizationView: ✅ Deadline stored successfully: %@", String(describing: storedDeadline))
+                print("RESET AuthorizationView: ✅ Deadline stored successfully: \(storedDeadline)")
+                fflush(stdout)
+            } else {
+                NSLog("RESET AuthorizationView: ❌ ERROR: Deadline was NOT stored!")
+                print("RESET AuthorizationView: ❌ ERROR: Deadline was NOT stored!")
+                fflush(stdout)
+            }
         
         // Ensure thresholds are prepared before starting
         if #available(iOS 16.0, *) {
+            // Check if thresholds are ready, if not prepare them now
             if !MonitoringManager.shared.thresholdsAreReady(for: model.selectedApps) {
+                NSLog("MARKERS AuthorizationView: ⚠️ Thresholds not ready, preparing now...")
+                fflush(stdout)
                 await MonitoringManager.shared.prepareThresholds(
                     selection: model.selectedApps,
                     limitMinutes: Int(model.limitMinutes)

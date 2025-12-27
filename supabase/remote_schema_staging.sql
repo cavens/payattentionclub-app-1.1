@@ -45,7 +45,7 @@ DECLARE
 BEGIN
   -- Make HTTP POST request to weekly-close Edge Function
   SELECT net.http_post(
-    'https://auqujbppoytkeqdsgrbl.supabase.co/functions/v1/weekly-close',  -- Staging project URL
+    'https://whdftvcrtrsnefhprebj.supabase.co/functions/v1/weekly-close',  -- Your project URL
     jsonb_build_object(
       'Content-Type', 'application/json',
       'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key', true)

@@ -14,7 +14,7 @@ Users set a daily screen-time limit, commit a monetary penalty for exceeding it,
 - iOS 16.0+
 - SwiftUI + Combine
 - DeviceActivity + FamilyControls
-- App Group: `group.com.payattentionclub.app`
+- App Group: `group.com.payattentionclub2.0.app`
 - Extensions:
   - DeviceActivityMonitorExtension (data bridge)
   - DeviceActivityReportExtension (view-only, sandboxed)
@@ -104,7 +104,7 @@ On button press:
 
 ## Data Persistence
 
-All stored in `UserDefaults(suiteName: "group.com.payattentionclub.app")`:
+All stored in `UserDefaults(suiteName: "group.com.payattentionclub2.0.app")`:
 
 | Key | Description | Writer | Reader |
 |-----|-------------|--------|--------|

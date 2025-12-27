@@ -5,6 +5,7 @@
 project_id = "payattentionclub-app-1.1"
 
 [functions]
+extra_paths = ["./functions/_shared"]
 
 [api]
 enabled = true

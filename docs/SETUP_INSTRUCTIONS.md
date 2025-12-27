@@ -21,7 +21,7 @@
 2. Go to **Signing & Capabilities** tab
 3. Click **+ Capability**
 4. Add **App Groups**
-5. Add group: `group.com.payattentionclub.app`
+5. Add group: `group.com.payattentionclub2.0.app`
 6. ✅ Check the box to enable it
 
 ## Step 3: Add DeviceActivityMonitorExtension
@@ -32,7 +32,7 @@
 4. **IMPORTANT**: When prompted, choose **Activate** to add it to the scheme
 5. In the extension target's **Signing & Capabilities**:
    - Add **App Groups** capability
-   - Add the same group: `group.com.payattentionclub.app`
+   - Add the same group: `group.com.payattentionclub2.0.app`
    - ✅ Check the box
 
 ## Step 4: Add Required Frameworks
@@ -110,7 +110,7 @@ Verify it has:
 
 ### App Group Not Working
 - Verify all targets have App Groups capability enabled
-- Verify group name matches exactly: `group.com.payattentionclub.app`
+- Verify group name matches exactly: `group.com.payattentionclub2.0.app`
 - Check that UserDefaults(suiteName:) returns non-nil
 
 ### Monitor Extension Not Firing

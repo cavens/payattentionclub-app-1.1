@@ -81,7 +81,12 @@ process_env() {
         
     elif [ "$ACTION" = "clear" ]; then
         echo "🗑️  Clearing test user from $env..."
-        echo "Email: pythwk8m57@privaterelay.appleid.com"
+        echo "Email: m28rkdzs5g@privaterelay.appleid.com"
+        echo ""
+        echo "This will delete:"
+        echo "  - Stripe customer and payment methods"
+        echo "  - All database records (payments, commitments, etc.)"
+        echo "  - User from auth.users and public.users"
         echo ""
         
         export SUPABASE_URL="$supabase_url"
@@ -91,7 +96,7 @@ process_env() {
         deno run --allow-net --allow-env --allow-read \
             supabase/tests/reset_my_user.ts \
             --force \
-            pythwk8m57@privaterelay.appleid.com 2>&1 || {
+            m28rkdzs5g@privaterelay.appleid.com 2>&1 || {
             echo "⚠️  User not found or already deleted"
         }
     else

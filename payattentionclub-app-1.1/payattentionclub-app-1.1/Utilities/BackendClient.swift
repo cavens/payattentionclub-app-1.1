@@ -801,6 +801,29 @@ class BackendClient {
             throw BackendError.serverError("Failed to preview max charge: \(error.localizedDescription)")
         }
     }
+    
+    /// Call admin-close-week-now edge function to trigger weekly settlement immediately
+    /// Only works for test users (is_test_user = true)
+    /// Calls: admin-close-week-now Edge Function
+    nonisolated func callAdminCloseWeekNow() async throws -> AdminCloseWeekResponse {
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
+        
+        do {
+            let response: AdminCloseWeekResponse = try await supabase.functions.invoke(
+                "admin-close-week-now",
+                options: FunctionInvokeOptions(
+                    method: .post
+                )
+            )
+            NSLog("ADMIN BackendClient: ✅ Admin close week response: ok=\(response.ok), message=\(response.message)")
+            return response
+        } catch {
+            NSLog("ADMIN BackendClient: ❌ Failed to call admin-close-week-now: \(error)")
+            throw BackendError.serverError("Failed to trigger weekly close: \(error.localizedDescription)")
+        }
+    }
 
 }
 
@@ -964,5 +987,21 @@ struct WeekStatusResponse: Codable, Sendable {
         reconciliationDetectedAt = try container.decodeIfPresent(String.self, forKey: .reconciliationDetectedAt)
         weekGraceExpiresAt = try container.decodeIfPresent(String.self, forKey: .weekGraceExpiresAt)
         weekEndDate = try container.decodeIfPresent(String.self, forKey: .weekEndDate)
+    }
+}
+
+// MARK: - Admin Close Week Response Model
+
+struct AdminCloseWeekResponse: Codable, Sendable {
+    let ok: Bool
+    let message: String
+    let triggeredBy: String?
+    // Note: result field is ignored since we don't need to decode the nested weekly-close response
+    
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case message
+        case triggeredBy = "triggered_by"
+        // result is intentionally omitted - we don't need it
     }
 }

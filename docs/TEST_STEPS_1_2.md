@@ -72,7 +72,7 @@ To test that clearing works:
 
 ### Commitment ID is nil when retrieved?
 - Make sure you're calling `getCommitmentId()` AFTER creating the commitment
-- Check that App Group identifier matches: `group.com.payattentionclub.app`
+- Check that App Group identifier matches: `group.com.payattentionclub2.0.app`
 
 ## Next Steps After Testing
 

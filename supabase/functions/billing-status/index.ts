@@ -96,31 +96,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 4) Check if user already has a card
-    const paymentMethods = await stripe.paymentMethods.list({
-      customer: stripeCustomerId,
-      type: "card",
-      limit: 1
-    });
-
-    const hasPaymentMethod = paymentMethods.data.length > 0;
-
-    // If card exists, update has_active_payment_method = true
-    if (hasPaymentMethod && !dbUser.has_active_payment_method) {
-      const { error: updatePmFlagError } = await supabase
-        .from("users")
-        .update({
-          has_active_payment_method: true
-        })
-        .eq("id", userId);
-
-      if (updatePmFlagError) {
-        console.error("Error updating has_active_payment_method:", updatePmFlagError);
-      }
-    }
-
-    // 5) If user already has a PM → return status only
-    if (hasPaymentMethod) {
+    // 4) Check database flag first (source of truth)
+    // IMPORTANT: We check the database flag first because it's only set to true
+    // when a SetupIntent is actually confirmed (via rapid-service Edge Function).
+    // Just having a payment method in Stripe doesn't mean payment setup is complete.
+    // If has_active_payment_method is true, user has already completed payment setup
+    if (dbUser.has_active_payment_method) {
       return new Response(JSON.stringify({
         has_payment_method: true,
         needs_setup_intent: false,
@@ -132,6 +113,46 @@ Deno.serve(async (req) => {
         },
         status: 200
       });
+    }
+
+    // 5) Database flag is false - check Stripe for confirmed SetupIntents
+    // Only consider payment setup complete if there's a confirmed SetupIntent.
+    // This handles edge cases where the database flag might be out of sync.
+    const setupIntents = await stripe.setupIntents.list({
+      customer: stripeCustomerId,
+      limit: 10
+    });
+
+    // Find a confirmed (succeeded) SetupIntent with a payment method attached
+    const confirmedSetupIntent = setupIntents.data.find(
+      (si) => si.status === "succeeded" && si.payment_method
+    );
+
+    // If we have a confirmed SetupIntent, update the database flag
+    if (confirmedSetupIntent) {
+      const { error: updatePmFlagError } = await supabase
+        .from("users")
+        .update({
+          has_active_payment_method: true
+        })
+        .eq("id", userId);
+
+      if (updatePmFlagError) {
+        console.error("Error updating has_active_payment_method:", updatePmFlagError);
+      } else {
+        // Return that payment is set up
+        return new Response(JSON.stringify({
+          has_payment_method: true,
+          needs_setup_intent: false,
+          setup_intent_client_secret: null,
+          stripe_customer_id: stripeCustomerId
+        }), {
+          headers: {
+            "Content-Type": "application/json"
+          },
+          status: 200
+        });
+      }
     }
 
     // 6) Else: create SetupIntent and return client_secret

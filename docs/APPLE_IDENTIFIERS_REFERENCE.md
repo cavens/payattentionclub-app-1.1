@@ -18,8 +18,8 @@ Use this checklist when rotating bundle IDs, App Groups, merchant IDs, URL schem
 ## 2. App Group Identifier
 | File | Reference |
 | --- | --- |
-| App + extension entitlements (`*.entitlements`) | `<string>group.com.payattentionclub.app</string>` |
-| Swift code (`AppModel`, `UsageTracker`, `MonitoringManager`, extensions, etc.) | `UserDefaults(suiteName: "group.com.payattentionclub.app")` |
+| App + extension entitlements (`*.entitlements`) | `<string>group.com.payattentionclub2.0.app</string>` |
+| Swift code (`AppModel`, `UsageTracker`, `MonitoringManager`, extensions, etc.) | `UserDefaults(suiteName: "group.com.payattentionclub2.0.app")` |
 | Docs (`ARCHITECTURE.md`, `SETUP_INSTRUCTIONS.md`, `EXTENSION_*`) | Reference same string |
 
 **If changed:** update entitlements + every `UserDefaults(suiteName:)` string, add group to both targets in Apple portal, regenerate provisioning profiles.
@@ -29,8 +29,8 @@ Use this checklist when rotating bundle IDs, App Groups, merchant IDs, URL schem
 ## 3. Merchant ID (Apple Pay / Stripe)
 | File | Identifier |
 | --- | --- |
-| Entitlements | `<string>merchant.com.payattentionclub.app</string>` |
-| `StripePaymentManager.swift` | `let merchantId = "merchant.com.payattentionclub.app"` |
+| Entitlements | `<string>merchant.com.payattentionclub2.0.app</string>` |
+| `StripePaymentManager.swift` | `let merchantId = "merchant.com.payattentionclub2.0.app"` |
 
 **If changed:** update both locations and recreate Apple Pay certificates for the new merchant ID.
 
@@ -39,9 +39,9 @@ Use this checklist when rotating bundle IDs, App Groups, merchant IDs, URL schem
 ## 4. Logging / Subsystem IDs
 | File | Identifier |
 | --- | --- |
-| `UsageTracker.swift` | `Logger(subsystem: "com.payattentionclub.app", ...)` |
+| `UsageTracker.swift` | `Logger(subsystem: "com.payattentionclub2.0.app", ...)` |
 | `SyncLogger`, logging docs | `com.payattentionclub.payattentionclub-app-1-1` |
-| `UsageSyncManager.swift` queue label | `"com.payattentionclub.sync"` |
+| `UsageSyncManager.swift` queue label | `"com.payattentionclub2.0.app.sync"` |
 
 Mostly for log filtering; update if bundle ID changes to keep Console filters aligned.
 
@@ -60,7 +60,7 @@ Register any new scheme in App Store Connect and update the handler.
 ## 6. DeviceActivity / FamilyControls References
 Docs such as `EXTENSION_DEBUGGING_*`, `EXTENSION_ISSUE_FOR_CHATGPT.md`, and troubleshooting guides explicitly reference:
 - Bundle ID `com.payattentionclub.payattentionclub-app-1-1.DeviceActivityMonitorExtension`
-- App Group `group.com.payattentionclub.app`
+- App Group `group.com.payattentionclub2.0.app`
 
 Update these docs if you rename the targets so setup steps stay accurate.
 

@@ -27,7 +27,7 @@ class StripePaymentManager {
             throw StripePaymentError.setupFailed("Apple Pay is not available on this device")
         }
         
-        let merchantId = "merchant.com.payattentionclub.app"
+        let merchantId = "merchant.com.payattentionclub2.0.app"
         let countryCode = Locale.current.region?.identifier ?? "US"
         
         // Create payment request
@@ -90,7 +90,7 @@ class StripePaymentManager {
         }
         
         // Check Apple Pay availability
-        let merchantId = "merchant.com.payattentionclub.app"
+        let merchantId = "merchant.com.payattentionclub2.0.app"
         let canUseApplePay = PKPaymentAuthorizationController.canMakePayments(usingNetworks: [.visa, .masterCard, .amex])
         let hasApplePayCapability = PKPaymentAuthorizationController.canMakePayments()
         
@@ -196,19 +196,44 @@ private class ApplePayDelegate: NSObject, PKPaymentAuthorizationControllerDelega
         
         // Extract payment token data and convert using Stripe SDK
         NSLog("STRIPE ApplePayDelegate: Converting Apple Pay token to Stripe PaymentMethod...")
+        NSLog("STRIPE ApplePayDelegate: Using publishable key: \(StripeConfig.publishableKey.prefix(20))...")
+        NSLog("STRIPE ApplePayDelegate: Merchant ID from request: merchant.com.payattentionclub2.0.app")
         
         // Use Stripe's SDK to create a PaymentMethod from Apple Pay payment
         // This converts the Apple Pay token to a Stripe PaymentMethod
         Task {
             do {
                 // Create PaymentMethod from Apple Pay using Stripe SDK
+                // Create a fresh STPAPIClient instance to ensure clean configuration
+                let apiClient = STPAPIClient(publishableKey: StripeConfig.publishableKey)
+                
+                NSLog("STRIPE ApplePayDelegate: Created STPAPIClient with publishable key")
+                NSLog("STRIPE ApplePayDelegate: PKPayment details:")
+                NSLog("STRIPE ApplePayDelegate:   - Token paymentData length: \(payment.token.paymentData.count) bytes")
+                NSLog("STRIPE ApplePayDelegate:   - Token transactionIdentifier: \(payment.token.transactionIdentifier)")
+                NSLog("STRIPE ApplePayDelegate:   - Payment method type: \(payment.token.paymentMethod.type.rawValue)")
+                
+                let merchantId = "merchant.com.payattentionclub2.0.app"
+                NSLog("STRIPE ApplePayDelegate: Expected merchant ID: \(merchantId)")
+                
                 let paymentMethod = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<STPPaymentMethod, Error>) in
-                    STPAPIClient.shared.createPaymentMethod(with: payment) { paymentMethod, error in
+                    NSLog("STRIPE ApplePayDelegate: Calling STPAPIClient.createPaymentMethod with PKPayment...")
+                    NSLog("STRIPE ApplePayDelegate: Note: This calls /v1/tokens internally, which requires certificate decryption")
+                    
+                    apiClient.createPaymentMethod(with: payment) { paymentMethod, error in
                         if let error = error {
+                            NSLog("STRIPE ApplePayDelegate: ❌ createPaymentMethod error: \(error.localizedDescription)")
+                            if let nsError = error as NSError? {
+                                NSLog("STRIPE ApplePayDelegate: Error domain: \(nsError.domain)")
+                                NSLog("STRIPE ApplePayDelegate: Error code: \(nsError.code)")
+                                NSLog("STRIPE ApplePayDelegate: Error userInfo: \(nsError.userInfo)")
+                            }
                             continuation.resume(throwing: error)
                         } else if let paymentMethod = paymentMethod {
+                            NSLog("STRIPE ApplePayDelegate: ✅ PaymentMethod created successfully")
                             continuation.resume(returning: paymentMethod)
                         } else {
+                            NSLog("STRIPE ApplePayDelegate: ❌ No payment method returned (nil)")
                             continuation.resume(throwing: StripePaymentError.setupFailed("No payment method returned"))
                         }
                     }

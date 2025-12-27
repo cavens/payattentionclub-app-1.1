@@ -160,7 +160,7 @@ func storeAuthTokenInAppGroup() async {
             return
         }
         
-        guard let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub.app") else {
+        guard let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub2.0.app") else {
             NSLog("EXTENSION BackendClient: Failed to access App Group")
             return
         }
@@ -198,7 +198,7 @@ import Foundation
 class ExtensionBackendClient {
     static let shared = ExtensionBackendClient()
     
-    private let appGroupIdentifier = "group.com.payattentionclub.app"
+    private let appGroupIdentifier = "group.com.payattentionclub2.0.app"
     private let supabaseURL = "https://whdftvcrtrsnefhprebj.supabase.co"
     private let supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndoZGZ0dmNydHJzbmVmaHByZWJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDc0NjUsImV4cCI6MjA3ODYyMzQ2NX0.T1Vz087udE-PywR5KfjXqDzORHSIggXw0uCu8zYGIxE"
     
