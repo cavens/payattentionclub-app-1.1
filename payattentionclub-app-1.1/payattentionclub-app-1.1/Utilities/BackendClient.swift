@@ -769,10 +769,22 @@ class BackendClient {
         dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
         let deadlineDateString = dateFormatter.string(from: deadlineDate)
         
+        // Extract app and category counts from FamilyActivitySelection
+        // Note: We can't extract actual bundle IDs from opaque tokens, but we can count them
+        // The backend counts array lengths, so we create arrays with placeholder values
+        // to represent the correct count
+        let appCount = selectedApps.applicationTokens.count
+        let categoryCount = selectedApps.categoryTokens.count
+        
+        // Create placeholder arrays with the correct counts
+        // The backend only uses the array length, not the actual values
+        let appBundleIds = Array(repeating: "placeholder", count: appCount)
+        let categories = Array(repeating: "placeholder", count: categoryCount)
+        
         // Create apps_to_limit structure
         let appsToLimit = AppsToLimit(
-            appBundleIds: [],
-            categories: []
+            appBundleIds: appBundleIds,
+            categories: categories
         )
         
         struct PreviewParams: Encodable, Sendable {
@@ -789,15 +801,19 @@ class BackendClient {
             p_apps_to_limit: appsToLimit
         )
         
-        NSLog("PREVIEW BackendClient: Calling rpc_preview_max_charge...")
+        NSLog("PREVIEW BackendClient: Calling rpc_preview_max_charge with params: deadline=\(deadlineDateString), limit=\(limitMinutes)min, penalty=\(penaltyPerMinuteCents)cents, apps=\(appCount), categories=\(categoryCount)")
         
         do {
             let builder = try supabase.rpc("rpc_preview_max_charge", params: params)
             let response: PostgrestResponse<MaxChargePreviewResponse> = try await builder.execute()
-            NSLog("PREVIEW BackendClient: ✅ Got max charge preview: \(response.value.maxChargeCents) cents")
+            NSLog("PREVIEW BackendClient: ✅ Got max charge preview: \(response.value.maxChargeCents) cents ($\(response.value.maxChargeDollars))")
             return response.value
         } catch {
             NSLog("PREVIEW BackendClient: ❌ Failed to preview max charge: \(error)")
+            NSLog("PREVIEW BackendClient: Error details: \(error.localizedDescription)")
+            if let nsError = error as NSError? {
+                NSLog("PREVIEW BackendClient: Error domain: \(nsError.domain), code: \(nsError.code), userInfo: \(nsError.userInfo)")
+            }
             throw BackendError.serverError("Failed to preview max charge: \(error.localizedDescription)")
         }
     }

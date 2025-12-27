@@ -126,8 +126,8 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
             }
             .navigationTitle("Authorization")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                calculatedAmount = model.calculateAuthorizationAmount()
+            .task {
+                calculatedAmount = await model.fetchAuthorizationAmount()
                 model.authorizationAmount = calculatedAmount
             }
         }

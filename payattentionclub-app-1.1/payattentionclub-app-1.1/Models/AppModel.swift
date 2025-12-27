@@ -215,24 +215,37 @@ final class AppModel: ObservableObject {
     
     // MARK: - Authorization Calculation
     
-    /// Calculate authorization amount (mirrors rpc_create_commitment max_charge_cents)
-    func calculateAuthorizationAmount() -> Double {
-        let now = Date()
-        let deadline = getNextMondayNoonEST()
-        let minutesRemaining = max(0, deadline.timeIntervalSince(now) / 60.0)
-        
-        let appCount = Double(selectedApps.applicationTokens.count + selectedApps.categoryTokens.count)
-        let riskFactor = 1.0 + 0.1 * appCount
-        
-        let potentialOverage = max(0, minutesRemaining - limitMinutes)
-        let cents = potentialOverage * (penaltyPerMinute * 100.0) * riskFactor
-        let roundedCents: Double
-        if minutesRemaining > 0 {
-            roundedCents = max(500, floor(max(0, cents)))
-        } else {
-            roundedCents = 0
+    /// Fetch authorization amount from backend (single source of truth)
+    /// This calls the same calculation function that rpc_create_commitment uses.
+    func fetchAuthorizationAmount() async -> Double {
+        do {
+            let deadline = getNextMondayNoonEST()
+            let response = try await BackendClient.shared.previewMaxCharge(
+                deadlineDate: deadline,
+                limitMinutes: Int(limitMinutes),
+                penaltyPerMinuteCents: Int(penaltyPerMinute * 100),
+                selectedApps: selectedApps
+            )
+            return response.maxChargeDollars
+        } catch {
+            #if DEBUG
+            NSLog("AUTH AppModel: ❌ Failed to fetch authorization amount: \(error)")
+            NSLog("AUTH AppModel: Error details: \(error.localizedDescription)")
+            if let nsError = error as NSError? {
+                NSLog("AUTH AppModel: Error domain: \(nsError.domain), code: \(nsError.code)")
+            }
+            #endif
+            // Fallback to minimum if backend call fails
+            return 5.0
         }
-        return roundedCents / 100.0
+    }
+    
+    /// Local fallback calculation (used only if backend is unreachable)
+    /// DEPRECATED: Use fetchAuthorizationAmount() instead
+    func calculateAuthorizationAmount() -> Double {
+        // Simplified fallback - just return minimum $5 or estimate
+        // The real calculation is in the backend
+        return 5.0
     }
     
     // MARK: - Date Utilities
