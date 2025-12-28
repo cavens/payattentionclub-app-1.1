@@ -77,6 +77,8 @@ struct BulletinView: View {
             }
             .navigationTitle("Bulletin")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Color(red: 226/255, green: 204/255, blue: 205/255))
+            .scrollContentBackground(.hidden)
             .withLogoutButton()
             .onAppear {
                 // Update usage when view appears to show current values

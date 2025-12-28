@@ -9,7 +9,8 @@ CREATE OR REPLACE FUNCTION public.rpc_create_commitment(
   p_deadline_date date,
   p_limit_minutes integer,
   p_penalty_per_minute_cents integer,
-  p_apps_to_limit jsonb
+  p_apps_to_limit jsonb,
+  p_saved_payment_method_id text DEFAULT NULL
 )
 RETURNS json
 LANGUAGE plpgsql
@@ -55,7 +56,7 @@ BEGIN
     v_app_count
   );
 
-  -- 6) Ensure weekly_pools entry exists
+  -- 6) Ensure weekly_pools entry exists (create or update to open if exists)
   INSERT INTO public.weekly_pools (
     week_start_date,
     week_end_date,
@@ -68,7 +69,9 @@ BEGIN
     0,
     'open'
   )
-  ON CONFLICT (week_start_date) DO NOTHING;
+  ON CONFLICT (week_start_date) DO UPDATE SET
+    status = 'open',
+    week_end_date = p_deadline_date;
 
   -- 7) Create commitment
   INSERT INTO public.commitments (
@@ -83,6 +86,7 @@ BEGIN
     monitoring_revoked_at,
     autocharge_consent_at,
     max_charge_cents,
+    saved_payment_method_id,
     created_at
   )
   values (
@@ -97,6 +101,7 @@ BEGIN
     null,
     now(),
     v_max_charge_cents,
+    p_saved_payment_method_id,
     now()
   )
   RETURNING id INTO v_commitment_id;

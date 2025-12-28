@@ -15,11 +15,11 @@ class StripePaymentManager {
     /// Present Apple Pay directly using native PKPaymentAuthorizationController
     /// This bypasses Stripe's PaymentSheet and shows only Apple's native payment UI
     /// - Parameters:
-    ///   - clientSecret: The SetupIntent client secret from backend
+    ///   - clientSecret: The PaymentIntent client secret from backend
     ///   - amount: The authorization amount to show in Apple Pay (in dollars)
-    /// - Returns: `true` if payment setup completed successfully, `false` if cancelled
+    /// - Returns: The saved payment method ID (from setup_future_usage)
     /// - Throws: Error if payment setup failed
-    func presentApplePay(clientSecret: String, amount: Double) async throws -> Bool {
+    func presentApplePay(clientSecret: String, amount: Double) async throws -> String {
         NSLog("STRIPE StripePaymentManager: Presenting direct Apple Pay (bypassing PaymentSheet)")
         
         // Check Apple Pay availability
@@ -38,7 +38,7 @@ class StripePaymentManager {
         request.countryCode = countryCode
         request.currencyCode = "USD"
         
-        // For SetupIntent, we show the authorization amount (not charging, just authorizing)
+        // For PaymentIntent, we show the authorization amount (will be cancelled immediately after confirmation)
         // Round amount to 2 decimal places for USD (Apple Pay requirement)
         let roundedAmount = round(amount * 100) / 100.0
         let amountInCents = NSDecimalNumber(value: roundedAmount)
@@ -182,10 +182,10 @@ class StripePaymentManager {
 /// Delegate to handle PKPaymentAuthorizationController callbacks
 private class ApplePayDelegate: NSObject, PKPaymentAuthorizationControllerDelegate {
     let clientSecret: String
-    let continuation: CheckedContinuation<Bool, Error>
+    let continuation: CheckedContinuation<String, Error>
     var hasAuthorized = false
     
-    init(clientSecret: String, continuation: CheckedContinuation<Bool, Error>) {
+    init(clientSecret: String, continuation: CheckedContinuation<String, Error>) {
         self.clientSecret = clientSecret
         self.continuation = continuation
     }
@@ -241,27 +241,20 @@ private class ApplePayDelegate: NSObject, PKPaymentAuthorizationControllerDelega
                 
                 NSLog("STRIPE ApplePayDelegate: ✅ PaymentMethod created: \(paymentMethod.stripeId)")
                 
-                // Send PaymentMethod ID to backend to confirm SetupIntent
-                let success = try await BackendClient.shared.confirmSetupIntentWithApplePay(
+                // Send PaymentMethod ID to backend to confirm PaymentIntent and cancel it
+                let savedPaymentMethodId = try await BackendClient.shared.confirmPaymentIntentAndCancel(
                     clientSecret: clientSecret,
                     paymentMethodId: paymentMethod.stripeId
                 )
                 
-                if success {
-                    NSLog("STRIPE ApplePayDelegate: ✅ SetupIntent confirmed successfully")
-                    await MainActor.run {
-                        completion(PKPaymentAuthorizationResult(status: .success, errors: nil))
-                    }
-                    continuation.resume(returning: true)
-                } else {
-                    NSLog("STRIPE ApplePayDelegate: ❌ SetupIntent confirmation failed")
-                    await MainActor.run {
-                        completion(PKPaymentAuthorizationResult(status: .failure, errors: nil))
-                    }
-                    continuation.resume(throwing: StripePaymentError.setupFailed("Failed to confirm payment setup"))
+                NSLog("STRIPE ApplePayDelegate: ✅ PaymentIntent confirmed and cancelled")
+                NSLog("STRIPE ApplePayDelegate: ✅ Saved payment method ID: \(savedPaymentMethodId)")
+                await MainActor.run {
+                    completion(PKPaymentAuthorizationResult(status: .success, errors: nil))
                 }
+                continuation.resume(returning: savedPaymentMethodId)
             } catch {
-                NSLog("STRIPE ApplePayDelegate: ❌ Error confirming SetupIntent: \(error)")
+                NSLog("STRIPE ApplePayDelegate: ❌ Error confirming PaymentIntent: \(error)")
                 await MainActor.run {
                     completion(PKPaymentAuthorizationResult(status: .failure, errors: nil))
                 }
@@ -274,9 +267,9 @@ private class ApplePayDelegate: NSObject, PKPaymentAuthorizationControllerDelega
         NSLog("STRIPE ApplePayDelegate: Payment authorization finished (authorized: \(hasAuthorized))")
         controller.dismiss()
         
-        // If user cancelled (didn't authorize), resume with false
+        // If user cancelled (didn't authorize), resume with error
         if !hasAuthorized {
-            continuation.resume(returning: false)
+            continuation.resume(throwing: StripePaymentError.setupFailed("User cancelled payment"))
         }
     }
 }

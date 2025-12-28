@@ -62,13 +62,28 @@ async function createTestCommitment(options: {
   weekEndDate: string;
   savedPaymentMethodId?: string | null;
 }): Promise<string> {
-  const maxChargeCents = options.limitMinutes * options.penaltyPerMinuteCents * 7;
+  // Use the real RPC function to get accurate max_charge_cents (same as production)
+  const { data: previewData, error: previewError } = await supabase.rpc(
+    "rpc_preview_max_charge",
+    {
+      p_deadline_date: options.weekEndDate,
+      p_limit_minutes: options.limitMinutes,
+      p_penalty_per_minute_cents: options.penaltyPerMinuteCents,
+      p_apps_to_limit: { app_bundle_ids: ["com.apple.Safari"], categories: [] }
+    }
+  );
+  if (previewError) {
+    throw new Error(`Failed to preview max charge: ${previewError.message}`);
+  }
+  const maxChargeCents = previewData.max_charge_cents;
 
   await supabase.from("weekly_pools").upsert({
     week_start_date: options.weekEndDate,
     week_end_date: options.weekEndDate,
     total_penalty_cents: 0,
     status: "open",
+  }, {
+    onConflict: "week_start_date",
   });
 
   const { data, error } = await supabase
@@ -142,28 +157,43 @@ async function createUserWeekPenalty(options: {
 /**
  * Simulate actual settlement (without Stripe).
  * Sets the database state as if settlement occurred.
+ * 
+ * @param options.truePenaltyAmount - The actual penalty amount (uncapped)
+ * @param options.authorizationAmount - The authorization amount (max charge cap)
+ * @param options.actualAmount - Deprecated: use truePenaltyAmount instead. Kept for backward compatibility.
  */
 async function simulateActualSettlement(options: {
   userId: string;
   weekEndDate: string;
-  actualAmount: number;
+  truePenaltyAmount?: number; // True penalty (uncapped)
+  authorizationAmount?: number; // Authorization cap
+  actualAmount?: number; // Deprecated: backward compatibility
 }): Promise<void> {
+  // Support both new and old API
+  const truePenalty = options.truePenaltyAmount ?? options.actualAmount ?? 0;
+  const authorization = options.authorizationAmount;
+  
+  // Charge amount is capped at authorization, but actual amount reflects true penalty
+  const chargedAmount = authorization !== undefined 
+    ? Math.min(truePenalty, authorization)
+    : truePenalty;
+  
   await supabase
     .from("user_week_penalties")
     .update({
       settlement_status: "charged_actual",
-      charged_amount_cents: options.actualAmount,
-      actual_amount_cents: options.actualAmount,
+      charged_amount_cents: chargedAmount, // Capped at authorization
+      actual_amount_cents: truePenalty, // True penalty (uncapped)
       charged_at: new Date().toISOString(),
     })
     .eq("user_id", options.userId)
     .eq("week_start_date", options.weekEndDate);
 
-  // Create payment record
+  // Create payment record (use charged amount, not true penalty)
   await supabase.from("payments").insert({
     user_id: options.userId,
     week_start_date: options.weekEndDate,
-    amount_cents: options.actualAmount,
+    amount_cents: chargedAmount, // Payment is the capped amount
     currency: "usd",
     stripe_payment_intent_id: `pi_test_actual_${Date.now()}`,
     status: "succeeded",
@@ -415,6 +445,69 @@ Deno.test("Settlement Actual - Actual amount less than worst case", async () => 
   });
 });
 
+Deno.test("Settlement Actual - Actual amount exceeds authorization is capped", async () => {
+  await withCleanup(async () => {
+    const deadline = getTestDeadlineDate();
+    
+    await ensureTestUserExists();
+    const commitmentId = await createTestCommitment({
+      userId: TEST_USER_ID,
+      limitMinutes: 1260, // 21 hours
+      penaltyPerMinuteCents: 10, // $0.10/min
+      weekEndDate: deadline,
+    });
 
+    // Get the actual max_charge_cents (authorization amount) that was calculated
+    const { data: commitment, error: commitmentError } = await supabase
+      .from("commitments")
+      .select("max_charge_cents")
+      .eq("id", commitmentId)
+      .single();
+    
+    if (commitmentError) throw new Error(`Failed to get commitment: ${commitmentError.message}`);
+    const authorizationAmount = commitment?.max_charge_cents ?? 0;
+    
+    if (authorizationAmount === 0) {
+      throw new Error("Authorization amount should not be 0");
+    }
+    
+    // Create usage that exceeds authorization
+    // e.g., if authorization is 7500 cents ($75), create 10000 cents ($100) in penalties
+    const actualPenaltyCents = authorizationAmount + 2500; // Exceeds by $25
+    
+    await createUserWeekPenalty({
+      userId: TEST_USER_ID,
+      weekStartDate: deadline,
+      totalPenaltyCents: actualPenaltyCents, // $100, but auth is $75
+    });
+
+    await simulateActualSettlement({
+      userId: TEST_USER_ID,
+      weekEndDate: deadline,
+      truePenaltyAmount: actualPenaltyCents, // True penalty (uncapped)
+      authorizationAmount: authorizationAmount, // Authorization cap
+    });
+
+    // Verify charge is CAPPED at authorization, not the full actual amount
+    const { data } = await supabase
+      .from("user_week_penalties")
+      .select("charged_amount_cents, actual_amount_cents, settlement_status")
+      .eq("user_id", TEST_USER_ID)
+      .eq("week_start_date", deadline)
+      .single();
+
+    assertEquals(
+      data?.charged_amount_cents,
+      authorizationAmount,
+      `Should cap charge at authorization (${authorizationAmount}), not actual (${actualPenaltyCents})`
+    );
+    assertEquals(
+      data?.actual_amount_cents,
+      actualPenaltyCents,
+      "Actual amount should still reflect the true penalty"
+    );
+    assertEquals(data?.settlement_status, "charged_actual", "Status should indicate actual charge");
+  });
+});
 
 

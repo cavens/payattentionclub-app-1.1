@@ -78,6 +78,7 @@ struct SetupView: View {
                             in: 30...2520, // 30 minutes to 42 hours (in minutes)
                             step: 15
                         )
+                        .tint(.black)
                         
                         HStack {
                             Text("30 min")
@@ -123,6 +124,7 @@ struct SetupView: View {
                             in: 0.0...1.0,
                             step: 0.001
                         )
+                        .tint(.black)
                         
                         HStack {
                             Text("$0.01")
@@ -232,6 +234,9 @@ struct SetupView: View {
             }
             .navigationTitle("Setup")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Color(red: 226/255, green: 204/255, blue: 205/255))
+            .scrollContentBackground(.hidden)
+            .scrollContentBackground(.hidden)
         }
     }
     

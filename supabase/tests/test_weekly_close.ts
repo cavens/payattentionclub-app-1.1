@@ -70,12 +70,14 @@ async function createTestCommitment(options: {
   const weekStartDate = new Date().toISOString().split("T")[0];
   const maxChargeCents = options.limitMinutes * options.penaltyPerMinuteCents * 7;
 
-  // Create weekly pool first
+  // Create weekly pool first (create or update to open if exists)
   await supabase.from("weekly_pools").upsert({
     week_start_date: options.weekEndDate,
     week_end_date: options.weekEndDate,
     total_penalty_cents: 0,
     status: "open",
+  }, {
+    onConflict: "week_start_date",
   });
 
   const { data, error } = await supabase

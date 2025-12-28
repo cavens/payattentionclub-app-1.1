@@ -626,6 +626,29 @@ Explicit mapping of staging ↔ Stripe sandbox, production ↔ Stripe live, with
 
 ---
 
+### 14. Settlement Process Verification
+
+Triple-check the entire settlement process to ensure everything works correctly:
+- Verify authorization amount cap is enforced (actual penalty never exceeds authorization)
+- Test settlement flow with various scenarios:
+  - User syncs before Tuesday noon → charge actual (capped at authorization)
+  - User doesn't sync → charge authorization at Tuesday noon
+  - User syncs late → reconciliation uses capped actual
+  - User exceeds authorization cap → verify charge is capped correctly
+- Verify reconciliation logic uses capped actual (not raw actual)
+- Test edge cases (zero penalty, full authorization, partial usage, etc.)
+- Verify all settlement-related functions are working:
+  - `run-weekly-settlement.ts` (bright-service)
+  - `rpc_sync_daily_usage.sql`
+  - `quick-handler` (settlement-reconcile)
+- Check that tests cover all scenarios
+
+**Priority**: High  
+**Timeline**: Before production launch  
+**Status**: After recent authorization cap bug fix
+
+---
+
 ## Notes
 
 - All issues documented here are **non-blocking** - development can continue

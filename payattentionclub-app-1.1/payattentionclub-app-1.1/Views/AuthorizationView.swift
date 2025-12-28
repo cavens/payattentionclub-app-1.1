@@ -126,6 +126,7 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
             }
             .navigationTitle("Authorization")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Color(red: 226/255, green: 204/255, blue: 205/255))
             .task {
                 calculatedAmount = await model.fetchAuthorizationAmount()
                 model.authorizationAmount = calculatedAmount
@@ -141,17 +142,19 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
         }
         
         do {
-            // Step 1: Check billing status and setup payment if needed
+            // Step 1: Check billing status and create PaymentIntent if needed
             NSLog("LOCKIN AuthorizationView: Step 1 - Checking billing status...")
-            let billingStatus = try await BackendClient.shared.checkBillingStatus()
-            NSLog("LOCKIN AuthorizationView: ✅ Step 1 complete - Billing status - hasPaymentMethod: \(billingStatus.hasPaymentMethod), needsSetupIntent: \(billingStatus.needsSetupIntent)")
+            let authorizationAmountCents = Int(await MainActor.run { calculatedAmount * 100 })
+            let billingStatus = try await BackendClient.shared.checkBillingStatus(authorizationAmountCents: authorizationAmountCents)
+            NSLog("LOCKIN AuthorizationView: ✅ Step 1 complete - Billing status - hasPaymentMethod: \(billingStatus.hasPaymentMethod), needsPaymentIntent: \(billingStatus.needsPaymentIntent)")
             
-            // Step 1.5: Handle Stripe SetupIntent if needed
-            if billingStatus.needsSetupIntent {
-                NSLog("LOCKIN AuthorizationView: Step 1.5 - SetupIntent needed, presenting payment sheet...")
+            // Step 1.5: Handle Stripe PaymentIntent if needed
+            var savedPaymentMethodId: String? = nil
+            if billingStatus.needsPaymentIntent {
+                NSLog("LOCKIN AuthorizationView: Step 1.5 - PaymentIntent needed, presenting payment sheet...")
                 
-                guard let clientSecret = billingStatus.setupIntentClientSecret else {
-                    throw BackendError.decodingError("Missing setup intent client secret")
+                guard let clientSecret = billingStatus.paymentIntentClientSecret else {
+                    throw BackendError.decodingError("Missing payment intent client secret")
                 }
                 
                 // Update UI state
@@ -160,48 +163,24 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
                 }
                 
                 do {
-                    let paymentSuccess: Bool
                     if preferApplePay {
                         // Use direct Apple Pay (bypasses PaymentSheet)
                         let amount = await MainActor.run { calculatedAmount }
-                        paymentSuccess = try await StripePaymentManager.shared.presentApplePay(
+                        savedPaymentMethodId = try await StripePaymentManager.shared.presentApplePay(
                             clientSecret: clientSecret,
                             amount: amount
                         )
+                        NSLog("LOCKIN AuthorizationView: ✅ Step 1.5 complete - PaymentIntent confirmed and cancelled, saved payment method ID: \(savedPaymentMethodId)")
                     } else {
                         // Use PaymentSheet (for other payment methods)
-                        paymentSuccess = try await StripePaymentManager.shared.presentSetupIntent(
-                            clientSecret: clientSecret
-                        )
+                        // Note: PaymentSheet with PaymentIntent is not yet implemented
+                        // For now, fall back to Apple Pay or show error
+                        throw BackendError.serverError("PaymentSheet with PaymentIntent not yet supported. Please use Apple Pay.")
                     }
                     
                     // Update UI state
                     await MainActor.run {
                         isPresentingPaymentSheet = false
-                    }
-                    
-                    if !paymentSuccess {
-                        // User cancelled payment setup
-                        NSLog("LOCKIN AuthorizationView: ⚠️ Payment setup cancelled by user")
-                        await MainActor.run {
-                            isLockingIn = false
-                            lockInError = "Payment setup was cancelled. Please complete payment setup to lock in your commitment."
-                        }
-                        return
-                    }
-                    
-                    NSLog("LOCKIN AuthorizationView: ✅ Step 1.5 complete - Payment setup completed successfully")
-                    
-                    // Optionally: Re-check billing status to verify payment method was saved
-                    // This ensures the backend has updated has_active_payment_method flag
-                    NSLog("LOCKIN AuthorizationView: Verifying payment method was saved...")
-                    let updatedBillingStatus = try await BackendClient.shared.checkBillingStatus()
-                    if updatedBillingStatus.hasPaymentMethod {
-                        NSLog("LOCKIN AuthorizationView: ✅ Payment method confirmed in backend")
-                    } else {
-                        NSLog("LOCKIN AuthorizationView: ⚠️ Payment method not yet confirmed, but proceeding...")
-                        // Small delay to allow backend to process
-                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
                     }
                 } catch {
                     // Update UI state
@@ -222,13 +201,15 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
             let selectedApps = await MainActor.run { model.selectedApps }
             
             NSLog("LOCKIN AuthorizationView: Step 2 - Parameters ready - weekStartDate: \(weekStartDate), limitMinutes: \(limitMinutes), penaltyPerMinuteCents: \(penaltyPerMinuteCents)")
+            NSLog("LOCKIN AuthorizationView: Step 2 - Saved payment method ID: \(savedPaymentMethodId ?? "nil")")
             NSLog("LOCKIN AuthorizationView: Step 2 - Calling createCommitment()...")
             
             let commitmentResponse = try await BackendClient.shared.createCommitment(
                 weekStartDate: weekStartDate,
                 limitMinutes: limitMinutes,
                 penaltyPerMinuteCents: penaltyPerMinuteCents,
-                selectedApps: selectedApps
+                selectedApps: selectedApps,
+                savedPaymentMethodId: savedPaymentMethodId
             )
             
             NSLog("LOCKIN AuthorizationView: ✅ Step 2 complete - Commitment created successfully!")

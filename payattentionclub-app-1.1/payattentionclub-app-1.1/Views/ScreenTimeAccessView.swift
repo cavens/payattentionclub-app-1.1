@@ -58,6 +58,7 @@ struct ScreenTimeAccessView: View {
             }
             .navigationTitle("Screen Time Access")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Color(red: 226/255, green: 204/255, blue: 205/255))
             .onAppear {
                 // Check if authorization is already granted when view appears
                 Task { @MainActor in

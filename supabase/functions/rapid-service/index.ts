@@ -1,8 +1,11 @@
-// Supabase Edge Function: confirm-setup-intent
-// This function confirms a Stripe SetupIntent using an Apple Pay payment token
+// Supabase Edge Function: rapid-service
+// This function confirms a Stripe PaymentIntent using an Apple Pay payment token,
+// then immediately cancels it to release the authorization hold.
+// The payment method is saved via setup_future_usage and returned.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import Stripe from "https://esm.sh/stripe@12.8.0?target=deno"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -29,9 +32,21 @@ serve(async (req) => {
     const token = authHeader.replace('Bearer ', '')
     
     // Create Supabase client with the user's JWT token
+    // Use environment-specific secret key (STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY)
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabasePublishableKey = Deno.env.get('SUPABASE_PUBLISHABLE_KEY')!
-    const supabase = createClient(supabaseUrl, supabasePublishableKey, {
+    const supabaseSecretKey = 
+      Deno.env.get('STAGING_SUPABASE_SECRET_KEY') || 
+      Deno.env.get('PRODUCTION_SUPABASE_SECRET_KEY')
+    
+    if (!supabaseSecretKey) {
+      console.error('rapid-service: Missing Supabase secret key')
+      return new Response(
+        JSON.stringify({ error: 'supabaseKey is required. STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets.' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
+    const supabase = createClient(supabaseUrl, supabaseSecretKey, {
       global: {
         headers: {
           Authorization: authHeader
@@ -70,103 +85,119 @@ serve(async (req) => {
       )
     }
 
-    // Extract SetupIntent ID from client secret (format: seti_xxx_secret_yyy)
-    const setupIntentId = clientSecret.split('_secret_')[0]
-
-    // First, retrieve the SetupIntent to check its current status
-    const retrieveResponse = await fetch(`https://api.stripe.com/v1/setup_intents/${setupIntentId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${stripeSecretKey}`,
-      },
+    // Initialize Stripe client
+    const stripe = new Stripe(stripeSecretKey, {
+      apiVersion: "2023-10-16"
     })
 
-    if (!retrieveResponse.ok) {
-      const errorText = await retrieveResponse.text()
-      console.error('Failed to retrieve SetupIntent:', errorText)
+    // Extract PaymentIntent ID from client secret (format: pi_xxx_secret_yyy)
+    const paymentIntentId = clientSecret.split('_secret_')[0]
+
+    // First, retrieve the PaymentIntent to check its current status
+    let paymentIntent: Stripe.PaymentIntent
+    try {
+      paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId)
+    } catch (error) {
+      console.error('Failed to retrieve PaymentIntent:', error)
       return new Response(
-        JSON.stringify({ error: 'Failed to retrieve SetupIntent from Stripe', details: errorText }),
+        JSON.stringify({ error: 'Failed to retrieve PaymentIntent from Stripe', details: error.message }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const setupIntent = await retrieveResponse.json()
-
-    // If already confirmed or succeeded, return success
-    if (setupIntent.status === 'succeeded' || setupIntent.status === 'processing') {
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          setupIntentId: setupIntent.id, 
-          paymentMethodId: setupIntent.payment_method || paymentMethodId,
-          alreadyConfirmed: true 
-        }),
-        { 
-          status: 200, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      )
+    // If already succeeded or canceled, check if payment method was saved
+    if (paymentIntent.status === 'succeeded' || paymentIntent.status === 'canceled') {
+      // Payment method should be saved via setup_future_usage
+      const savedPaymentMethodId = paymentIntent.payment_method
+      if (savedPaymentMethodId && typeof savedPaymentMethodId === 'string') {
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            paymentIntentId: paymentIntent.id, 
+            paymentMethodId: savedPaymentMethodId,
+            alreadyProcessed: true 
+          }),
+          { 
+            status: 200, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        )
+      }
     }
 
-    // If cancelled, we can't confirm it
-    if (setupIntent.status === 'canceled') {
-      console.error('SetupIntent is in invalid state:', setupIntent.status)
+    // If requires_capture or requires_action, we can't proceed
+    if (paymentIntent.status === 'requires_capture' || paymentIntent.status === 'requires_action') {
+      console.error('PaymentIntent is in invalid state for this flow:', paymentIntent.status)
       return new Response(
-        JSON.stringify({ error: `SetupIntent is in invalid state: ${setupIntent.status}` }),
+        JSON.stringify({ error: `PaymentIntent is in invalid state: ${paymentIntent.status}` }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    // Now confirm the SetupIntent with the PaymentMethod
-    const returnUrl = 'https://payattentionclub.app/payment-return'
-    
-    const confirmResponse = await fetch(`https://api.stripe.com/v1/setup_intents/${setupIntentId}/confirm`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${stripeSecretKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
+    // Confirm the PaymentIntent with the PaymentMethod
+    try {
+      paymentIntent = await stripe.paymentIntents.confirm(paymentIntentId, {
         payment_method: paymentMethodId,
-        return_url: returnUrl,
-      }).toString()
-    })
-
-    if (!confirmResponse.ok) {
-      const errorText = await confirmResponse.text()
-      console.error('Stripe SetupIntent confirmation error (status:', confirmResponse.status, '):', errorText)
-      let errorDetails = errorText
-      let errorMessage = 'Failed to confirm SetupIntent with Stripe'
-      try {
-        const errorJson = JSON.parse(errorText)
-        if (errorJson.error) {
-          errorMessage = errorJson.error.message || errorMessage
-          if (errorJson.error.type) {
-            errorMessage = `${errorMessage} (type: ${errorJson.error.type})`
-          }
-          if (errorJson.error.code) {
-            errorMessage = `${errorMessage} (code: ${errorJson.error.code})`
-          }
-        }
-        errorDetails = JSON.stringify(errorJson, null, 2)
-      } catch (e) {
-        errorDetails = errorText
+        return_url: "https://payattentionclub.app/payment-return" // Required by Stripe even though we use allow_redirects: never
+      })
+    } catch (error) {
+      console.error('Stripe PaymentIntent confirmation error:', error)
+      let errorMessage = 'Failed to confirm PaymentIntent with Stripe'
+      if (error.message) {
+        errorMessage = error.message
       }
       return new Response(
         JSON.stringify({ 
           error: errorMessage, 
-          details: errorDetails,
-          statusCode: confirmResponse.status
+          details: error.toString()
         }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const setupIntentData = await confirmResponse.json()
+    // Extract saved payment method ID (from setup_future_usage)
+    const savedPaymentMethodId = paymentIntent.payment_method
+    if (!savedPaymentMethodId || typeof savedPaymentMethodId !== 'string') {
+      console.error('Payment method not saved after confirmation')
+      return new Response(
+        JSON.stringify({ error: 'Payment method was not saved. setup_future_usage may have failed.' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
-    // Return success
+    // Immediately cancel the PaymentIntent to release the authorization hold
+    try {
+      await stripe.paymentIntents.cancel(paymentIntentId)
+      console.log(`PaymentIntent ${paymentIntentId} cancelled successfully - authorization released`)
+    } catch (cancelError) {
+      // Log error but don't fail - payment method is already saved
+      console.error(`Warning: Failed to cancel PaymentIntent ${paymentIntentId}:`, cancelError)
+      // Continue anyway - the payment method is saved and that's what matters
+    }
+
+    // Update user's has_active_payment_method flag in database
+    try {
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ has_active_payment_method: true })
+        .eq('id', user.id)
+
+      if (updateError) {
+        console.error('Error updating has_active_payment_method:', updateError)
+        // Don't fail - payment method is saved in Stripe
+      }
+    } catch (dbError) {
+      console.error('Database update error:', dbError)
+      // Don't fail - payment method is saved in Stripe
+    }
+
+    // Return success with saved payment method ID
     return new Response(
-      JSON.stringify({ success: true, setupIntentId: setupIntentData.id, paymentMethodId: paymentMethodId }),
+      JSON.stringify({ 
+        success: true, 
+        paymentIntentId: paymentIntent.id, 
+        paymentMethodId: savedPaymentMethodId 
+      }),
       { 
         status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
@@ -175,7 +206,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('Edge function error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error.message || 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }

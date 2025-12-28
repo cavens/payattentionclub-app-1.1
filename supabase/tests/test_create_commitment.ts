@@ -72,12 +72,14 @@ async function createTestCommitment(options: {
   // Calculate max charge (simplified - matches app formula roughly)
   const maxChargeCents = options.limitMinutes * options.penaltyPerMinuteCents * 7;
 
-  // Ensure weekly pool exists
+  // Ensure weekly pool exists (create or update to open if exists)
   await supabase.from("weekly_pools").upsert({
     week_start_date: weekEndDate,
     week_end_date: weekEndDate,
     total_penalty_cents: 0,
     status: "open",
+  }, {
+    onConflict: "week_start_date",
   });
 
   // Create commitment

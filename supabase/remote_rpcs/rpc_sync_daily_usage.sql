@@ -27,6 +27,8 @@ DECLARE
   v_prev_charged_amount integer;
   v_needs_reconciliation boolean;
   v_reconciliation_delta integer;
+  v_max_charge_cents integer;
+  v_capped_actual_cents integer;
   V_SETTLED_STATUSES CONSTANT text[] := ARRAY['charged_actual', 'charged_worst_case', 'refunded', 'refunded_partial'];
 BEGIN
   IF v_user_id IS NULL THEN
@@ -147,10 +149,25 @@ BEGIN
           v_prev_charged_amount := 0;
       END;
 
+      -- Get max_charge_cents (authorization amount) from the commitment
+      SELECT max_charge_cents
+      INTO v_max_charge_cents
+      FROM public.commitments
+      WHERE user_id = v_user_id
+        AND week_end_date = v_week
+      LIMIT 1;
+
+      -- Cap actual penalty at authorization amount (same logic as settlement)
+      v_capped_actual_cents := LEAST(
+        v_user_week_total_cents,
+        COALESCE(v_max_charge_cents, v_user_week_total_cents)
+      );
+
       v_needs_reconciliation := false;
       v_reconciliation_delta := 0;
       IF v_prev_settlement_status = ANY(V_SETTLED_STATUSES) THEN
-        v_reconciliation_delta := v_user_week_total_cents - COALESCE(v_prev_charged_amount, 0);
+        -- Use capped actual for reconciliation delta (not raw actual)
+        v_reconciliation_delta := v_capped_actual_cents - COALESCE(v_prev_charged_amount, 0);
         IF v_reconciliation_delta <> 0 THEN
           v_needs_reconciliation := true;
         END IF;

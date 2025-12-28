@@ -13,6 +13,8 @@ struct LoadingView: View {
             
             Spacer()
         }
+        .background(Color(red: 226/255, green: 204/255, blue: 205/255))
+        .ignoresSafeArea()
         .onAppear {
             // Finish initialization after UI has rendered
             // This allows the logo to appear immediately

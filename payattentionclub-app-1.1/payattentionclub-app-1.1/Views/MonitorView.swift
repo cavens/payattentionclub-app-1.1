@@ -113,6 +113,7 @@ struct MonitorView: View {
             }
             .navigationTitle("Monitor")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Color(red: 226/255, green: 204/255, blue: 205/255))
             .withLogoutButton()
             .onAppear {
                 startTimer()

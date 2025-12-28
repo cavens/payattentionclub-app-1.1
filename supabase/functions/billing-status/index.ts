@@ -13,7 +13,18 @@ if (!STRIPE_SECRET_KEY) {
 }
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
+// Use environment-specific secret (STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY)
+const SUPABASE_SECRET_KEY = 
+  Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || 
+  Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY");
+
+// Validate required environment variables
+if (!SUPABASE_URL) {
+  console.error("ERROR: SUPABASE_URL is not set in Edge Function environment variables");
+}
+if (!SUPABASE_SECRET_KEY) {
+  console.error("ERROR: STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function environment variables");
+}
 
 const stripe = new Stripe(STRIPE_SECRET_KEY, {
   apiVersion: "2023-10-16"
@@ -21,13 +32,34 @@ const stripe = new Stripe(STRIPE_SECRET_KEY, {
 
 Deno.serve(async (req) => {
   try {
+    console.log("billing-status: Request method:", req.method);
+    console.log("billing-status: Request URL:", req.url);
+    console.log("billing-status: SUPABASE_URL:", SUPABASE_URL ? "✅ Set" : "❌ Missing");
+    console.log("billing-status: SUPABASE_SECRET_KEY:", SUPABASE_SECRET_KEY ? "✅ Set" : "❌ Missing");
+    
+    // Validate environment variables
+    if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+      console.error("billing-status: Missing required environment variables");
+      console.error("billing-status: SUPABASE_URL:", SUPABASE_URL ? "✅" : "❌");
+      console.error("billing-status: SUPABASE_SECRET_KEY:", SUPABASE_SECRET_KEY ? "✅" : "❌");
+      return new Response(JSON.stringify({
+        error: "Internal server error",
+        details: "Missing Supabase configuration. SUPABASE_URL and either STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets."
+      }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    
     // 1) Auth: get user from JWT
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
+      console.error("billing-status: Missing Authorization header");
       return new Response(JSON.stringify({
         error: "Missing Authorization header"
       }), {
-        status: 401
+        status: 401,
+        headers: { "Content-Type": "application/json" }
       });
     }
 
@@ -96,16 +128,66 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 4) Check database flag first (source of truth)
+    // 4) Parse request body to get authorization amount (optional)
+    let authorizationAmountCents: number | null = null;
+    try {
+      // Try to get from query params first (GET request)
+      const url = new URL(req.url);
+      const queryAmount = url.searchParams.get("authorization_amount_cents");
+      if (queryAmount) {
+        const parsed = parseInt(queryAmount, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          authorizationAmountCents = parsed;
+          console.log("billing-status: Got authorization amount from query:", authorizationAmountCents);
+        }
+      }
+      
+      // If not in query, try to get from body (POST request)
+      if (!authorizationAmountCents && (req.method === "POST" || req.method === "PUT" || req.method === "PATCH")) {
+        const contentType = req.headers.get("content-type") || "";
+        console.log("billing-status: Content-Type for body:", contentType);
+        if (contentType.includes("application/json")) {
+          try {
+            // Read body as text first to avoid consuming the stream
+            const bodyText = await req.text();
+            console.log("billing-status: Body text (first 200 chars):", bodyText.substring(0, 200));
+            if (bodyText && bodyText.trim().length > 0) {
+              const body = JSON.parse(bodyText);
+              console.log("billing-status: Parsed body:", JSON.stringify(body));
+              if (body && typeof body.authorization_amount_cents === "number") {
+                authorizationAmountCents = body.authorization_amount_cents;
+                console.log("billing-status: Authorization amount from body:", authorizationAmountCents);
+              } else if (body && body.authorization_amount_cents !== undefined) {
+                console.error("billing-status: authorization_amount_cents is not a number:", typeof body.authorization_amount_cents, body.authorization_amount_cents);
+              }
+            } else {
+              console.log("billing-status: Body is empty");
+            }
+          } catch (jsonError) {
+            console.error("billing-status: Error parsing JSON body:", jsonError);
+            console.error("billing-status: JSON error details:", jsonError.message);
+            // Body might be empty or invalid - that's okay, we'll handle it below
+          }
+        } else {
+          console.log("billing-status: Content-Type is not application/json, skipping body parse");
+        }
+      }
+    } catch (e) {
+      // If body parsing fails, log error but continue
+      console.error("billing-status: Error in body parsing block:", e);
+      // Continue without authorization amount - will return error later if needed
+    }
+
+    // 5) Check database flag first (source of truth)
     // IMPORTANT: We check the database flag first because it's only set to true
-    // when a SetupIntent is actually confirmed (via rapid-service Edge Function).
+    // when a PaymentIntent is actually confirmed and payment method saved (via rapid-service Edge Function).
     // Just having a payment method in Stripe doesn't mean payment setup is complete.
     // If has_active_payment_method is true, user has already completed payment setup
     if (dbUser.has_active_payment_method) {
       return new Response(JSON.stringify({
         has_payment_method: true,
-        needs_setup_intent: false,
-        setup_intent_client_secret: null,
+        needs_payment_intent: false,
+        payment_intent_client_secret: null,
         stripe_customer_id: stripeCustomerId
       }), {
         headers: {
@@ -115,21 +197,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 5) Database flag is false - check Stripe for confirmed SetupIntents
-    // Only consider payment setup complete if there's a confirmed SetupIntent.
-    // This handles edge cases where the database flag might be out of sync.
-    const setupIntents = await stripe.setupIntents.list({
+    // 6) Database flag is false - check Stripe for payment methods
+    // Check if customer has any saved payment methods (from previous PaymentIntents with setup_future_usage)
+    const paymentMethods = await stripe.paymentMethods.list({
       customer: stripeCustomerId,
       limit: 10
     });
 
-    // Find a confirmed (succeeded) SetupIntent with a payment method attached
-    const confirmedSetupIntent = setupIntents.data.find(
-      (si) => si.status === "succeeded" && si.payment_method
-    );
-
-    // If we have a confirmed SetupIntent, update the database flag
-    if (confirmedSetupIntent) {
+    // If we have saved payment methods, update the database flag
+    if (paymentMethods.data.length > 0) {
       const { error: updatePmFlagError } = await supabase
         .from("users")
         .update({
@@ -143,8 +219,8 @@ Deno.serve(async (req) => {
         // Return that payment is set up
         return new Response(JSON.stringify({
           has_payment_method: true,
-          needs_setup_intent: false,
-          setup_intent_client_secret: null,
+          needs_payment_intent: false,
+          payment_intent_client_secret: null,
           stripe_customer_id: stripeCustomerId
         }), {
           headers: {
@@ -155,18 +231,54 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 6) Else: create SetupIntent and return client_secret
-    const setupIntent = await stripe.setupIntents.create({
+    // 7) Else: create PaymentIntent and return client_secret
+    // Authorization amount is required - if not provided, return error
+    console.log("billing-status: Checking authorization amount:", authorizationAmountCents);
+    if (!authorizationAmountCents || authorizationAmountCents <= 0) {
+      console.error("billing-status: Missing or invalid authorization_amount_cents");
+      return new Response(JSON.stringify({
+        error: "authorization_amount_cents is required and must be greater than 0"
+      }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+    
+    console.log("billing-status: Creating PaymentIntent with amount:", authorizationAmountCents);
+    console.log("billing-status: Stripe customer ID:", stripeCustomerId);
+    console.log("billing-status: Stripe key configured:", !!STRIPE_SECRET_KEY);
+
+    let paymentIntent;
+    try {
+      paymentIntent = await stripe.paymentIntents.create({
+      amount: authorizationAmountCents,
+      currency: "usd",
       customer: stripeCustomerId,
+      capture_method: "manual", // Authorization hold (not immediate charge)
+      setup_future_usage: "off_session", // Save payment method for future charges
       automatic_payment_methods: {
-        enabled: true
+        enabled: true,
+        allow_redirects: "never" // Prevent redirect-based payment methods (we only use Apple Pay)
+      },
+      metadata: {
+        supabase_user_id: userId,
+        purpose: "authorization_and_setup"
       }
     });
+      console.log("billing-status: PaymentIntent created successfully:", paymentIntent.id);
+    } catch (stripeError) {
+      console.error("billing-status: Stripe API error:", stripeError);
+      console.error("billing-status: Stripe error type:", stripeError.type);
+      console.error("billing-status: Stripe error message:", stripeError.message);
+      throw new Error(`Stripe API error: ${stripeError.message || String(stripeError)}`);
+    }
 
     return new Response(JSON.stringify({
       has_payment_method: false,
-      needs_setup_intent: true,
-      setup_intent_client_secret: setupIntent.client_secret,
+      needs_payment_intent: true,
+      payment_intent_client_secret: paymentIntent.client_secret,
       stripe_customer_id: stripeCustomerId
     }), {
       headers: {
@@ -177,10 +289,15 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error("billing-status error:", err);
+    console.error("billing-status error stack:", err.stack);
     return new Response(JSON.stringify({
-      error: "Internal server error"
+      error: "Internal server error",
+      details: err.message || String(err)
     }), {
-      status: 500
+      status: 500,
+      headers: {
+        "Content-Type": "application/json"
+      }
     });
   }
 });

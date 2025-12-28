@@ -28,8 +28,19 @@ serve(async (req) => {
     // Create Supabase client with the user's JWT token
     // This ensures auth.uid() in the RPC function works correctly
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabasePublishableKey = Deno.env.get('SUPABASE_PUBLISHABLE_KEY')!
-    const supabase = createClient(supabaseUrl, supabasePublishableKey, {
+    // Use environment-specific secret key (STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY)
+    const supabaseSecretKey = 
+      Deno.env.get('STAGING_SUPABASE_SECRET_KEY') || 
+      Deno.env.get('PRODUCTION_SUPABASE_SECRET_KEY')
+    
+    if (!supabaseSecretKey) {
+      return new Response(
+        JSON.stringify({ error: 'supabaseKey is required. STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets.' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
+    const supabase = createClient(supabaseUrl, supabaseSecretKey, {
       global: {
         headers: {
           Authorization: authHeader
@@ -49,7 +60,7 @@ serve(async (req) => {
     // Parse request body
     const body = await req.json()
     // Note: weekStartDate from the app is actually the deadline (next Monday before noon)
-    const { weekStartDate, limitMinutes, penaltyPerMinuteCents, appsToLimit } = body
+    const { weekStartDate, limitMinutes, penaltyPerMinuteCents, appsToLimit, savedPaymentMethodId } = body
 
     // Validate required fields
     if (!weekStartDate || !limitMinutes || penaltyPerMinuteCents === undefined || !appsToLimit) {
@@ -66,7 +77,8 @@ serve(async (req) => {
       p_deadline_date: weekStartDate,  // This is the deadline (next Monday before noon)
       p_limit_minutes: limitMinutes,
       p_penalty_per_minute_cents: penaltyPerMinuteCents,
-      p_apps_to_limit: appsToLimit
+      p_apps_to_limit: appsToLimit,
+      p_saved_payment_method_id: savedPaymentMethodId || null
     })
 
     if (error) {

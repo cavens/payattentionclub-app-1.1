@@ -262,7 +262,12 @@ function shouldSkipBecauseSettled(candidate: SettlementCandidate): boolean {
 }
 
 function getChargeAmount(candidate: SettlementCandidate, type: ChargeType): number {
-  return type === "actual" ? getActualPenaltyCents(candidate) : getWorstCaseAmountCents(candidate);
+  if (type === "actual") {
+    const actual = getActualPenaltyCents(candidate);
+    const maxCharge = getWorstCaseAmountCents(candidate); // This is max_charge_cents (authorization amount)
+    return Math.min(actual, maxCharge); // Cap actual at authorization amount - never charge more than authorized
+  }
+  return getWorstCaseAmountCents(candidate);
 }
 
 async function recordPayment(

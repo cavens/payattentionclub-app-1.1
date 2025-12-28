@@ -74,6 +74,7 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
     let limitMinutes: Int
     let penaltyPerMinuteCents: Int
     let appsToLimit: AppsToLimit
+    let savedPaymentMethodId: String?
     
     // Explicitly implement encoding to ensure nonisolated conformance
     nonisolated func encode(to encoder: Encoder) throws {
@@ -82,6 +83,7 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
         try container.encode(limitMinutes, forKey: .limitMinutes)
         try container.encode(penaltyPerMinuteCents, forKey: .penaltyPerMinuteCents)
         try container.encode(appsToLimit, forKey: .appsToLimit)
+        try container.encodeIfPresent(savedPaymentMethodId, forKey: .savedPaymentMethodId)
     }
     
     enum CodingKeys: String, CodingKey {
@@ -89,6 +91,7 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
         case limitMinutes
         case penaltyPerMinuteCents
         case appsToLimit
+        case savedPaymentMethodId
     }
 }
 
@@ -150,14 +153,14 @@ struct SyncDailyUsageResponse: Codable, Sendable {
 
 struct BillingStatusResponse: Codable {
     let hasPaymentMethod: Bool
-    let needsSetupIntent: Bool
-    let setupIntentClientSecret: String?
+    let needsPaymentIntent: Bool
+    let paymentIntentClientSecret: String?
     let stripeCustomerId: String?
     
     enum CodingKeys: String, CodingKey {
         case hasPaymentMethod = "has_payment_method"
-        case needsSetupIntent = "needs_setup_intent"
-        case setupIntentClientSecret = "setup_intent_client_secret"
+        case needsPaymentIntent = "needs_payment_intent"
+        case paymentIntentClientSecret = "payment_intent_client_secret"
         case stripeCustomerId = "stripe_customer_id"
     }
     
@@ -167,31 +170,31 @@ struct BillingStatusResponse: Codable {
         
         // Try to decode fields, use defaults if missing
         hasPaymentMethod = try container.decodeIfPresent(Bool.self, forKey: .hasPaymentMethod) ?? false
-        needsSetupIntent = try container.decodeIfPresent(Bool.self, forKey: .needsSetupIntent) ?? false
-        setupIntentClientSecret = try container.decodeIfPresent(String.self, forKey: .setupIntentClientSecret)
+        needsPaymentIntent = try container.decodeIfPresent(Bool.self, forKey: .needsPaymentIntent) ?? false
+        paymentIntentClientSecret = try container.decodeIfPresent(String.self, forKey: .paymentIntentClientSecret)
         stripeCustomerId = try container.decodeIfPresent(String.self, forKey: .stripeCustomerId)
     }
 }
 
-struct ConfirmSetupIntentResponse: Codable, Sendable {
+struct ConfirmPaymentIntentResponse: Codable, Sendable {
     let success: Bool
-    let setupIntentId: String?
+    let paymentIntentId: String?
     let paymentMethodId: String?
-    let alreadyConfirmed: Bool?
+    let alreadyProcessed: Bool?
     
     enum CodingKeys: String, CodingKey {
         case success
-        case setupIntentId
+        case paymentIntentId
         case paymentMethodId
-        case alreadyConfirmed
+        case alreadyProcessed
     }
     
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         success = try container.decode(Bool.self, forKey: .success)
-        setupIntentId = try container.decodeIfPresent(String.self, forKey: .setupIntentId)
+        paymentIntentId = try container.decodeIfPresent(String.self, forKey: .paymentIntentId)
         paymentMethodId = try container.decodeIfPresent(String.self, forKey: .paymentMethodId)
-        alreadyConfirmed = try container.decodeIfPresent(Bool.self, forKey: .alreadyConfirmed)
+        alreadyProcessed = try container.decodeIfPresent(Bool.self, forKey: .alreadyProcessed)
     }
 }
 
@@ -347,34 +350,98 @@ class BackendClient {
     
     // MARK: - API Methods
     
-    /// 1. Check billing status and create SetupIntent if needed
+    /// 1. Check billing status and create PaymentIntent if needed
     /// Calls: billing-status Edge Function
+    /// - Parameters:
+    ///   - authorizationAmountCents: The authorization amount in cents (required if payment method doesn't exist)
     /// - Throws: BackendError.notAuthenticated if user is not signed in
-    func checkBillingStatus() async throws -> BillingStatusResponse {
+    func checkBillingStatus(authorizationAmountCents: Int? = nil) async throws -> BillingStatusResponse {
         // Check authentication first
         guard await isAuthenticated else {
             throw BackendError.notAuthenticated
         }
         
         NSLog("BILLING BackendClient: Calling billing-status Edge Function...")
+        if let amount = authorizationAmountCents {
+            NSLog("BILLING BackendClient: Authorization amount: \(amount) cents ($\(Double(amount) / 100.0))")
+        }
         
         do {
+            struct BillingStatusRequest: Encodable, Sendable {
+                let authorizationAmountCents: Int?
+                
+                enum CodingKeys: String, CodingKey {
+                    case authorizationAmountCents = "authorization_amount_cents"
+                }
+            }
+            
+            let requestBody = BillingStatusRequest(authorizationAmountCents: authorizationAmountCents)
+            
             // Note: supabase.functions.invoke() directly decodes, so we can't easily see raw JSON
             // But the custom decoder will handle missing fields gracefully
             let response: BillingStatusResponse = try await supabase.functions.invoke(
                 "billing-status",
                 options: FunctionInvokeOptions(
-                    body: EmptyBody()
+                    body: requestBody
                 )
             )
             
             NSLog("BILLING BackendClient: ✅ Successfully decoded BillingStatusResponse")
-            NSLog("BILLING BackendClient: hasPaymentMethod: \(response.hasPaymentMethod) (may be default false if missing)")
-            NSLog("BILLING BackendClient: needsSetupIntent: \(response.needsSetupIntent) (may be default false if missing)")
-            NSLog("BILLING BackendClient: setupIntentClientSecret: \(response.setupIntentClientSecret ?? "nil")")
+            NSLog("BILLING BackendClient: hasPaymentMethod: \(response.hasPaymentMethod)")
+            NSLog("BILLING BackendClient: needsPaymentIntent: \(response.needsPaymentIntent)")
+            NSLog("BILLING BackendClient: paymentIntentClientSecret: \(response.paymentIntentClientSecret ?? "nil")")
             NSLog("BILLING BackendClient: stripeCustomerId: \(response.stripeCustomerId ?? "nil")")
             
             return response
+        } catch let error as FunctionsError {
+            NSLog("BILLING BackendClient: ❌ Edge Function call failed: \(error)")
+            NSLog("BILLING BackendClient: Error localizedDescription: \(error.localizedDescription)")
+            
+            // Extract detailed error message from httpError
+            var errorMessage = error.localizedDescription
+            var errorDetails: String? = nil
+            let mirror = Mirror(reflecting: error)
+            for child in mirror.children {
+                if child.label == "httpError" {
+                    NSLog("BILLING BackendClient: Found httpError property")
+                    let httpErrorMirror = Mirror(reflecting: child.value)
+                    let httpErrorChildren = Array(httpErrorMirror.children)
+                    NSLog("BILLING BackendClient: httpError has \(httpErrorChildren.count) children")
+                    
+                    // Try to find the data element (error response body)
+                    for (index, httpChild) in httpErrorChildren.enumerated() {
+                        NSLog("BILLING BackendClient: httpError[\(index)]: label=\(httpChild.label ?? "nil"), type=\(type(of: httpChild.value))")
+                        if let data = httpChild.value as? Data {
+                            NSLog("BILLING BackendClient: Found error Data at index \(index), size: \(data.count) bytes")
+                            if let errorString = String(data: data, encoding: .utf8) {
+                                NSLog("BILLING BackendClient: ⚠️ ERROR RESPONSE BODY (raw): \(errorString)")
+                                errorDetails = errorString
+                                
+                                // Try to parse as JSON
+                                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                    NSLog("BILLING BackendClient: ⚠️ ERROR RESPONSE (parsed JSON):")
+                                    for (key, value) in errorJson {
+                                        NSLog("BILLING BackendClient:   \(key): \(value)")
+                                    }
+                                    if let message = errorJson["error"] as? String {
+                                        errorMessage = message
+                                    }
+                                    if let details = errorJson["details"] as? String {
+                                        NSLog("BILLING BackendClient: ⚠️ ERROR DETAILS: \(details)")
+                                    }
+                                } else {
+                                    errorMessage = errorString
+                                }
+                                break
+                            } else {
+                                NSLog("BILLING BackendClient: ⚠️ Error data is not valid UTF-8, hex: \(data.map { String(format: "%02x", $0) }.joined(separator: " "))")
+                            }
+                        }
+                    }
+                }
+            }
+            
+            throw BackendError.serverError("Edge Function error: \(errorMessage)\(errorDetails != nil ? " | Details: \(errorDetails!)" : "")")
         } catch {
             NSLog("BILLING BackendClient: ❌ Failed to decode BillingStatusResponse: \(error)")
             if let decodingError = error as? DecodingError {
@@ -398,47 +465,52 @@ class BackendClient {
         }
     }
     
-    /// 1.5. Confirm SetupIntent with Apple Pay PaymentMethod
-    /// Calls: rapid-service Edge Function (Supabase auto-renamed from confirm-setup-intent)
+    /// 1.5. Confirm PaymentIntent with Apple Pay PaymentMethod and cancel it immediately
+    /// Calls: rapid-service Edge Function
     /// - Parameters:
-    ///   - clientSecret: The SetupIntent client secret
+    ///   - clientSecret: The PaymentIntent client secret
     ///   - paymentMethodId: Stripe PaymentMethod ID (created from Apple Pay token)
-    /// - Returns: `true` if confirmation successful
+    /// - Returns: The saved payment method ID (from setup_future_usage)
     /// - Throws: BackendError if confirmation fails
-    nonisolated func confirmSetupIntentWithApplePay(
+    nonisolated func confirmPaymentIntentAndCancel(
         clientSecret: String,
         paymentMethodId: String
-    ) async throws -> Bool {
+    ) async throws -> String {
         // Check authentication first
         guard await isAuthenticated else {
             throw BackendError.notAuthenticated
         }
         
-        NSLog("APPLEPAY BackendClient: Confirming SetupIntent with PaymentMethod ID: \(paymentMethodId)")
+        NSLog("APPLEPAY BackendClient: Confirming PaymentIntent with PaymentMethod ID: \(paymentMethodId)")
+        NSLog("APPLEPAY BackendClient: PaymentIntent will be cancelled immediately after confirmation")
         
-        struct ConfirmSetupIntentBody: Encodable, Sendable {
+        struct ConfirmPaymentIntentBody: Encodable, Sendable {
             let clientSecret: String
             let paymentMethodId: String
         }
         
-        let requestBody = ConfirmSetupIntentBody(
+        let requestBody = ConfirmPaymentIntentBody(
             clientSecret: clientSecret,
             paymentMethodId: paymentMethodId
         )
         
         return try await Task.detached(priority: .userInitiated) { [supabase] in
             do {
-                // Call Edge Function to confirm SetupIntent
-                // Note: Function name is "rapid-service" (Supabase auto-renamed it)
-                let response: ConfirmSetupIntentResponse = try await supabase.functions.invoke(
+                // Call Edge Function to confirm and cancel PaymentIntent
+                let response: ConfirmPaymentIntentResponse = try await supabase.functions.invoke(
                     "rapid-service",
                     options: FunctionInvokeOptions(
                         body: requestBody
                     )
                 )
                 
-                NSLog("APPLEPAY BackendClient: ✅ SetupIntent confirmation result: \(response.success)")
-                return response.success
+                guard response.success, let savedPaymentMethodId = response.paymentMethodId else {
+                    throw BackendError.serverError("PaymentIntent confirmation failed or payment method not saved")
+                }
+                
+                NSLog("APPLEPAY BackendClient: ✅ PaymentIntent confirmed and cancelled")
+                NSLog("APPLEPAY BackendClient: ✅ Saved payment method ID: \(savedPaymentMethodId)")
+                return savedPaymentMethodId
             } catch let error as FunctionsError {
                 NSLog("APPLEPAY BackendClient: ❌ Edge Function call failed: \(error)")
                 
@@ -493,13 +565,15 @@ class BackendClient {
     ///   - limitMinutes: Daily time limit in minutes
     ///   - penaltyPerMinuteCents: Penalty per minute in cents (e.g., 10 = $0.10)
     ///   - selectedApps: FamilyActivitySelection containing apps and categories to limit
+    ///   - savedPaymentMethodId: The saved payment method ID from PaymentIntent confirmation (optional)
     /// - Returns: CommitmentResponse with commitment details
     /// - Throws: BackendError.notAuthenticated if user is not signed in
     nonisolated func createCommitment(
         weekStartDate: Date,  // Actually the deadline, not the start date
         limitMinutes: Int,
         penaltyPerMinuteCents: Int,
-        selectedApps: FamilyActivitySelection
+        selectedApps: FamilyActivitySelection,
+        savedPaymentMethodId: String? = nil
     ) async throws -> CommitmentResponse {
         // Check authentication first
         guard await isAuthenticated else {
@@ -514,7 +588,7 @@ class BackendClient {
         
         // Call Edge Function instead of RPC to avoid Supabase SDK auto-decoding issues
         // The Edge Function calls the RPC function and returns JSON properly
-        let task = Task.detached(priority: .userInitiated) { [supabase, weekStartDateString, limitMinutes, penaltyPerMinuteCents] in
+        let task = Task.detached(priority: .userInitiated) { [supabase, weekStartDateString, limitMinutes, penaltyPerMinuteCents, savedPaymentMethodId] in
             // Create AppsToLimit inside detached task (nonisolated)
             // Backend expects apps_to_limit as JSONB object with app_bundle_ids and categories arrays
             let appsToLimit = AppsToLimit(
@@ -527,7 +601,8 @@ class BackendClient {
                 weekStartDate: weekStartDateString,
                 limitMinutes: limitMinutes,
                 penaltyPerMinuteCents: penaltyPerMinuteCents,
-                appsToLimit: appsToLimit
+                appsToLimit: appsToLimit,
+                savedPaymentMethodId: savedPaymentMethodId
             )
             
             // Log the params being sent for debugging
