@@ -2,6 +2,75 @@ import SwiftUI
 import Foundation
 import FamilyControls
 import Auth
+import UIKit
+
+// Shake animation modifier for buzzing effect
+struct ShakeEffect: GeometryEffect {
+    var shakes: CGFloat
+    
+    var animatableData: CGFloat {
+        get { shakes }
+        set { shakes = newValue }
+    }
+    
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let offset = sin(shakes * .pi * 2) * 10
+        return ProjectionTransform(CGAffineTransform(translationX: offset, y: 0))
+    }
+}
+
+// Custom Slider View with pink thumb and #666666 inactive track
+struct CustomSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let normalizedValue = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+            let sliderWidth = geometry.size.width
+            let thumbPosition = sliderWidth * CGFloat(normalizedValue)
+            
+            ZStack(alignment: .leading) {
+                // Inactive track (dark part) - #666666
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color(red: 102/255, green: 102/255, blue: 102/255))
+                    .frame(height: 4)
+                
+                // Active track (pink)
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color(red: 226/255, green: 204/255, blue: 205/255))
+                    .frame(width: thumbPosition, height: 4)
+                
+                // Thumb (circle) - pink
+                Circle()
+                    .fill(Color(red: 226/255, green: 204/255, blue: 205/255))
+                    .frame(width: 20, height: 20)
+                    .offset(x: thumbPosition - 10)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { dragValue in
+                                let newPosition = max(0, min(sliderWidth, dragValue.location.x))
+                                let newNormalized = Double(newPosition / sliderWidth)
+                                let newValue = range.lowerBound + newNormalized * (range.upperBound - range.lowerBound)
+                                
+                                // Apply step
+                                let steppedValue = round((newValue - range.lowerBound) / step) * step + range.lowerBound
+                                let oldValue = value
+                                value = max(range.lowerBound, min(range.upperBound, steppedValue))
+                                
+                                // Haptic feedback when value changes
+                                if abs(value - oldValue) > 0.001 {
+                                    let generator = UISelectionFeedbackGenerator()
+                                    generator.selectionChanged()
+                                }
+                            }
+                    )
+            }
+        }
+        .frame(height: 20)
+    }
+}
 
 struct SetupView: View {
     @EnvironmentObject var model: AppModel
@@ -9,6 +78,19 @@ struct SetupView: View {
     @State private var isAuthenticating = false
     @State private var authenticationError: String?
     @State private var showAuthorizationAlert = false
+    @State private var tapCount = 0
+    @State private var lastTapTime: Date?
+    @State private var shouldShakeAppButton: CGFloat = 0 // For buzzing animation when commit is disabled
+    
+    // Pink color constant: #E2CCCD
+    private let pinkColor = Color(red: 226/255, green: 204/255, blue: 205/255)
+    // Gray color for text and dividers: #666666
+    private let grayColor = Color(red: 102/255, green: 102/255, blue: 102/255)
+    
+    // Check if no apps are selected
+    private var hasNoAppsSelected: Bool {
+        model.selectedApps.applicationTokens.count == 0 && model.selectedApps.categoryTokens.count == 0
+    }
     
     // Convert slider position (0.0-1.0) to penalty value ($0.01-$5.00) with $0.10 in the middle
     private func positionToPenalty(_ position: Double) -> Double {
@@ -47,100 +129,117 @@ struct SetupView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 30) {
-                    // Countdown
-                    VStack(spacing: 8) {
-                        Text("Next deadline")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        if let countdownModel = model.countdownModel {
-                            CountdownView(model: countdownModel)
-                        } else {
-                            Text("00:00:00:00")
-                                .font(.system(size: 32, weight: .bold, design: .monospaced))
-                                .monospacedDigit()
-                        }
+            GeometryReader { geometry in
+                ZStack {
+                    // Header absolutely positioned at top - fixed position
+                    VStack(alignment: .leading, spacing: 0) {
+                        PageHeader()
+                        Spacer()
                     }
-                    .padding(.top, 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     
-                    // Time Limit Slider
-                    VStack(alignment: .leading, spacing: 15) {
-                        Text(formatDeadlineLabel())
-                            .font(.headline)
-                        
-                        Text(formatTime(model.limitMinutes))
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        
-                        Slider(
-                            value: $model.limitMinutes,
-                            in: 30...2520, // 30 minutes to 42 hours (in minutes)
-                            step: 15
-                        )
-                        .tint(.black)
-                        
-                        HStack {
-                            Text("30 min")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("42 hours")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        // Testing button to set limit to 1 minute
-                        Button(action: {
-                            model.limitMinutes = 1.0
-                        }) {
-                            Text("Set to 1 min (testing)")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                        }
-                        .padding(.top, 4)
-                    }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
-                    .padding(.horizontal)
-                    
-                    // Penalty Slider
-                    VStack(alignment: .leading, spacing: 15) {
-                        Text("Penalty per minute over limit")
-                            .font(.headline)
-                        
-                        Text("$\(model.penaltyPerMinute, specifier: "%.2f")")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        
-                        Slider(
-                            value: Binding(
-                                get: { penaltyToPosition(model.penaltyPerMinute) },
-                                set: { newPosition in
-                                    model.penaltyPerMinute = positionToPenalty(newPosition)
+                    // Rectangle absolutely positioned - 20 points below countdown (which is at bottom of 180px header)
+                    VStack(spacing: 16) {
+                        // Black rectangle with sliders
+                        ContentCard {
+                            VStack(spacing: 0) {
+                            // Time Limit Slider
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(formatDeadlineLabel())
+                                    .font(.headline)
+                                    .foregroundColor(pinkColor)
+                                    .onTapGesture {
+                                        handleDeadlineLabelTap()
+                                    }
+                                
+                                Text(formatTime(model.limitMinutes))
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(pinkColor)
+                                
+                                CustomSlider(
+                                    value: $model.limitMinutes,
+                                    range: 30...2520, // 30 minutes to 42 hours (in minutes)
+                                    step: 15
+                                )
+                                
+                                HStack {
+                                    Text("30 min")
+                                        .font(.caption)
+                                        .foregroundColor(grayColor)
+                                    Spacer()
+                                    Text("42 hours")
+                                        .font(.caption)
+                                        .foregroundColor(grayColor)
                                 }
-                            ),
-                            in: 0.0...1.0,
-                            step: 0.001
-                        )
-                        .tint(.black)
-                        
-                        HStack {
-                            Text("$0.01")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("$5.00")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            }
+                            .padding(.bottom, 20)
+                            
+                            // Dotted horizontal divider
+                            Rectangle()
+                                .fill(Color.clear)
+                                .frame(height: 1)
+                                .overlay(
+                                    GeometryReader { geometry in
+                                        Path { path in
+                                            path.move(to: CGPoint(x: 0, y: 0))
+                                            path.addLine(to: CGPoint(x: geometry.size.width, y: 0))
+                                        }
+                                        .stroke(grayColor, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                                    }
+                                )
+                                .padding(.vertical, 15)
+                            
+                            // Penalty Slider
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Penalty per minute over limit")
+                                    .font(.headline)
+                                    .foregroundColor(pinkColor)
+                                
+                                Text("$\(model.penaltyPerMinute, specifier: "%.2f")")
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(pinkColor)
+                                
+                                CustomSlider(
+                                    value: Binding(
+                                        get: { penaltyToPosition(model.penaltyPerMinute) },
+                                        set: { newPosition in
+                                            model.penaltyPerMinute = positionToPenalty(newPosition)
+                                        }
+                                    ),
+                                    range: 0.0...1.0,
+                                    step: 0.001
+                                )
+                                
+                                HStack {
+                                    Text("$0.01")
+                                        .font(.caption)
+                                        .foregroundColor(grayColor)
+                                    Spacer()
+                                    Text("$5.00")
+                                        .font(.caption)
+                                        .foregroundColor(grayColor)
+                                }
+                            }
+                            .padding(.top, 20)
                         }
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
-                    .padding(.horizontal)
                     
+                    // Text under the black rectangle
+                    Text("The total weekly penalties will be used for activist anti-screentime campaigns.")
+                        .font(.headline)
+                        .fontWeight(.regular)
+                        .foregroundColor(.black)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    }
+                    .padding(.top, 220) // 180px (header height) + 40px spacing = 220px from top
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    
+                    // Buttons positioned absolutely at bottom (like position: absolute in CSS)
+                    VStack(spacing: 8) {
                     // App Selector
                     Button(action: {
                         Task { @MainActor in
@@ -178,13 +277,14 @@ struct SetupView: View {
                     }) {
                         Label("Select Apps to Limit (\(model.selectedApps.applicationTokens.count + model.selectedApps.categoryTokens.count))", systemImage: "app.fill")
                             .font(.headline)
-                            .foregroundColor(.white)
+                            .foregroundColor(pinkColor)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(Color.blue)
+                            .background(Color.black)
                             .cornerRadius(12)
                     }
                     .padding(.horizontal)
+                    .modifier(ShakeEffect(shakes: shouldShakeAppButton))
                     .familyActivityPicker(isPresented: $showAppPicker, selection: $model.selectedApps)
                     .alert("Screen Time Access Required", isPresented: $showAuthorizationAlert) {
                         Button("Open Settings") {
@@ -210,33 +310,52 @@ struct SetupView: View {
                     
                     // Commit Button
                     Button(action: {
-                        handleCommit()
+                        if hasNoAppsSelected {
+                            // Trigger haptic feedback and shake animation
+                            let generator = UINotificationFeedbackGenerator()
+                            generator.notificationOccurred(.warning)
+                            
+                            // Trigger shake animation on app button
+                            withAnimation(.linear(duration: 0.4)) {
+                                shouldShakeAppButton = 6
+                            }
+                            
+                            // Reset animation after it completes
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                shouldShakeAppButton = 0
+                            }
+                        } else if !isAuthenticating {
+                            handleCommit()
+                        }
                     }) {
                         HStack {
                             if isAuthenticating {
                                 ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .progressViewStyle(CircularProgressViewStyle(tint: pinkColor))
                                     .padding(.trailing, 8)
                             }
                             Text(isAuthenticating ? "Signing in..." : "Commit")
                             .font(.headline)
-                            .foregroundColor(.white)
+                            .foregroundColor((isAuthenticating || hasNoAppsSelected) ? grayColor : pinkColor)
                         }
                             .frame(maxWidth: .infinity)
                             .padding()
-                        .background(isAuthenticating ? Color.gray : Color.pink)
+                        .background(Color.black)
                             .cornerRadius(12)
                     }
-                    .disabled(isAuthenticating)
+                    .disabled(isAuthenticating) // Only disable when authenticating, not when no apps selected
                     .padding(.horizontal)
-                    .padding(.bottom, 40)
+                    }
+                    .padding(.bottom, (geometry.safeAreaInsets.bottom > 0 ? geometry.safeAreaInsets.bottom : 20) + 20) // Move buttons up by 20 points
+                    .background(Color(red: 226/255, green: 204/255, blue: 205/255)) // Match background color
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
             }
-            .navigationTitle("Setup")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(true) // Hide navigation bar to avoid white stripes
             .background(Color(red: 226/255, green: 204/255, blue: 205/255))
             .scrollContentBackground(.hidden)
-            .scrollContentBackground(.hidden)
+            .ignoresSafeArea()
         }
     }
     
@@ -339,6 +458,25 @@ struct SetupView: View {
         } else {
             NSLog("AUTH SetupView: Already authenticated, proceeding")
             await navigateToNextScreen()
+        }
+    }
+    
+    private func handleDeadlineLabelTap() {
+        let now = Date()
+        
+        // Reset tap count if more than 1 second has passed since last tap
+        if let lastTap = lastTapTime, now.timeIntervalSince(lastTap) > 1.0 {
+            tapCount = 0
+        }
+        
+        tapCount += 1
+        lastTapTime = now
+        
+        // If we've reached 3 taps, set limit to 1 minute
+        if tapCount >= 3 {
+            model.limitMinutes = 1.0
+            tapCount = 0
+            lastTapTime = nil
         }
     }
     

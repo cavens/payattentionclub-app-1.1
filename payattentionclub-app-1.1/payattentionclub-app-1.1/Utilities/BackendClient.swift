@@ -982,7 +982,7 @@ struct UsageReportResponse: Codable, Sendable {
 }
 
 
-struct WeekStatusResponse: Codable, Sendable {
+struct WeekStatusResponse: Codable, Sendable, Equatable {
     let userTotalPenaltyCents: Int
     let userStatus: String
     let userMaxChargeCents: Int
@@ -1079,6 +1079,26 @@ struct WeekStatusResponse: Codable, Sendable {
         weekGraceExpiresAt = try container.decodeIfPresent(String.self, forKey: .weekGraceExpiresAt)
         weekEndDate = try container.decodeIfPresent(String.self, forKey: .weekEndDate)
     }
+    
+    nonisolated static func == (lhs: WeekStatusResponse, rhs: WeekStatusResponse) -> Bool {
+        return lhs.userTotalPenaltyCents == rhs.userTotalPenaltyCents &&
+               lhs.userStatus == rhs.userStatus &&
+               lhs.userMaxChargeCents == rhs.userMaxChargeCents &&
+               lhs.poolTotalPenaltyCents == rhs.poolTotalPenaltyCents &&
+               lhs.poolStatus == rhs.poolStatus &&
+               lhs.poolInstagramPostUrl == rhs.poolInstagramPostUrl &&
+               lhs.poolInstagramImageUrl == rhs.poolInstagramImageUrl &&
+               lhs.userSettlementStatus == rhs.userSettlementStatus &&
+               lhs.chargedAmountCents == rhs.chargedAmountCents &&
+               lhs.actualAmountCents == rhs.actualAmountCents &&
+               lhs.refundAmountCents == rhs.refundAmountCents &&
+               lhs.needsReconciliation == rhs.needsReconciliation &&
+               lhs.reconciliationDeltaCents == rhs.reconciliationDeltaCents &&
+               lhs.reconciliationReason == rhs.reconciliationReason &&
+               lhs.reconciliationDetectedAt == rhs.reconciliationDetectedAt &&
+               lhs.weekGraceExpiresAt == rhs.weekGraceExpiresAt &&
+               lhs.weekEndDate == rhs.weekEndDate
+    }
 }
 
 // MARK: - Admin Close Week Response Model
@@ -1094,5 +1114,19 @@ struct AdminCloseWeekResponse: Codable, Sendable {
         case message
         case triggeredBy = "triggered_by"
         // result is intentionally omitted - we don't need it
+    }
+    
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        message = try container.decode(String.self, forKey: .message)
+        triggeredBy = try container.decodeIfPresent(String.self, forKey: .triggeredBy)
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(ok, forKey: .ok)
+        try container.encode(message, forKey: .message)
+        try container.encodeIfPresent(triggeredBy, forKey: .triggeredBy)
     }
 }

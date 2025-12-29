@@ -7,16 +7,28 @@ struct CountdownView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let components = format(deadline: model.deadline, now: context.date)
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 TimeUnit(value: components.days, label: "D")
-                Text(":")
-                    .font(.system(size: 32, weight: .bold, design: .monospaced))
+                VStack(alignment: .center, spacing: 0) {
+                    Text(":")
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                    Spacer()
+                        .frame(height: 18) // Match label height (caption ~12pt) + spacing (2pt) to align semicolon with numbers
+                }
                 TimeUnit(value: components.hours, label: "H")
-                Text(":")
-                    .font(.system(size: 32, weight: .bold, design: .monospaced))
+                VStack(alignment: .center, spacing: 0) {
+                    Text(":")
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                    Spacer()
+                        .frame(height: 18) // Match label height (caption ~12pt) + spacing (2pt) to align semicolon with numbers
+                }
                 TimeUnit(value: components.minutes, label: "M")
-                Text(":")
-                .font(.system(size: 32, weight: .bold, design: .monospaced))
+                VStack(alignment: .center, spacing: 0) {
+                    Text(":")
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                    Spacer()
+                        .frame(height: 18) // Match label height (caption ~12pt) + spacing (2pt) to align semicolon with numbers
+                }
                 TimeUnit(value: components.seconds, label: "S")
             }
                 .onChange(of: scenePhase) { newPhase in

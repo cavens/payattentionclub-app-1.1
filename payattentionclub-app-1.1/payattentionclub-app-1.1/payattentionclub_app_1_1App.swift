@@ -34,6 +34,8 @@ struct payattentionclub_app_1_1App: App {
             // Scene bodies don't re-evaluate when @Published properties change
             RootRouterView()
                 .environmentObject(model)
+                .background(Color(red: 226/255, green: 204/255, blue: 205/255))
+                .ignoresSafeArea()
                 .onOpenURL { url in
                     NSLog("DEEPLINK App: Received URL %@", url.absoluteString)
                     model.handleDeepLink(url)

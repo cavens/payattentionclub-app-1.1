@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import FamilyControls
 
 struct MonitorView: View {
     @EnvironmentObject var model: AppModel
@@ -8,116 +9,174 @@ struct MonitorView: View {
     @State private var tapCount = 0
     @State private var lastTapTime: Date?
     
+    // Pink color constant: #E2CCCD
+    private let pinkColor = Color(red: 226/255, green: 204/255, blue: 205/255)
+    
     var body: some View {
         NavigationView {
-            ZStack {
-                VStack(spacing: 24) {
-                    // Countdown to next deadline
-                    VStack(spacing: 8) {
-                        Text("Next deadline")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        if let countdownModel = model.countdownModel {
-                            CountdownView(model: countdownModel)
-                                .onTapGesture {
-                                    handleCountdownTap()
-                                }
-                        } else {
-                            Text("00:00:00:00")
-                                .font(.system(size: 32, weight: .bold, design: .monospaced))
-                                .monospacedDigit()
-                                .onTapGesture {
-                                    handleCountdownTap()
-                                }
-                        }
-                    }
-                    .padding(.top, 20)
-
-                // Progress Bar
-                VStack(alignment: .leading, spacing: 15) {
-                    Text("Time Spent")
-                        .font(.headline)
-                    
-                    GeometryReader { geometry in
-                        ZStack(alignment: .leading) {
-                            // Background
-                            Rectangle()
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(height: 40)
-                                .cornerRadius(8)
-                            
-                            // Progress
-                            let usageMinutes = Double(model.currentUsageSeconds - model.baselineUsageSeconds) / 60.0
-                            let progress = min(usageMinutes / model.limitMinutes, 1.0)
-                            
-                            Rectangle()
-                                .fill(Color.pink)
-                                .frame(
-                                    width: min(geometry.size.width * CGFloat(progress), geometry.size.width),
-                                    height: 40
-                                )
-                                .cornerRadius(8)
-                            
-                            // Time label
-                            HStack {
-                                Text(formatTime(Double(model.currentUsageSeconds - model.baselineUsageSeconds)))
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text(formatTime(model.limitMinutes * 60))
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
+            GeometryReader { geometry in
+                ZStack {
+                    // Header absolutely positioned at top - fixed position
+                    VStack(alignment: .leading, spacing: 0) {
+                        PageHeader()
+                            .onTapGesture {
+                                handleCountdownTap()
                             }
-                            .padding(.horizontal, 8)
-                        }
+                        Spacer()
                     }
-                    .frame(height: 40)
-                }
-                .padding(.horizontal)
-                
-                // Current Penalty
-                VStack(spacing: 10) {
-                    Text("Current Penalty")
-                        .font(.headline)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     
-                    Text("$\(model.currentPenalty, specifier: "%.2f")")
-                        .font(.system(size: 36, weight: .bold))
-                        .foregroundColor(.red)
-                }
-                .padding()
-                .background(Color.gray.opacity(0.1))
-                .cornerRadius(12)
-                .padding(.horizontal)
-                
-                Spacer()
-                }
-                
-                // Loading overlay during startMonitoring()
-                if model.isStartingMonitoring {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                    
+                    // Rectangle absolutely positioned - 20 points below countdown (which is at bottom of 180px header)
                     VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        
-                        Text("Starting monitoring...")
-                            .font(.headline)
-                            .foregroundColor(.white)
+                        ZStack {
+                            // White rectangle behind (empty, slid down 50 points)
+                            VStack(spacing: 0) {
+                                Spacer()
+                                
+                                // Progress bar section at bottom
+                                VStack(spacing: 8) {
+                                    // Progress bar - same width as sliders in setup screen
+                                    GeometryReader { geometry in
+                                        ZStack(alignment: .leading) {
+                                            // Pink background
+                                            RoundedRectangle(cornerRadius: 2)
+                                                .fill(pinkColor)
+                                                .frame(height: 4)
+                                            
+                                            // Black filling part
+                                            let progress = min(1.0, max(0.0, Double(model.currentUsageSeconds) / 60.0 / model.limitMinutes))
+                                            RoundedRectangle(cornerRadius: 2)
+                                                .fill(Color.black)
+                                                .frame(width: geometry.size.width * CGFloat(progress), height: 4)
+                                        }
+                                    }
+                                    .frame(height: 4)
+                                    
+                                    // Labels below progress bar
+                                    HStack {
+                                        // Left: minutes spent
+                                        Text("\(Int(Double(model.currentUsageSeconds) / 60.0)) min spent")
+                                            .font(.caption)
+                                            .foregroundColor(Color(red: 102/255, green: 102/255, blue: 102/255))
+                                        
+                                        Spacer()
+                                        
+                                        // Right: time limit (aligned with right of progress bar)
+                                        Text("\(Int(model.limitMinutes)) min limit")
+                                            .font(.caption)
+                                            .foregroundColor(Color(red: 102/255, green: 102/255, blue: 102/255))
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 16)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 150) // Increased height to make progress bar more visible
+                            .background(Color.white)
+                            .cornerRadius(12)
+                            .padding(.horizontal)
+                            .offset(y: 80) // Slide down 80 points (moved down even more)
+                            
+                            // Black rectangle with current penalty (on top)
+                            ContentCard {
+                                VStack(spacing: 0) {
+                                    VStack(alignment: .center, spacing: 12) {
+                                        Text("Current penalty")
+                                            .font(.headline)
+                                            .foregroundColor(pinkColor)
+                                        
+                                        Text("$\(model.currentPenalty, specifier: "%.2f")")
+                                            .font(.system(size: 56, weight: .bold))
+                                            .foregroundColor(pinkColor)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 120) // Double the height (same as authorization screen)
+                            }
+                        }
+                        .frame(height: 210) // Extra height to accommodate offset white rectangle (increased for more offset)
                     }
-                    .padding(24)
-                    .background(Color.black.opacity(0.7))
-                    .cornerRadius(12)
+                    .padding(.top, 220) // 180px (header height) + 40px spacing = 220px from top
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    
+                    // Text below white box (almost sticking to bottom of white box)
+                    VStack(alignment: .center, spacing: 12) {
+                        // Limited apps section
+                        VStack(alignment: .center, spacing: 4) {
+                            Text("Limited apps:")
+                                .font(.body)
+                                .fontWeight(.bold)
+                                .foregroundColor(.black)
+                            
+                            Text(formatAppList())
+                                .font(.body)
+                                .foregroundColor(.black)
+                        }
+                        
+                        // Space between app list and penalty text
+                        Spacer()
+                            .frame(height: 8)
+                        
+                        // Penalty explanation
+                        Text("When exceeding the \(formatHours(model.limitMinutes)) hours, you will be charged $\(model.penaltyPerMinute, specifier: "%.2f") per extra minute with a maximum of $\(model.authorizationAmount, specifier: "%.2f").")
+                            .font(.body)
+                            .foregroundColor(.black)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 280) // Position almost sticking to bottom of white box (220 header + 80 offset + 150 white box = 450, but we want it close to bottom, so ~280)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    
+                    // Loading overlay during startMonitoring()
+                    if model.isStartingMonitoring {
+                        Color.black.opacity(0.3)
+                            .ignoresSafeArea()
+                        
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            
+                            Text("Starting monitoring...")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                        }
+                        .padding(24)
+                        .background(Color.black.opacity(0.7))
+                        .cornerRadius(12)
+                    }
                 }
             }
-            .navigationTitle("Monitor")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(true) // Hide navigation bar to avoid white stripes
             .background(Color(red: 226/255, green: 204/255, blue: 205/255))
+            .scrollContentBackground(.hidden)
+            .ignoresSafeArea()
             .withLogoutButton()
             .onAppear {
                 startTimer()
                 model.refreshWeekStatus()
+                
+                // Load authorization amount from backend if not already set
+                if model.authorizationAmount == 0.0 {
+                    Task {
+                        let amount = await model.fetchAuthorizationAmount()
+                        await MainActor.run {
+                            model.authorizationAmount = amount
+                            model.savePersistedValues()
+                        }
+                    }
+                }
+            }
+            .onChange(of: model.weekStatus) { newStatus in
+                // Update authorization amount from week status (comes from backend commitment)
+                if let weekStatus = newStatus {
+                    let maxChargeDollars = Double(weekStatus.userMaxChargeCents) / 100.0
+                    if model.authorizationAmount != maxChargeDollars {
+                        model.authorizationAmount = maxChargeDollars
+                        model.savePersistedValues()
+                    }
+                }
             }
             .onDisappear {
                 stopTimer()
@@ -190,6 +249,36 @@ struct MonitorView: View {
         let hours = Int(seconds) / 3600
         let minutes = (Int(seconds) % 3600) / 60
         return "\(hours)h \(minutes)m"
+    }
+    
+    private func formatHours(_ minutes: Double) -> String {
+        let hours = minutes / 60.0
+        if hours == floor(hours) {
+            return String(format: "%.0f", hours)
+        } else {
+            return String(format: "%.1f", hours)
+        }
+    }
+    
+    private func formatAppList() -> String {
+        let appCount = model.selectedApps.applicationTokens.count
+        let categoryCount = model.selectedApps.categoryTokens.count
+        let totalCount = appCount + categoryCount
+        
+        if totalCount == 0 {
+            return "No apps selected"
+        }
+        
+        // Since we can't easily get app names from tokens, show count-based placeholder
+        // This can be enhanced later to retrieve actual app names
+        var items: [String] = []
+        if appCount > 0 {
+            items.append("\(appCount) app\(appCount == 1 ? "" : "s")")
+        }
+        if categoryCount > 0 {
+            items.append("\(categoryCount) categor\(categoryCount == 1 ? "y" : "ies")")
+        }
+        return items.joined(separator: ", ")
     }
 }
 
@@ -388,4 +477,3 @@ struct SecretSettlementPanel: View {
         showingUsageReportAlert = true
     }
 }
-

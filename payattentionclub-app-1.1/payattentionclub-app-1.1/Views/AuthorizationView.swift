@@ -7,130 +7,162 @@ import PassKit
 struct AuthorizationView: View {
     @EnvironmentObject var model: AppModel
     @State private var calculatedAmount: Double = 0.0
+    @State private var animatedAmount: Double = 0.0
     @State private var isLockingIn = false
     @State private var lockInError: String?
     @State private var isPresentingPaymentSheet = false
+    // Pink color constant: #E2CCCD
+    private let pinkColor = Color(red: 226/255, green: 204/255, blue: 205/255)
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 24) {
-                Spacer()
-                
-                VStack(spacing: 12) {
-                    Text("Authorization Amount")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    
-                    Text("$\(calculatedAmount, specifier: "%.2f")")
-                        .font(.system(size: 44, weight: .bold))
-                        .foregroundColor(.pink)
-                    
-                    Text("""
-We save your card with Stripe today (Setup Intent) so the weekly settlement can run automatically:
-
-• Monday 12:05 PM ET: we send a reminder to open the app.
-• Open the app any time before Tuesday 12:00 PM ET to sync and pay your actual minutes.
-• Skip the sync and Tuesday noon charges the max penalty; open later and we refund or adjust automatically.
-""")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                }
-                
-                // Countdown
-                VStack(spacing: 8) {
-                    Text("Next deadline")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    if let countdownModel = model.countdownModel {
-                        CountdownView(model: countdownModel)
-                    } else {
-                        Text("00:00:00:00")
-                            .font(.system(size: 32, weight: .bold, design: .monospaced))
-                            .monospacedDigit()
+            GeometryReader { geometry in
+                ZStack {
+                    // Header absolutely positioned at top - fixed position
+                    VStack(alignment: .leading, spacing: 0) {
+                        PageHeader()
+                        Spacer()
                     }
-                }
-                .padding()
-                
-                // Prominent Apple Pay button (if available)
-                if PKPaymentAuthorizationController.canMakePayments() {
-                    ApplePayButton(
-                        action: {
-                            Task {
-                                await lockInAndStartMonitoring(preferApplePay: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    
+                    // Rectangle absolutely positioned - 20 points below countdown (which is at bottom of 180px header)
+                    VStack(spacing: 16) {
+                        // Black rectangle with authorization amount
+                        ContentCard {
+                            VStack(spacing: 0) {
+                                VStack(alignment: .center, spacing: 12) {
+                                    Text("Authorization Amount")
+                                        .font(.headline)
+                                        .foregroundColor(pinkColor)
+                                    
+                                    Text("$\(animatedAmount, specifier: "%.2f")")
+                                        .font(.system(size: 56, weight: .bold))
+                                        .foregroundColor(pinkColor)
+                                }
                             }
-                        },
-                        isEnabled: !isLockingIn && !isPresentingPaymentSheet
-                    )
-                    .frame(height: 50)
-                    .padding(.horizontal)
-                    
-                    // Divider with "or" text
-                    HStack {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(height: 1)
-                        Text("or")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 8)
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(height: 1)
-                    }
-                    .padding(.horizontal)
-                }
-                
-                // Regular payment button (fallback or when Apple Pay not available)
-                Button(action: {
-                    Task {
-                        await lockInAndStartMonitoring(preferApplePay: false)
-                    }
-                }) {
-                    HStack {
-                        if isLockingIn {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .padding(.trailing, 8)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 120) // Double the height (was ~60, now 120)
                         }
-                        Text(isPresentingPaymentSheet ? "Setting up payment..." : (isLockingIn ? "Locking in..." : "Other Payment Methods"))
-                        .font(.headline)
-                        .foregroundColor(.white)
+                        
+                        // Text under the black rectangle
+                        VStack(spacing: 12) {
+                            (Text("Given your settings we calculated this ") +
+                             Text("maximum charge").fontWeight(.bold) +
+                             Text(" amount. This means you can never loose more than this amount."))
+                                .font(.headline)
+                                .fontWeight(.regular)
+                                .foregroundColor(.black)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            
+                            // Horizontal dotted divider in black
+                            Rectangle()
+                                .fill(Color.clear)
+                                .frame(height: 1)
+                                .overlay(
+                                    GeometryReader { geometry in
+                                        Path { path in
+                                            path.move(to: CGPoint(x: 0, y: 0))
+                                            path.addLine(to: CGPoint(x: geometry.size.width, y: 0))
+                                        }
+                                        .stroke(Color.black, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                                    }
+                                )
+                                .padding(.horizontal)
+                            
+                            Text("The total weekly penalties will be used for activist anti-screentime campaigns.")
+                                .font(.headline)
+                                .fontWeight(.regular)
+                                .foregroundColor(.black)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                        }
+                        .padding(.top, 8)
                     }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                    .background(isLockingIn ? Color.gray : Color.pink)
-                        .cornerRadius(12)
-                }
-                .disabled(isLockingIn || isPresentingPaymentSheet)
-                .padding(.horizontal)
-                
-                // Show error if any
-                if let error = lockInError {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
+                    .padding(.top, 220) // 180px (header height) + 40px spacing = 220px from top
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    
+                    // Buttons positioned absolutely at bottom (like position: absolute in CSS)
+                    VStack(spacing: 8) {
+                        // Apple Pay Button
+                        if PKPaymentAuthorizationController.canMakePayments() {
+                            ApplePayButton(
+                                action: {
+                                    Task {
+                                        await lockInAndStartMonitoring(preferApplePay: true)
+                                    }
+                                },
+                                isEnabled: !isLockingIn && !isPresentingPaymentSheet
+                            )
+                            .frame(height: 50)
+                            .padding(.horizontal)
+                        }
+                        
+                        // Other Payment Methods Button
+                        Button(action: {
+                            Task {
+                                await lockInAndStartMonitoring(preferApplePay: false)
+                            }
+                        }) {
+                            HStack {
+                                if isLockingIn {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                                        .padding(.trailing, 8)
+                                }
+                                Text(isPresentingPaymentSheet ? "Setting up payment..." : (isLockingIn ? "Locking in..." : "Other Payment Methods"))
+                                    .font(.headline)
+                                    .foregroundColor(.black)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color(red: 255/255, green: 244/255, blue: 244/255)) // #FFF4F4
+                            .cornerRadius(12)
+                        }
+                        .disabled(isLockingIn || isPresentingPaymentSheet)
                         .padding(.horizontal)
+                        
+                        // Cancel button (just text)
+                        Button(action: {
+                            model.navigate(.setup)
+                        }) {
+                            Text("Cancel")
+                                .font(.headline)
+                                .foregroundColor(.black)
+                        }
+                        .padding(.horizontal)
+                    }
+                    .padding(.bottom, (geometry.safeAreaInsets.bottom > 0 ? geometry.safeAreaInsets.bottom : 20) + 20) // Move buttons up by 20 points
+                    .background(Color(red: 226/255, green: 204/255, blue: 205/255)) // Match background color
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
-                
-                Button(role: .cancel) {
-                    model.navigate(.setup)
-                } label: {
-                    Text("Cancel")
-                        .frame(maxWidth: .infinity)
-                }
-                .padding(.horizontal)
-                
-                Spacer()
             }
-            .navigationTitle("Authorization")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(true) // Hide navigation bar to avoid white stripes
             .background(Color(red: 226/255, green: 204/255, blue: 205/255))
+            .scrollContentBackground(.hidden)
+            .ignoresSafeArea()
             .task {
                 calculatedAmount = await model.fetchAuthorizationAmount()
                 model.authorizationAmount = calculatedAmount
+                model.savePersistedValues() // Save authorization amount
+                
+                // Animate from 0 to calculated amount over 1 second
+                animateAmount(from: 0.0, to: calculatedAmount, duration: 1.0)
             }
+            .onDisappear {
+                // Cleanup if needed
+            }
+        }
+    }
+    
+    private func animateAmount(from: Double, to: Double, duration: Double) {
+        // Use SwiftUI's animation system which works well for number animations
+        animatedAmount = from
+        
+        // Animate to target value over the specified duration
+        withAnimation(.easeOut(duration: duration)) {
+            animatedAmount = to
         }
     }
     
@@ -170,7 +202,7 @@ We save your card with Stripe today (Setup Intent) so the weekly settlement can 
                             clientSecret: clientSecret,
                             amount: amount
                         )
-                        NSLog("LOCKIN AuthorizationView: ✅ Step 1.5 complete - PaymentIntent confirmed and cancelled, saved payment method ID: \(savedPaymentMethodId)")
+                        NSLog("LOCKIN AuthorizationView: ✅ Step 1.5 complete - PaymentIntent confirmed and cancelled, saved payment method ID: \(savedPaymentMethodId ?? "nil")")
                     } else {
                         // Use PaymentSheet (for other payment methods)
                         // Note: PaymentSheet with PaymentIntent is not yet implemented
@@ -311,15 +343,27 @@ struct ApplePayButton: UIViewRepresentable {
     var isEnabled: Bool = true
     
     func makeUIView(context: Context) -> PKPaymentButton {
+        // Note: Apple Pay logo color cannot be customized per Apple's guidelines
+        // Available styles: .black, .white, .whiteOutline
+        // Using .black style with white logo (standard)
         let button = PKPaymentButton(paymentButtonType: .plain, paymentButtonStyle: .black)
         button.addTarget(context.coordinator, action: #selector(Coordinator.buttonTapped), for: .touchUpInside)
         button.isEnabled = isEnabled
+        
+        // Set corner radius to match other buttons (12 points)
+        button.layer.cornerRadius = 12
+        button.clipsToBounds = true
+        
         return button
     }
     
     func updateUIView(_ uiView: PKPaymentButton, context: Context) {
         uiView.isEnabled = isEnabled
         uiView.alpha = isEnabled ? 1.0 : 0.6
+        
+        // Ensure corner radius is maintained
+        uiView.layer.cornerRadius = 12
+        uiView.clipsToBounds = true
     }
     
     func makeCoordinator() -> Coordinator {
@@ -338,4 +382,3 @@ struct ApplePayButton: UIViewRepresentable {
         }
     }
 }
-

@@ -44,7 +44,7 @@ final class AppModel: ObservableObject {
     }
     
     /// Finish initialization after UI has rendered (called from LoadingView.onAppear)
-    func finishInitialization() {
+    func finishInitialization() async {
         NSLog("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
         print("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
         fflush(stdout)
@@ -87,9 +87,10 @@ final class AppModel: ObservableObject {
         
         // Check if monitoring is already active - if so, navigate to monitor screen
         // Otherwise navigate to setup
+        // Wait for loading animation to complete (2.7 seconds: 0.6s fade in + 1.5s stay + 0.6s fade out)
         Task { @MainActor in
-            // Small delay to let UI render
-            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+            // Wait for logo animation to complete before navigating
+            try? await Task.sleep(nanoseconds: 2_700_000_000) // 2.7 seconds
             
             // Explicitly check deadline first (before checking monitoring status)
             let storedDeadline = UsageTracker.shared.getCommitmentDeadline()
@@ -119,14 +120,17 @@ final class AppModel: ObservableObject {
             print("RESET AppModel: 🎯 Final decision - Monitoring active: \(isActive ? "YES → Monitor" : "NO → Setup")")
             fflush(stdout)
             
-            if isActive {
-                // Monitoring is active and deadline hasn't passed - navigate to monitor screen
-                // Also refresh usage data from App Group
-                await refreshUsageFromAppGroup()
-                self.navigate(.monitor)
-            } else {
-                // No active monitoring (either not started or deadline passed) - navigate to setup
-                self.navigate(.setup)
+            // Only navigate if still on loading screen (don't interrupt if user already navigated)
+            if self.currentScreen == .loading {
+                if isActive {
+                    // Monitoring is active and deadline hasn't passed - navigate to monitor screen
+                    // Also refresh usage data from App Group
+                    await refreshUsageFromAppGroup()
+                    self.navigate(.monitor)
+                } else {
+                    // No active monitoring (either not started or deadline passed) - navigate to setup
+                    self.navigate(.setup)
+                }
             }
         }
     }
@@ -371,6 +375,11 @@ final class AppModel: ObservableObject {
         
         baselineUsageSeconds = userDefaults.integer(forKey: "baselineUsageSeconds")
         currentUsageSeconds = userDefaults.integer(forKey: "currentUsageSeconds")
+        
+        // Load authorizationAmount
+        if userDefaults.object(forKey: "authorizationAmount") != nil {
+            authorizationAmount = userDefaults.double(forKey: "authorizationAmount")
+        }
     }
     
     func savePersistedValues() {
@@ -381,6 +390,7 @@ final class AppModel: ObservableObject {
         userDefaults.set(limitMinutes, forKey: "limitMinutes")
         userDefaults.set(penaltyPerMinute, forKey: "penaltyPerMinute")
         userDefaults.set(baselineUsageSeconds, forKey: "baselineUsageSeconds")
+        userDefaults.set(authorizationAmount, forKey: "authorizationAmount")
         
         // Save selectedApps - persist for next commit
         if let encoded = try? JSONEncoder().encode(selectedApps) {
