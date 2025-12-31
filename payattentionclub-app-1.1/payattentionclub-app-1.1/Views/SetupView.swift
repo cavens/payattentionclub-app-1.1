@@ -29,7 +29,9 @@ struct CustomSlider: View {
         GeometryReader { geometry in
             let normalizedValue = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
             let sliderWidth = geometry.size.width
-            let thumbPosition = sliderWidth * CGFloat(normalizedValue)
+            // Clamp normalizedValue to valid range and ensure thumbPosition is always valid
+            let clampedNormalized = max(0, min(1, normalizedValue))
+            let thumbPosition = max(0, min(sliderWidth, sliderWidth * CGFloat(clampedNormalized)))
             
             ZStack(alignment: .leading) {
                 // Inactive track (dark part) - #666666

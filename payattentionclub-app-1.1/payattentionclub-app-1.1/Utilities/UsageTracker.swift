@@ -119,22 +119,13 @@ class UsageTracker {
     /// Check if monitoring is active (also checks if deadline has passed)
     func isMonitoringActive() -> Bool {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            NSLog("RESET UsageTracker: ❌ No UserDefaults access")
-            print("RESET UsageTracker: ❌ No UserDefaults access")
-            fflush(stdout)
             return false
         }
         
         let flagIsSet = userDefaults.bool(forKey: "monitoringSelectionSet")
-        NSLog("RESET UsageTracker: monitoringSelectionSet flag: %@", flagIsSet ? "true" : "false")
-        print("RESET UsageTracker: monitoringSelectionSet flag: \(flagIsSet)")
-        fflush(stdout)
         
         // If flag is not set, monitoring is not active
         if !flagIsSet {
-            NSLog("RESET UsageTracker: Monitoring flag not set, returning false")
-            print("RESET UsageTracker: Monitoring flag not set, returning false")
-            fflush(stdout)
             return false
         }
         
@@ -143,33 +134,20 @@ class UsageTracker {
         if deadline == nil {
             // Flag is set but no deadline stored - this is an orphaned state
             // Clear it and treat as inactive
-            NSLog("RESET UsageTracker: ⚠️ WARNING: monitoringSelectionSet is true but NO deadline stored! Clearing orphaned state.")
-            print("RESET UsageTracker: ⚠️ WARNING: monitoringSelectionSet is true but NO deadline stored! Clearing orphaned state.")
-            fflush(stdout)
             clearExpiredMonitoringState()
             return false
         }
         
         // Check if deadline has passed
         let deadlinePassed = isCommitmentDeadlinePassed()
-        let currentDate = Date()
-        NSLog("RESET UsageTracker: Deadline: %@, Current: %@, Passed: %@", String(describing: deadline!), String(describing: currentDate), deadlinePassed ? "YES" : "NO")
-        print("RESET UsageTracker: Deadline: \(deadline!), Current: \(currentDate), Passed: \(deadlinePassed)")
-        fflush(stdout)
         
         if deadlinePassed {
             // Deadline has passed - clear expired state
-            NSLog("RESET UsageTracker: ⏰ Deadline has passed, clearing expired monitoring state")
-            print("RESET UsageTracker: ⏰ Deadline has passed, clearing expired monitoring state")
-            fflush(stdout)
             clearExpiredMonitoringState()
             return false
         }
         
         // Flag is set and deadline hasn't passed
-        NSLog("RESET UsageTracker: ✅ Monitoring is ACTIVE (flag set, deadline not passed)")
-        print("RESET UsageTracker: ✅ Monitoring is ACTIVE (flag set, deadline not passed)")
-        fflush(stdout)
         return true
     }
 }

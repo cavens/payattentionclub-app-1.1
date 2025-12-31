@@ -8,7 +8,11 @@ if (!STRIPE_SECRET_KEY) {
   console.error("ERROR: No Stripe secret key found. Please set STRIPE_SECRET_KEY_TEST or STRIPE_SECRET_KEY in Supabase secrets.");
 }
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
+// Use environment-specific secret (STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY)
+const SUPABASE_SECRET_KEY = 
+  Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || 
+  Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") ||
+  Deno.env.get("SUPABASE_SECRET_KEY"); // Fallback for backward compatibility
 // Change this if you want a different currency
 const CURRENCY = "usd";
 const stripe = new Stripe(STRIPE_SECRET_KEY, {
@@ -20,6 +24,20 @@ function toDateString(d) {
 }
 Deno.serve(async (req)=>{
   try {
+    // Validate environment variables
+    if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+      console.error("weekly-close: Missing required environment variables");
+      console.error("weekly-close: SUPABASE_URL:", SUPABASE_URL ? "✅" : "❌");
+      console.error("weekly-close: SUPABASE_SECRET_KEY:", SUPABASE_SECRET_KEY ? "✅" : "❌");
+      return new Response(JSON.stringify({
+        error: "Internal server error",
+        details: "Missing Supabase configuration. SUPABASE_URL and either STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets."
+      }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    
     // Optional: only allow POST
     if (req.method !== "POST") {
       return new Response("Use POST", {

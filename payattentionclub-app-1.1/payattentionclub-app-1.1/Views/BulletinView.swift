@@ -33,8 +33,7 @@ struct BulletinView: View {
     }
     
     var body: some View {
-        NavigationView {
-            GeometryReader { geometry in
+        GeometryReader { geometry in
                 ZStack {
                     // Header absolutely positioned at top - fixed position
                     VStack(alignment: .leading, spacing: 0) {
@@ -177,7 +176,6 @@ struct BulletinView: View {
                     NSLog("BULLETIN BulletinView: Week status loaded - penalty: \(weekStatus.userTotalPenaltyCents) cents")
                 }
             }
-        }
     }
     
     private func updateUsage() {

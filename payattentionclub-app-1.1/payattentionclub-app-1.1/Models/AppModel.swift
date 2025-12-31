@@ -45,93 +45,233 @@ final class AppModel: ObservableObject {
     
     /// Finish initialization after UI has rendered (called from LoadingView.onAppear)
     func finishInitialization() async {
-        NSLog("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
-        print("SYNC AppModel: 🔍 finishInitialization() called, isInitialized: \(isInitialized)")
-        fflush(stdout)
         guard !isInitialized else { 
-            NSLog("SYNC AppModel: ⏸️ Already initialized, skipping")
             return 
         }
         isInitialized = true
-        NSLog("SYNC AppModel: ✅ Setting isInitialized = true")
-        print("SYNC AppModel: ✅ Setting isInitialized = true")
-        fflush(stdout)
         
-        // Initialize countdown model (deferred to avoid blocking startup)
+        // Initialize countdown model (lightweight operation)
         let deadline = getNextMondayNoonEST()
         countdownModel = CountdownModel(deadline: deadline)
-        
-        // Load persisted values from App Group
-        loadPersistedValues()
-        
-        // Cache deadline date (now that countdownModel exists)
         refreshCachedDeadline()
         
-        // Phase 3: Sync unsynced usage entries on app launch
-        Task { @MainActor in
-            NSLog("SYNC AppModel: 🚀 Starting sync task on app launch")
-            print("SYNC AppModel: 🚀 Starting sync task on app launch")
-            fflush(stdout)
-            do {
-                try await UsageSyncManager.shared.syncToBackend()
-                NSLog("SYNC AppModel: ✅ Sync completed successfully")
-                print("SYNC AppModel: ✅ Sync completed successfully")
-                fflush(stdout)
-            } catch {
-                NSLog("SYNC AppModel: ⚠️ Failed to sync usage on launch: \(error)")
-                print("SYNC AppModel: ⚠️ Failed to sync usage on launch: \(error)")
-                fflush(stdout)
-                // Don't block app startup if sync fails
-            }
+        // Wait for loading animation to complete before navigating
+        // This ensures user sees the loading screen logo
+        try? await Task.sleep(nanoseconds: 2_700_000_000) // 2.7 seconds (0.6s fade in + 1.5s stay + 0.6s fade out)
+        
+        // Check for existing commitment via backend (avoids UserDefaults reads)
+        // This determines which screen to show on app restart
+        await checkForExistingCommitmentAndNavigate()
+    }
+    
+    /// Check if user has an active commitment and navigate to appropriate screen
+    /// Uses backend API instead of UserDefaults to avoid startup hangs
+    private func checkForExistingCommitmentAndNavigate() async {
+        // Check if user is authenticated
+        let isAuth = await BackendClient.shared.isAuthenticated
+        guard isAuth else {
+            NSLog("INIT AppModel: ⚠️ Not authenticated, navigating to setup")
+        navigate(.setup)
+            return
         }
         
-        // Check if monitoring is already active - if so, navigate to monitor screen
-        // Otherwise navigate to setup
-        // Wait for loading animation to complete (2.7 seconds: 0.6s fade in + 1.5s stay + 0.6s fade out)
-        Task { @MainActor in
-            // Wait for logo animation to complete before navigating
-            try? await Task.sleep(nanoseconds: 2_700_000_000) // 2.7 seconds
+        // Try to fetch week status (this will succeed if commitment exists for current week)
+        do {
+            // Pass nil to get current week's status
+            let weekStatus = try await BackendClient.shared.fetchWeekStatus(weekStartDate: nil)
             
-            // Explicitly check deadline first (before checking monitoring status)
-            let storedDeadline = UsageTracker.shared.getCommitmentDeadline()
-            let monitoringFlagSet = UsageTracker.shared.isMonitoringFlagSet()
+            // Check if commitment exists by looking at userMaxChargeCents
+            // This is more reliable than just checking weekEndDate
+            let hasCommitment = weekStatus.userMaxChargeCents > 0
             
-            NSLog("RESET AppModel: 📋 Initial check - Deadline exists: %@, Monitoring flag: %@", 
-                  storedDeadline != nil ? "YES" : "NO",
-                  monitoringFlagSet ? "SET" : "NOT SET")
-            print("RESET AppModel: 📋 Initial check - Deadline exists: \(storedDeadline != nil ? "YES" : "NO"), Monitoring flag: \(monitoringFlagSet ? "SET" : "NOT SET")")
-            fflush(stdout)
+            NSLog("INIT AppModel: 🔍 Week status check - userMaxChargeCents: \(weekStatus.userMaxChargeCents), commitmentCreatedAt: \(weekStatus.commitmentCreatedAt ?? "nil")")
             
-            if let deadline = storedDeadline {
-                let now = Date()
-                let passed = now >= deadline
-                NSLog("RESET AppModel: 📅 Stored deadline: %@, Current: %@, Passed: %@", 
-                      String(describing: deadline), 
-                      String(describing: now),
-                      passed ? "YES" : "NO")
-                print("RESET AppModel: 📅 Stored deadline: \(deadline), Current: \(now), Passed: \(passed)")
-                fflush(stdout)
+            if !hasCommitment {
+                // No commitment found - go to setup
+                NSLog("INIT AppModel: ⚠️ No commitment found (userMaxChargeCents: \(weekStatus.userMaxChargeCents)), navigating to setup")
+                navigate(.setup)
+                return
             }
             
-            // Check if monitoring is active (also checks if deadline has passed)
-            let isActive = UsageTracker.shared.isMonitoringActive()
+            // Commitment exists - verify it's for the current week
+            // Check if deadline is within the next 7 days (to ensure it's current week, not a past week)
+            guard let weekEndDateString = weekStatus.weekEndDate else {
+                // Commitment exists but no deadline date - this shouldn't happen, but treat as no commitment
+                NSLog("INIT AppModel: ⚠️ Commitment found but no deadline date (userMaxChargeCents: \(weekStatus.userMaxChargeCents)), treating as no commitment, navigating to setup")
+                navigate(.setup)
+                return
+            }
             
-            NSLog("RESET AppModel: 🎯 Final decision - Monitoring active: %@", isActive ? "YES → Monitor" : "NO → Setup")
-            print("RESET AppModel: 🎯 Final decision - Monitoring active: \(isActive ? "YES → Monitor" : "NO → Setup")")
-            fflush(stdout)
+            // Parse deadline to verify it's for the current week
+            var deadline: Date?
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            deadline = isoFormatter.date(from: weekEndDateString)
             
-            // Only navigate if still on loading screen (don't interrupt if user already navigated)
-            if self.currentScreen == .loading {
-                if isActive {
-                    // Monitoring is active and deadline hasn't passed - navigate to monitor screen
-                    // Also refresh usage data from App Group
-                    await refreshUsageFromAppGroup()
-                    self.navigate(.monitor)
-                } else {
-                    // No active monitoring (either not started or deadline passed) - navigate to setup
-                    self.navigate(.setup)
+            if deadline == nil {
+                isoFormatter.formatOptions = [.withInternetDateTime]
+                deadline = isoFormatter.date(from: weekEndDateString)
+            }
+            
+            // Try date-only format if ISO8601 fails
+            if deadline == nil {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd"
+                dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
+                if let dateOnly = dateFormatter.date(from: weekEndDateString) {
+                    var estCalendar = Calendar.current
+                    estCalendar.timeZone = TimeZone(identifier: "America/New_York")!
+                    var components = estCalendar.dateComponents([.year, .month, .day], from: dateOnly)
+                    components.hour = 12
+                    components.minute = 0
+                    components.second = 0
+                    deadline = estCalendar.date(from: components)
                 }
             }
+            
+            guard let deadline = deadline else {
+                // Could not parse deadline - treat as no commitment
+                NSLog("INIT AppModel: ⚠️ Could not parse deadline date: \(weekEndDateString), treating as no commitment, navigating to setup")
+                navigate(.setup)
+                return
+            }
+            
+            // Verify deadline is for the current week (within next 7 days)
+            // If deadline is more than 7 days away, it's probably from a past week calculation error
+            let now = Date()
+            let daysUntilDeadline = deadline.timeIntervalSince(now) / 86400.0 // Convert to days
+            
+            if daysUntilDeadline > 7 {
+                // Deadline is more than 7 days away - this is likely a stale commitment
+                NSLog("INIT AppModel: ⚠️ Commitment found but deadline is \(Int(daysUntilDeadline)) days away (more than 7 days), treating as stale commitment, navigating to setup")
+                navigate(.setup)
+                return
+            }
+            
+            if daysUntilDeadline < -1 {
+                // Deadline was more than 1 day ago - commitment is expired
+                NSLog("INIT AppModel: ⚠️ Commitment found but deadline was \(Int(-daysUntilDeadline)) days ago, treating as expired, navigating to setup")
+                navigate(.setup)
+                return
+            }
+            
+            // Verify commitment was created recently (within last 7 days)
+            // This helps catch stale test commitments
+            if let commitmentCreatedAtString = weekStatus.commitmentCreatedAt {
+                var commitmentCreatedAt: Date?
+                let isoFormatter = ISO8601DateFormatter()
+                isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                commitmentCreatedAt = isoFormatter.date(from: commitmentCreatedAtString)
+                
+                if commitmentCreatedAt == nil {
+                    isoFormatter.formatOptions = [.withInternetDateTime]
+                    commitmentCreatedAt = isoFormatter.date(from: commitmentCreatedAtString)
+                }
+                
+                if let commitmentCreatedAt = commitmentCreatedAt {
+                    let daysSinceCreation = now.timeIntervalSince(commitmentCreatedAt) / 86400.0
+                    NSLog("INIT AppModel: 📅 Commitment created \(String(format: "%.1f", daysSinceCreation)) days ago")
+                    if daysSinceCreation > 7 {
+                        // Commitment was created more than 7 days ago - treat as stale
+                        NSLog("INIT AppModel: ⚠️ Commitment found but was created \(Int(daysSinceCreation)) days ago (more than 7 days), treating as stale commitment, navigating to setup")
+                        navigate(.setup)
+                        return
+                    }
+                } else {
+                    NSLog("INIT AppModel: ⚠️ Could not parse commitmentCreatedAt: \(commitmentCreatedAtString)")
+                }
+            } else {
+                // No commitmentCreatedAt - this shouldn't happen with the updated RPC, but treat as no commitment to be safe
+                NSLog("INIT AppModel: ⚠️ Commitment found but no commitmentCreatedAt field (RPC may not be updated), treating as no commitment, navigating to setup")
+                navigate(.setup)
+                return
+            }
+            
+            // Additional check: Verify monitoring is actually active
+            // If there's a commitment but monitoring isn't active, it's likely a stale/test commitment
+            let isMonitoringActive = UsageTracker.shared.isMonitoringActive()
+            if !isMonitoringActive {
+                NSLog("INIT AppModel: ⚠️ Commitment found but monitoring is not active, treating as stale commitment, navigating to setup")
+                navigate(.setup)
+                return
+            }
+            
+            // Deadline is valid and within current week - compare deadline to current time
+            let timeUntilDeadline = deadline.timeIntervalSince(now)
+            
+            NSLog("INIT AppModel: 📅 Commitment found - deadline: \(weekEndDateString) (\(deadline)), now: \(now), time until deadline: \(Int(timeUntilDeadline / 3600)) hours")
+            
+            // Check if deadline has passed (with 24-hour grace period)
+            // If deadline has passed and grace period has expired, go to setup (not bulletin)
+            // Only go to bulletin if we're within the grace period after deadline
+            if now >= deadline {
+                // Deadline has passed - check if we're within grace period
+                if let weekGraceExpiresAtString = weekStatus.weekGraceExpiresAt {
+                    // Parse grace expiration date
+                    var graceExpires: Date?
+                    let isoFormatter = ISO8601DateFormatter()
+                    isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    graceExpires = isoFormatter.date(from: weekGraceExpiresAtString)
+                    
+                    if graceExpires == nil {
+                        isoFormatter.formatOptions = [.withInternetDateTime]
+                        graceExpires = isoFormatter.date(from: weekGraceExpiresAtString)
+                    }
+                    
+                    if let graceExpires = graceExpires, now < graceExpires {
+                        // Within grace period - go to bulletin
+                        NSLog("INIT AppModel: ✅ Commitment found, deadline passed but within grace period (\(weekEndDateString)), navigating to bulletin")
+                        self.weekStatus = weekStatus
+                        navigate(.bulletin)
+                    } else {
+                        // Grace period expired - commitment is over, go to setup
+                        NSLog("INIT AppModel: ⚠️ Commitment found but deadline and grace period expired (\(weekEndDateString)), navigating to setup")
+                        navigate(.setup)
+                    }
+                } else {
+                    // No grace period info - if deadline passed more than 24 hours ago, go to setup
+                    // Otherwise go to bulletin
+                    let hoursSinceDeadline = -timeUntilDeadline / 3600.0
+                    if hoursSinceDeadline > 24 {
+                        // More than 24 hours past deadline - go to setup
+                        NSLog("INIT AppModel: ⚠️ Commitment found but deadline passed more than 24h ago (\(weekEndDateString)), navigating to setup")
+                        navigate(.setup)
+                    } else {
+                        // Within 24 hours of deadline - go to bulletin
+                        NSLog("INIT AppModel: ✅ Commitment found, deadline passed recently (\(weekEndDateString)), navigating to bulletin")
+                        self.weekStatus = weekStatus
+                        navigate(.bulletin)
+                    }
+                }
+            } else {
+                // Active commitment (deadline in future) - go to monitor
+                NSLog("INIT AppModel: ✅ Active commitment found (deadline: \(weekEndDateString), \(Int(timeUntilDeadline / 3600))h remaining), navigating to monitor")
+                self.weekStatus = weekStatus
+                authorizationAmount = Double(weekStatus.userMaxChargeCents) / 100.0
+                navigate(.monitor)
+            }
+            
+        } catch let backendError as BackendError {
+            switch backendError {
+            case .notAuthenticated:
+                // Not authenticated - go to setup
+                NSLog("INIT AppModel: ⚠️ Not authenticated, navigating to setup")
+                navigate(.setup)
+            case .serverError(let message) where message.contains("No week status available"):
+                // No commitment exists for current week - go to setup
+                NSLog("INIT AppModel: ⚠️ No commitment found for current week: \(message), navigating to setup")
+                navigate(.setup)
+            default:
+                // Other error - go to setup
+                NSLog("INIT AppModel: ⚠️ Error checking commitment: \(backendError.localizedDescription), navigating to setup")
+                weekStatusError = backendError.localizedDescription
+                navigate(.setup)
+            }
+        } catch {
+            // Generic error - go to setup
+            NSLog("INIT AppModel: ⚠️ Failed to check commitment: \(error.localizedDescription), navigating to setup")
+            weekStatusError = error.localizedDescription
+            navigate(.setup)
         }
     }
     
@@ -397,7 +537,8 @@ final class AppModel: ObservableObject {
             userDefaults.set(encoded, forKey: "selectedApps")
         }
         
-        userDefaults.synchronize()
+        // Removed synchronize() - it can block and is not needed
+        // UserDefaults writes are automatically persisted
     }
 }
 

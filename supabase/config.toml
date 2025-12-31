@@ -7,6 +7,10 @@ project_id = "payattentionclub-app-1.1"
 [functions]
 # extra_paths = ["./functions/_shared"]
 
+# Disable JWT verification for admin functions that use service role key internally
+[functions.weekly-close]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

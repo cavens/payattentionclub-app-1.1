@@ -1,3 +1,11 @@
+-- Update rpc_get_week_status to:
+-- 1. Filter by commitment status (only 'pending' or 'active')
+-- 2. Return commitment_created_at for validation
+-- 
+-- Note: Must drop and recreate because we're changing the return type
+
+DROP FUNCTION IF EXISTS public.rpc_get_week_status(date);
+
 CREATE OR REPLACE FUNCTION public.rpc_get_week_status(
   p_week_start_date date DEFAULT NULL
 )
@@ -99,5 +107,4 @@ begin
   return;
 end;
 $$;
-
 

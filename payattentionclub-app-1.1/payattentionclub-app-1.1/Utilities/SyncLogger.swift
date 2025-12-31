@@ -19,17 +19,16 @@ struct SyncLogger {
     
     /// Log a sync message (visible in Mac Console)
     /// Uses public string interpolation for better visibility
+    /// Only logs in DEBUG builds to avoid performance overhead
     static func log(_ message: String, type: OSLogType = .info) {
+        #if DEBUG
         // Use os_log with public string for Mac Console visibility
         // Use .info level by default for better visibility in Console app
         os_log("%{public}@", log: sync, type: type, message)
         
         // Also use NSLog for Xcode console compatibility
         NSLog("%@", message)
-        
-        // Also print for immediate visibility
-        print(message)
-        fflush(stdout)
+        #endif
     }
     
     /// Log info message
@@ -50,12 +49,13 @@ struct SyncLogger {
     }
     
     /// Log with custom format (for better Mac Console visibility)
+    /// Only logs in DEBUG builds to avoid performance overhead
     static func logFormatted(_ message: String, type: OSLogType = .default) {
+        #if DEBUG
         let formatted = "[SYNC] \(message)"
         os_log("%{public}@", log: sync, type: type, formatted)
         NSLog("%@", formatted)
-        print(formatted)
-        fflush(stdout)
+        #endif
     }
 }
 

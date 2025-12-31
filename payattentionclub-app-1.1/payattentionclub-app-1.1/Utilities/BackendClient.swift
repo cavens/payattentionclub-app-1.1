@@ -6,28 +6,8 @@ import PostgREST
 
 // MARK: - Local Storage Implementation
 
-/// Simple UserDefaults-based localStorage implementation for Supabase Auth
-private final class UserDefaultsLocalStorage: AuthLocalStorage, @unchecked Sendable {
-    private let userDefaults: UserDefaults
-    
-    init(userDefaults: UserDefaults = .standard) {
-        self.userDefaults = userDefaults
-    }
-    
-    func store(key: String, value: Data) throws {
-        userDefaults.set(value, forKey: key)
-        userDefaults.synchronize()
-    }
-    
-    func retrieve(key: String) throws -> Data? {
-        return userDefaults.data(forKey: key)
-    }
-    
-    func remove(key: String) throws {
-        userDefaults.removeObject(forKey: key)
-        userDefaults.synchronize()
-    }
-}
+// Note: UserDefaultsLocalStorage has been replaced with KeychainManager
+// for secure credential storage. See KeychainManager.swift
 
 // MARK: - Request Parameter Models
 
@@ -73,7 +53,10 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
     let weekStartDate: String  // Kept as weekStartDate to match Edge Function API
     let limitMinutes: Int
     let penaltyPerMinuteCents: Int
-    let appsToLimit: AppsToLimit
+    /// Edge Function expects appsToLimit as an array of strings (not an object)
+    /// Since we can't extract bundle IDs from opaque FamilyActivitySelection tokens,
+    /// we send an empty array. The backend will use the app/category counts instead.
+    let appsToLimit: [String]  // Array of strings, not AppsToLimit object
     let savedPaymentMethodId: String?
     
     // Explicitly implement encoding to ensure nonisolated conformance
@@ -277,8 +260,17 @@ class BackendClient {
     private let supabase: SupabaseClient
     
     private init() {
+        // Migrate existing tokens from UserDefaults to Keychain (one-time migration)
+        // Supabase Auth typically uses keys like "supabase.auth.token" and "supabase.auth.refresh_token"
+        KeychainManager.migrateFromUserDefaults(keys: [
+            "supabase.auth.token",
+            "supabase.auth.refresh_token",
+            "supabase.auth.session"
+        ])
+        
         // Initialize Supabase client with Auth configuration
-        let localStorage = UserDefaultsLocalStorage()
+        // Use KeychainManager for secure credential storage (migrated from UserDefaults)
+        let localStorage = KeychainManager.shared
         
         // Opt-in to new Auth behavior immediately (silences warning)
         let authConfig = AuthClient.Configuration(
@@ -358,7 +350,17 @@ class BackendClient {
     func checkBillingStatus(authorizationAmountCents: Int? = nil) async throws -> BillingStatusResponse {
         // Check authentication first
         guard await isAuthenticated else {
+            NSLog("BILLING BackendClient: ❌ Not authenticated")
             throw BackendError.notAuthenticated
+        }
+        
+        // Verify session exists and log token info (for debugging)
+        do {
+            let session = try await supabase.auth.session
+            NSLog("BILLING BackendClient: ✅ Session exists, user ID: \(session.user.id)")
+            NSLog("BILLING BackendClient: ✅ Access token present: \(session.accessToken.isEmpty ? "NO" : "YES (length: \(session.accessToken.count))")")
+        } catch {
+            NSLog("BILLING BackendClient: ⚠️ Failed to get session: \(error.localizedDescription)")
         }
         
         NSLog("BILLING BackendClient: Calling billing-status Edge Function...")
@@ -428,6 +430,14 @@ class BackendClient {
                                     }
                                     if let details = errorJson["details"] as? String {
                                         NSLog("BILLING BackendClient: ⚠️ ERROR DETAILS: \(details)")
+                                        
+                                        // Check if user doesn't exist in auth.users (user was deleted)
+                                        if details.contains("User from sub claim in JWT does not exist") {
+                                            NSLog("BILLING BackendClient: 🔄 User deleted from auth.users, signing out...")
+                                            // Sign out to clear invalid session
+                                            try? await self.signOut()
+                                            throw BackendError.notAuthenticated
+                                        }
                                     }
                                 } else {
                                     errorMessage = errorString
@@ -589,12 +599,10 @@ class BackendClient {
         // Call Edge Function instead of RPC to avoid Supabase SDK auto-decoding issues
         // The Edge Function calls the RPC function and returns JSON properly
         let task = Task.detached(priority: .userInitiated) { [supabase, weekStartDateString, limitMinutes, penaltyPerMinuteCents, savedPaymentMethodId] in
-            // Create AppsToLimit inside detached task (nonisolated)
-            // Backend expects apps_to_limit as JSONB object with app_bundle_ids and categories arrays
-            let appsToLimit = AppsToLimit(
-                appBundleIds: [], // Cannot extract bundle IDs from opaque tokens
-                categories: []    // Cannot extract category identifiers from opaque tokens
-            )
+            // Edge Function expects appsToLimit as an array of strings (not an object)
+            // Since we can't extract bundle IDs from opaque FamilyActivitySelection tokens,
+            // we send an empty array. The backend will use the app/category counts instead.
+            let appsToLimit: [String] = [] // Empty array - backend uses counts from preview
             
             // Create request body for Edge Function
             let requestBody = CreateCommitmentEdgeFunctionBody(
@@ -1000,6 +1008,7 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
     let reconciliationDetectedAt: String?
     let weekGraceExpiresAt: String?
     let weekEndDate: String?
+    let commitmentCreatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case userTotalPenaltyCents = "user_total_penalty_cents"
@@ -1019,6 +1028,7 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         case reconciliationDetectedAt = "reconciliation_detected_at"
         case weekGraceExpiresAt = "week_grace_expires_at"
         case weekEndDate = "week_end_date"
+        case commitmentCreatedAt = "commitment_created_at"
     }
 
     nonisolated init(
@@ -1038,7 +1048,8 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         reconciliationReason: String?,
         reconciliationDetectedAt: String?,
         weekGraceExpiresAt: String?,
-        weekEndDate: String?
+        weekEndDate: String?,
+        commitmentCreatedAt: String?
     ) {
         self.userTotalPenaltyCents = userTotalPenaltyCents
         self.userStatus = userStatus
@@ -1057,6 +1068,7 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         self.reconciliationDetectedAt = reconciliationDetectedAt
         self.weekGraceExpiresAt = weekGraceExpiresAt
         self.weekEndDate = weekEndDate
+        self.commitmentCreatedAt = commitmentCreatedAt
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -1078,6 +1090,7 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         reconciliationDetectedAt = try container.decodeIfPresent(String.self, forKey: .reconciliationDetectedAt)
         weekGraceExpiresAt = try container.decodeIfPresent(String.self, forKey: .weekGraceExpiresAt)
         weekEndDate = try container.decodeIfPresent(String.self, forKey: .weekEndDate)
+        commitmentCreatedAt = try container.decodeIfPresent(String.self, forKey: .commitmentCreatedAt)
     }
     
     nonisolated static func == (lhs: WeekStatusResponse, rhs: WeekStatusResponse) -> Bool {
@@ -1097,7 +1110,8 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
                lhs.reconciliationReason == rhs.reconciliationReason &&
                lhs.reconciliationDetectedAt == rhs.reconciliationDetectedAt &&
                lhs.weekGraceExpiresAt == rhs.weekGraceExpiresAt &&
-               lhs.weekEndDate == rhs.weekEndDate
+               lhs.weekEndDate == rhs.weekEndDate &&
+               lhs.commitmentCreatedAt == rhs.commitmentCreatedAt
     }
 }
 

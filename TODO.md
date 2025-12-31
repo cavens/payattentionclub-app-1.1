@@ -649,6 +649,418 @@ Triple-check the entire settlement process to ensure everything works correctly:
 
 ---
 
+### 15. MonitorView Authorization Amount Display Fix
+
+**Status**: TODO  
+**Severity**: Medium (Data Accuracy)  
+**Date Identified**: 2025-12-29  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+In the MonitorView, the small text underneath that says "with a maximum of xxx" currently displays `model.authorizationAmount`, which is the current authorization amount at this moment. However, it should display the authorization amount that was stored as part of the commitment when it was created (the `max_charge_cents` from the commitment record).
+
+#### Impact
+
+**Data Accuracy**: ⚠️ Medium - Users see the current authorization amount instead of the commitment's original authorization amount  
+**User Experience**: ⚠️ Medium - May cause confusion if authorization amount changes  
+**Functional**: ✅ None - App works, but displays incorrect value
+
+#### Proposed Fix
+
+1. Fetch the commitment's `max_charge_cents` from the backend (stored in `commitments` table)
+2. Use `weekStatus.userMaxChargeCents` if available (from `rpc_get_week_status`)
+3. Fallback to `model.authorizationAmount` only if commitment data is not available
+4. Ensure the displayed value matches what was actually authorized at commitment creation time
+
+#### Code Locations
+
+- `MonitorView.swift` - Text displaying "with a maximum of \(model.authorizationAmount)"
+- `AppModel.swift` - May need to store commitment's original authorization amount
+- `BackendClient.swift` - `WeekStatusResponse` already includes `userMaxChargeCents` from commitment
+
+#### Testing
+
+1. Create a commitment and note the authorization amount
+2. Verify MonitorView displays the commitment's original authorization amount
+3. Test with and without `weekStatus` data available
+4. Verify fallback behavior works correctly
+
+**Priority**: Medium  
+**Timeline**: Before production launch
+
+---
+
+### 16. Weekly Notification System
+
+**Status**: TODO  
+**Severity**: Medium (User Engagement)  
+**Date Identified**: 2025-12-29  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Implement a notification system that sends push notifications to users at different points during their commitment week to keep them informed about their usage and approaching deadlines.
+
+#### Notification Triggers
+
+1. **Approaching Limit Warning**
+   - Trigger: When user reaches ~80-90% of their weekly limit
+   - Purpose: Give users advance warning before hitting their limit
+   - Message: "You're approaching your weekly limit. X minutes remaining."
+
+2. **Limit Reached**
+   - Trigger: When user hits their exact weekly limit
+   - Purpose: Alert users that they've reached their limit and penalties will start
+   - Message: "You've reached your weekly limit. Penalties will apply for additional usage."
+
+3. **Penalty Milestones**
+   - Trigger: Every $10 (or equivalent in penalty) that user exceeds their limit
+   - Purpose: Keep users informed of accumulating penalties
+   - Message: "You've exceeded your limit by $X. Current penalty: $Y."
+
+4. **Deadline Reminder**
+   - Trigger: At the deadline (Monday/Tuesday 12:00 PM Eastern Time)
+   - Purpose: Remind users that the week is ending and settlement will occur
+   - Message: "Your commitment week ends today at noon ET. Final penalty: $X."
+
+#### Technical Requirements
+
+- Implement local notification scheduling in iOS app
+- Calculate notification timing based on:
+  - Current usage vs. limit (for approaching/hit limit notifications)
+  - Current penalty amount (for $10 milestone notifications)
+  - Week deadline timestamp (for deadline notification)
+- Handle edge cases:
+  - User exceeds limit before notification can be sent
+  - Multiple notifications scheduled for same time
+  - User revokes notification permissions
+  - App is closed when notification should trigger
+- Ensure notifications are accurate and don't spam users
+
+#### Impact
+
+**User Engagement**: ⚠️ Medium - Keeps users informed and engaged with their commitment  
+**User Experience**: ⚠️ Medium - Helps users stay aware of their usage and penalties  
+**Functional**: ✅ None - App works without notifications, but engagement may suffer  
+**Product**: ⚠️ Medium - Important for user retention and commitment adherence
+
+#### Proposed Implementation
+
+1. **Notification Manager**
+   - Create `NotificationManager` class to handle scheduling and cancellation
+   - Integrate with `UsageTracker` to monitor usage changes
+   - Schedule notifications based on current usage and limit
+
+2. **Usage Monitoring**
+   - Monitor `currentUsageSeconds` vs `limitMinutes` to detect approaching/hit limit
+   - Monitor `currentPenalty` to detect $10 milestones
+   - Update scheduled notifications as usage changes
+
+3. **Deadline Scheduling**
+   - Schedule deadline notification when commitment is created
+   - Use `getNextMondayNoonEST()` to calculate exact deadline time
+   - Handle timezone conversion (Eastern Time)
+
+4. **Notification Content**
+   - Create notification templates for each trigger type
+   - Include relevant data (minutes remaining, penalty amount, etc.)
+   - Ensure messages are clear and actionable
+
+5. **Permission Handling**
+   - Request notification permissions during onboarding
+   - Handle permission denial gracefully
+   - Provide settings option to enable/disable notifications
+
+#### Code Locations
+
+- New file: `NotificationManager.swift` (notification scheduling and management)
+- `AppModel.swift` - Integrate notification scheduling with usage updates
+- `UsageTracker.swift` - Monitor usage changes to trigger notifications
+- `AuthorizationView.swift` - Request notification permissions
+- `SetupView.swift` - Request notification permissions during onboarding
+- Settings view (if exists) - Allow users to manage notification preferences
+
+#### Testing
+
+1. Test approaching limit notification (schedule when at 80% of limit)
+2. Test limit reached notification (trigger when limit is hit)
+3. Test $10 milestone notifications (verify they trigger at correct intervals)
+4. Test deadline notification (schedule for correct time, verify timezone handling)
+5. Test notification cancellation when commitment ends
+6. Test permission handling (granted, denied, not determined)
+7. Test notifications when app is closed/backgrounded
+8. Verify notifications don't spam (e.g., multiple $10 notifications in quick succession)
+
+**Priority**: Medium  
+**Timeline**: Before production launch (can be added post-launch if needed)
+
+---
+
+### 17. Startup Load Time Investigation
+
+**Status**: TODO  
+**Severity**: High (User Experience)  
+**Date Identified**: 2025-12-29  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Investigate and optimize app startup load time. Currently experiencing long white screen delays (13+ seconds) and performance issues during initial launch, especially on first install.
+
+#### Issues to Investigate
+
+- Measure actual startup time from app launch to first UI element
+- Profile with Instruments to identify bottlenecks
+- Check if debugger/Xcode connection is affecting performance
+- Verify UserDefaults reads are truly removed from startup path
+- Check for any remaining blocking operations during initialization
+- Test on physical device vs simulator
+- Test with and without Xcode debugger attached
+- Compare first install vs subsequent launches
+
+#### Impact
+
+**User Experience**: ⚠️ High - Poor first impression, feels unresponsive  
+**Performance**: ⚠️ High - Long delays make app feel broken  
+**Functional**: ✅ None - App eventually loads correctly
+
+#### Proposed Investigation Steps
+
+1. Profile app startup with Instruments (Time Profiler)
+2. Measure time from app launch to LoadingView appearance
+3. Measure time from LoadingView to SetupView appearance
+4. Test on physical device without Xcode debugger
+5. Check for any remaining UserDefaults reads in startup path
+6. Verify all heavy operations are truly deferred
+7. Check if SwiftUI view hierarchy is causing delays
+8. Test on different device models (older vs newer)
+
+#### Code Locations
+
+- `payattentionclub_app_1_1App.swift` (app initialization)
+- `AppModel.swift` (finishInitialization)
+- `LoadingView.swift` (loading screen)
+- `RootRouterView.swift` (navigation)
+
+**Priority**: High  
+**Timeline**: Before production launch
+
+---
+
+### 18. Authorization Amount Calculation Verification
+
+**Status**: TODO  
+**Severity**: Medium (Data Accuracy)  
+**Date Identified**: 2025-12-29  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Double-check the authorization amount calculation on the backend. The calculation logic may be incorrect or producing unexpected values.
+
+#### Issues to Verify
+
+- Verify `rpc_preview_max_charge` calculation logic
+- Verify `rpc_create_commitment` uses same calculation
+- Check that authorization amount matches expected values for different scenarios:
+  - Different time limits (30 min to 42 hours)
+  - Different penalty rates ($0.01 to $5.00)
+  - Different app counts
+  - Different deadline dates
+- Verify calculation accounts for all factors correctly:
+  - Minutes remaining until deadline
+  - Limit minutes
+  - Penalty per minute
+  - App count (risk factor)
+  - Potential overage calculation
+- Compare frontend preview calculation with backend calculation
+- Test edge cases (minimum values, maximum values, boundary conditions)
+
+#### Impact
+
+**Data Accuracy**: ⚠️ Medium - Incorrect authorization amounts could affect user charges  
+**Financial**: ⚠️ Medium - Wrong calculations could lead to incorrect charges or caps  
+**User Experience**: ⚠️ Medium - Users may see unexpected authorization amounts
+
+#### Proposed Verification Steps
+
+1. Review `rpc_preview_max_charge` SQL function logic
+2. Review `rpc_create_commitment` SQL function logic
+3. Compare calculation formulas between preview and create
+4. Test with various input combinations
+5. Verify edge cases (minimum/maximum values)
+6. Check that risk factor calculation is correct
+7. Verify potential overage calculation is accurate
+8. Test with real user scenarios
+
+#### Code Locations
+
+- `supabase/sql-drafts/rpc_preview_max_charge.sql` (or equivalent)
+- `supabase/sql-drafts/rpc_create_commitment.sql` (or equivalent)
+- `BackendClient.swift` - `previewMaxCharge()` method
+- `AppModel.swift` - `fetchAuthorizationAmount()` method
+- `AuthorizationView.swift` - Authorization amount display
+
+#### Testing
+
+1. Test authorization calculation with various time limits
+2. Test with different penalty rates
+3. Test with different app counts
+4. Test with different deadline dates
+5. Compare preview vs actual commitment amounts
+6. Verify calculations match expected formulas
+7. Test edge cases and boundary conditions
+
+**Priority**: Medium  
+**Timeline**: Before production launch
+
+---
+
+### 19. Backend Backward Compatibility Enforcement
+
+**Status**: TODO  
+**Severity**: High (API Stability)  
+**Date Identified**: 2025-12-29  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Currently, the deployment script (`scripts/deploy.sh`) does not check for backward compatibility when deploying backend changes. We have a policy to maintain "one version backend compatible" at all times, but there are no automated checks to enforce this policy.
+
+#### Current State
+
+The deployment script performs:
+- ✅ Secrets check
+- ✅ Test suite execution
+- ✅ Git operations (stage, commit, push)
+- ✅ RPC function deployment
+- ✅ Edge function deployment
+
+**Missing:**
+- ❌ No version tracking
+- ❌ No compatibility validation
+- ❌ No breaking change detection
+- ❌ No validation against previous client versions
+
+#### Impact
+
+**API Stability**: ⚠️ High - Breaking changes could break existing client apps  
+**User Experience**: ⚠️ High - Users on older app versions could experience failures  
+**Data Integrity**: ⚠️ Medium - Incompatible changes could cause data corruption  
+**Deployment Risk**: ⚠️ High - No safety net to prevent breaking changes
+
+#### Required Implementation
+
+1. **Version Tracking System**
+   - Track backend API version in database/config
+   - Track client app versions currently in use
+   - Maintain version history
+   - Document version compatibility matrix
+
+2. **Compatibility Validation Checks**
+   - Validate RPC function signatures haven't changed in breaking ways:
+     - Parameter additions/removals
+     - Parameter type changes
+     - Return type changes
+     - Response format changes
+   - Validate Edge function APIs haven't changed:
+     - Request/response format changes
+     - Required parameter additions
+     - Endpoint removals
+   - Check database migrations are backward compatible:
+     - Column additions (OK) vs removals (breaking)
+     - Type changes (breaking)
+     - Constraint changes (potentially breaking)
+
+3. **Deployment Gates**
+   - Prevent deployment if breaking changes detected
+   - Require explicit override for breaking changes
+   - Test against previous client version before deployment
+   - Compare new RPC functions with previous versions
+   - Validate Edge function APIs match previous version
+
+4. **Automated Testing**
+   - Test new backend against previous client version
+   - Validate response formats match previous version
+   - Check that all existing RPC calls still work
+   - Verify Edge function endpoints are still accessible
+
+5. **Documentation**
+   - Define what "one version back" means
+   - Document breaking vs non-breaking changes
+   - Create compatibility matrix
+   - Document migration path for breaking changes
+
+#### Proposed Implementation Steps
+
+1. **Add Version Tracking**
+   - Create version table or config entry
+   - Track API version in code
+   - Track client versions in use (from app analytics or database)
+
+2. **Create Compatibility Check Script**
+   - Script to compare RPC function signatures
+   - Script to compare Edge function APIs
+   - Script to validate database migrations
+   - Integrate into deployment script
+
+3. **Add Deployment Validation**
+   - Pre-deployment checks for breaking changes
+   - Require explicit approval for breaking changes
+   - Test against previous client version
+
+4. **Update Deployment Script**
+   - Add compatibility check step before deployment
+   - Fail deployment if breaking changes detected (unless overridden)
+   - Log compatibility status
+
+5. **Create Compatibility Matrix**
+   - Document which backend versions work with which client versions
+   - Maintain compatibility history
+   - Update with each deployment
+
+#### Code Locations
+
+- `scripts/deploy.sh` - Add compatibility check step
+- New: `scripts/check_backward_compatibility.sh` - Compatibility validation script
+- New: `scripts/validate_rpc_signatures.sh` - RPC signature comparison
+- New: `scripts/validate_edge_apis.sh` - Edge function API validation
+- Database: Version tracking table or config
+- Documentation: Compatibility matrix document
+
+#### Testing
+
+1. Test deployment with non-breaking changes (should pass)
+2. Test deployment with breaking changes (should fail or require override)
+3. Test compatibility check script with various scenarios
+4. Verify previous client version still works after deployment
+5. Test override mechanism for intentional breaking changes
+
+#### Examples of Breaking vs Non-Breaking Changes
+
+**Breaking Changes (Require Override):**
+- Removing RPC function parameter
+- Changing parameter type
+- Changing return type structure
+- Removing Edge function endpoint
+- Adding required parameter to RPC function
+- Removing database column
+- Changing column type
+
+**Non-Breaking Changes (Should Pass):**
+- Adding optional RPC function parameter
+- Adding new RPC function
+- Adding new Edge function endpoint
+- Adding database column
+- Adding optional fields to response
+- Performance improvements
+
+**Priority**: High  
+**Timeline**: Before production launch (critical for API stability)
+
+---
+
 ## Notes
 
 - All issues documented here are **non-blocking** - development can continue

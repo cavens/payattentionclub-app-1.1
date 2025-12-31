@@ -1,5 +1,8 @@
 -- Adds settlement metadata outputs to rpc_get_week_status so the app can display
 -- grace deadlines, charged amounts, and reconciliation states.
+-- Drop function first to allow changing return type
+DROP FUNCTION IF EXISTS public.rpc_get_week_status(date);
+
 CREATE OR REPLACE FUNCTION public."rpc_get_week_status"("p_week_start_date" date DEFAULT NULL::date) RETURNS TABLE(
     "user_total_penalty_cents" integer,
     "user_status" text,

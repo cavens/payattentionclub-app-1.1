@@ -52,22 +52,7 @@ struct LoadingView: View {
                     logoOpacity = 0.0
                 }
                 
-                // After fade out completes (0.6s), navigate to setup
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    // Navigation will happen automatically when initialization completes
-                    // But ensure we navigate even if initialization is slow
-                    Task { @MainActor in
-                        if model.currentScreen == .loading {
-                            // Small delay to ensure initialization has had time
-                            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                            if model.currentScreen == .loading {
-                                // If still loading, check navigation status
-                                let isActive = UsageTracker.shared.isMonitoringActive()
-                                model.navigate(isActive ? .monitor : .setup)
-                            }
-                        }
-                    }
-                }
+                // Navigation is handled by finishInitialization() - no need for fallback
             }
         }
     }

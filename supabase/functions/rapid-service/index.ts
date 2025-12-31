@@ -6,6 +6,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno"
+import { validateNonEmptyString } from '../_shared/validation.ts'
+import { checkRateLimit, createRateLimitHeaders, createRateLimitResponse } from '../_shared/rateLimit.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -63,14 +65,51 @@ serve(async (req) => {
       )
     }
 
+    // Rate limiting: Check if user has exceeded rate limit
+    // Payment endpoints: 10 requests per minute per user
+    const rateLimitResult = await checkRateLimit(
+      supabase,
+      user.id,
+      {
+        maxRequests: 10,
+        windowMs: 60 * 1000, // 1 minute
+        keyPrefix: "rapid-service",
+      }
+    );
+
+    if (!rateLimitResult.allowed) {
+      console.warn(`rapid-service: Rate limit exceeded for user ${user.id}`);
+      return createRateLimitResponse(rateLimitResult, corsHeaders);
+    }
+
+    console.log(`rapid-service: Rate limit check passed. Remaining: ${rateLimitResult.remaining}`);
+
     // Parse request body
     const body = await req.json()
     const { clientSecret, paymentMethodId } = body
 
-    // Validate required fields
+    // Validate required fields exist
     if (!clientSecret || !paymentMethodId) {
       return new Response(
         JSON.stringify({ error: 'Missing required fields: clientSecret and paymentMethodId' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Validate clientSecret format (should start with "pi_" and contain "_secret_")
+    const validatedClientSecret = validateNonEmptyString(clientSecret, 200)
+    if (!validatedClientSecret || !validatedClientSecret.startsWith('pi_') || !validatedClientSecret.includes('_secret_')) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid clientSecret format. Expected Stripe PaymentIntent client secret (pi_xxx_secret_yyy)' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Validate paymentMethodId format (should start with "pm_")
+    const validatedPaymentMethodId = validateNonEmptyString(paymentMethodId, 100)
+    if (!validatedPaymentMethodId || !validatedPaymentMethodId.startsWith('pm_')) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid paymentMethodId format. Expected Stripe payment method ID (pm_...)' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -90,8 +129,8 @@ serve(async (req) => {
       apiVersion: "2023-10-16"
     })
 
-    // Extract PaymentIntent ID from client secret (format: pi_xxx_secret_yyy)
-    const paymentIntentId = clientSecret.split('_secret_')[0]
+    // Extract PaymentIntent ID from validated client secret (format: pi_xxx_secret_yyy)
+    const paymentIntentId = validatedClientSecret.split('_secret_')[0]
 
     // First, retrieve the PaymentIntent to check its current status
     let paymentIntent: Stripe.PaymentIntent
@@ -119,7 +158,11 @@ serve(async (req) => {
           }),
           { 
             status: 200, 
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+            headers: { 
+              ...corsHeaders, 
+              'Content-Type': 'application/json',
+              ...createRateLimitHeaders(rateLimitResult),
+            } 
           }
         )
       }
@@ -134,10 +177,10 @@ serve(async (req) => {
       )
     }
 
-    // Confirm the PaymentIntent with the PaymentMethod
+    // Confirm the PaymentIntent with the validated PaymentMethod
     try {
       paymentIntent = await stripe.paymentIntents.confirm(paymentIntentId, {
-        payment_method: paymentMethodId,
+        payment_method: validatedPaymentMethodId,
         return_url: "https://payattentionclub.app/payment-return" // Required by Stripe even though we use allow_redirects: never
       })
     } catch (error) {
@@ -200,7 +243,11 @@ serve(async (req) => {
       }),
       { 
         status: 200, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        headers: { 
+          ...corsHeaders, 
+          'Content-Type': 'application/json',
+          ...createRateLimitHeaders(rateLimitResult),
+        } 
       }
     )
   } catch (error) {
