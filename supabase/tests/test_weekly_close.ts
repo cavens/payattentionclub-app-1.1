@@ -8,11 +8,6 @@
  * 4. Charges users via Stripe (skipped for test users)
  * 5. Closes the weekly pool
  * 
- * Note: weekly-close is an admin function that uses the Supabase secret key internally.
- * The test helper (callEdgeFunction) always includes the Authorization header with the
- * Supabase secret key to satisfy Supabase's middleware requirement. The function uses
- * the secret key internally, so passing it externally is consistent.
- * 
  * Run with: deno test test_weekly_close.ts --allow-net --allow-env --allow-read
  */
 

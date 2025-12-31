@@ -322,23 +322,6 @@ struct AuthorizationView: View {
                 }
             }
             }
-        } catch let backendError as BackendError {
-            NSLog("LOCKIN AuthorizationView: ❌ Error during lock in: \(backendError.localizedDescription)")
-            NSLog("LOCKIN AuthorizationView: Error type: BackendError")
-            NSLog("LOCKIN AuthorizationView: Full error: \(backendError)")
-            
-            await MainActor.run {
-                isLockingIn = false
-                
-                // Handle notAuthenticated by navigating to setup (user was signed out)
-                if case .notAuthenticated = backendError {
-                    NSLog("LOCKIN AuthorizationView: User not authenticated, navigating to setup to sign in again")
-                    // Navigate immediately to setup so user can sign in again
-                    model.navigate(.setup)
-                } else {
-                    lockInError = "Failed to lock in: \(backendError.localizedDescription)"
-                }
-            }
         } catch {
             NSLog("LOCKIN AuthorizationView: ❌ Error during lock in: \(error.localizedDescription)")
             NSLog("LOCKIN AuthorizationView: Error type: \(type(of: error))")

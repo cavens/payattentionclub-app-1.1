@@ -29,9 +29,7 @@ struct CustomSlider: View {
         GeometryReader { geometry in
             let normalizedValue = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
             let sliderWidth = geometry.size.width
-            // Clamp normalizedValue to valid range and ensure thumbPosition is always valid
-            let clampedNormalized = max(0, min(1, normalizedValue))
-            let thumbPosition = max(0, min(sliderWidth, sliderWidth * CGFloat(clampedNormalized)))
+            let thumbPosition = sliderWidth * CGFloat(normalizedValue)
             
             ZStack(alignment: .leading) {
                 // Inactive track (dark part) - #666666
@@ -83,6 +81,8 @@ struct SetupView: View {
     @State private var tapCount = 0
     @State private var lastTapTime: Date?
     @State private var shouldShakeAppButton: CGFloat = 0 // For buzzing animation when commit is disabled
+    @State private var isRequestingAuthorization = false // Loading state for authorization request
+    @State private var authorizationStatus: AuthorizationStatus = .notDetermined // Cached authorization status
     
     // Pink color constant: #E2CCCD
     private let pinkColor = Color(red: 226/255, green: 204/255, blue: 205/255)
@@ -244,22 +244,29 @@ struct SetupView: View {
                     VStack(spacing: 8) {
                     // App Selector
                     Button(action: {
-                        Task { @MainActor in
-                            // Check authorization status
-                            let status = AuthorizationCenter.shared.authorizationStatus
-                            NSLog("SETUP SetupView: Authorization status: \(status.rawValue)")
+                        // Immediate feedback - no async wrapper needed for this
+                        // Provide haptic feedback immediately to acknowledge tap
+                        let generator = UINotificationFeedbackGenerator()
+                        generator.notificationOccurred(.success)
+                        
+                        // Check cached authorization status first (fast path)
+                        if authorizationStatus == .approved {
+                            // Already approved, show picker immediately (no async needed)
+                            NSLog("SETUP SetupView: Authorization approved (cached), showing picker immediately")
+                            showAppPicker = true
+                        } else {
+                            // Not approved - show loading state immediately, then request authorization
+                            NSLog("SETUP SetupView: Authorization not approved (\(authorizationStatus.rawValue)), requesting...")
+                            isRequestingAuthorization = true
                             
-                            if status == .approved {
-                                // Already approved, show picker directly
-                                NSLog("SETUP SetupView: Authorization approved, showing picker")
-                                showAppPicker = true
-                            } else {
-                                // Not approved - request authorization first
-                                NSLog("SETUP SetupView: Authorization not approved (\(status.rawValue)), requesting...")
+                            Task { @MainActor in
                                 do {
                                     try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
                                     let newStatus = AuthorizationCenter.shared.authorizationStatus
+                                    authorizationStatus = newStatus // Update cache
                                     NSLog("SETUP SetupView: Authorization request completed, new status: \(newStatus.rawValue)")
+                                    
+                                    isRequestingAuthorization = false
                                     
                                     if newStatus == .approved {
                                         // Now approved, show picker
@@ -272,19 +279,28 @@ struct SetupView: View {
                                     }
                                 } catch {
                                     NSLog("SETUP SetupView: ❌ Failed to request authorization: \(error)")
+                                    isRequestingAuthorization = false
                                     showAuthorizationAlert = true
                                 }
                             }
                         }
                     }) {
-                        Label("Select Apps to Limit (\(model.selectedApps.applicationTokens.count + model.selectedApps.categoryTokens.count))", systemImage: "app.fill")
-                            .font(.headline)
-                            .foregroundColor(pinkColor)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.black)
-                            .cornerRadius(12)
+                        HStack {
+                            if isRequestingAuthorization {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: pinkColor))
+                                    .padding(.trailing, 8)
+                            }
+                            Label("Select Apps to Limit (\(model.selectedApps.applicationTokens.count + model.selectedApps.categoryTokens.count))", systemImage: "app.fill")
+                                .font(.headline)
+                                .foregroundColor(isRequestingAuthorization ? grayColor : pinkColor)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.black)
+                        .cornerRadius(12)
                     }
+                    .disabled(isRequestingAuthorization) // Disable button during authorization request
                     .padding(.horizontal)
                     .modifier(ShakeEffect(shakes: shouldShakeAppButton))
                     .familyActivityPicker(isPresented: $showAppPicker, selection: $model.selectedApps)
@@ -358,6 +374,13 @@ struct SetupView: View {
             .background(Color(red: 226/255, green: 204/255, blue: 205/255))
             .scrollContentBackground(.hidden)
             .ignoresSafeArea()
+            .onAppear {
+                // Pre-initialize AuthorizationCenter to avoid first-access delay
+                // This warms up the framework and caches the authorization status
+                let center = AuthorizationCenter.shared
+                authorizationStatus = center.authorizationStatus
+                NSLog("SETUP SetupView: Cached authorization status on appear: \(authorizationStatus.rawValue)")
+            }
         }
     }
     

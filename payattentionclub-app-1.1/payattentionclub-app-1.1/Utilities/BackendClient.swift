@@ -6,8 +6,28 @@ import PostgREST
 
 // MARK: - Local Storage Implementation
 
-// Note: UserDefaultsLocalStorage has been replaced with KeychainManager
-// for secure credential storage. See KeychainManager.swift
+/// Simple UserDefaults-based localStorage implementation for Supabase Auth
+private final class UserDefaultsLocalStorage: AuthLocalStorage, @unchecked Sendable {
+    private let userDefaults: UserDefaults
+    
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+    
+    func store(key: String, value: Data) throws {
+        userDefaults.set(value, forKey: key)
+        userDefaults.synchronize()
+    }
+    
+    func retrieve(key: String) throws -> Data? {
+        return userDefaults.data(forKey: key)
+    }
+    
+    func remove(key: String) throws {
+        userDefaults.removeObject(forKey: key)
+        userDefaults.synchronize()
+    }
+}
 
 // MARK: - Request Parameter Models
 
@@ -53,10 +73,8 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
     let weekStartDate: String  // Kept as weekStartDate to match Edge Function API
     let limitMinutes: Int
     let penaltyPerMinuteCents: Int
-    /// Edge Function expects appsToLimit as an array of strings (not an object)
-    /// Since we can't extract bundle IDs from opaque FamilyActivitySelection tokens,
-    /// we send an empty array. The backend will use the app/category counts instead.
-    let appsToLimit: [String]  // Array of strings, not AppsToLimit object
+    let appCount: Int  // NEW: Explicit app count parameter (single source of truth)
+    let appsToLimit: AppsToLimit
     let savedPaymentMethodId: String?
     
     // Explicitly implement encoding to ensure nonisolated conformance
@@ -65,6 +83,7 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
         try container.encode(weekStartDate, forKey: .weekStartDate)
         try container.encode(limitMinutes, forKey: .limitMinutes)
         try container.encode(penaltyPerMinuteCents, forKey: .penaltyPerMinuteCents)
+        try container.encode(appCount, forKey: .appCount)
         try container.encode(appsToLimit, forKey: .appsToLimit)
         try container.encodeIfPresent(savedPaymentMethodId, forKey: .savedPaymentMethodId)
     }
@@ -73,6 +92,7 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
         case weekStartDate
         case limitMinutes
         case penaltyPerMinuteCents
+        case appCount
         case appsToLimit
         case savedPaymentMethodId
     }
@@ -260,17 +280,8 @@ class BackendClient {
     private let supabase: SupabaseClient
     
     private init() {
-        // Migrate existing tokens from UserDefaults to Keychain (one-time migration)
-        // Supabase Auth typically uses keys like "supabase.auth.token" and "supabase.auth.refresh_token"
-        KeychainManager.migrateFromUserDefaults(keys: [
-            "supabase.auth.token",
-            "supabase.auth.refresh_token",
-            "supabase.auth.session"
-        ])
-        
         // Initialize Supabase client with Auth configuration
-        // Use KeychainManager for secure credential storage (migrated from UserDefaults)
-        let localStorage = KeychainManager.shared
+        let localStorage = UserDefaultsLocalStorage()
         
         // Opt-in to new Auth behavior immediately (silences warning)
         let authConfig = AuthClient.Configuration(
@@ -350,17 +361,7 @@ class BackendClient {
     func checkBillingStatus(authorizationAmountCents: Int? = nil) async throws -> BillingStatusResponse {
         // Check authentication first
         guard await isAuthenticated else {
-            NSLog("BILLING BackendClient: ❌ Not authenticated")
             throw BackendError.notAuthenticated
-        }
-        
-        // Verify session exists and log token info (for debugging)
-        do {
-            let session = try await supabase.auth.session
-            NSLog("BILLING BackendClient: ✅ Session exists, user ID: \(session.user.id)")
-            NSLog("BILLING BackendClient: ✅ Access token present: \(session.accessToken.isEmpty ? "NO" : "YES (length: \(session.accessToken.count))")")
-        } catch {
-            NSLog("BILLING BackendClient: ⚠️ Failed to get session: \(error.localizedDescription)")
         }
         
         NSLog("BILLING BackendClient: Calling billing-status Edge Function...")
@@ -430,14 +431,6 @@ class BackendClient {
                                     }
                                     if let details = errorJson["details"] as? String {
                                         NSLog("BILLING BackendClient: ⚠️ ERROR DETAILS: \(details)")
-                                        
-                                        // Check if user doesn't exist in auth.users (user was deleted)
-                                        if details.contains("User from sub claim in JWT does not exist") {
-                                            NSLog("BILLING BackendClient: 🔄 User deleted from auth.users, signing out...")
-                                            // Sign out to clear invalid session
-                                            try? await self.signOut()
-                                            throw BackendError.notAuthenticated
-                                        }
                                     }
                                 } else {
                                     errorMessage = errorString
@@ -598,17 +591,32 @@ class BackendClient {
         
         // Call Edge Function instead of RPC to avoid Supabase SDK auto-decoding issues
         // The Edge Function calls the RPC function and returns JSON properly
-        let task = Task.detached(priority: .userInitiated) { [supabase, weekStartDateString, limitMinutes, penaltyPerMinuteCents, savedPaymentMethodId] in
-            // Edge Function expects appsToLimit as an array of strings (not an object)
-            // Since we can't extract bundle IDs from opaque FamilyActivitySelection tokens,
-            // we send an empty array. The backend will use the app/category counts instead.
-            let appsToLimit: [String] = [] // Empty array - backend uses counts from preview
+        let task = Task.detached(priority: .userInitiated) { [supabase, weekStartDateString, limitMinutes, penaltyPerMinuteCents, savedPaymentMethodId, selectedApps] in
+            // Extract app and category counts from FamilyActivitySelection
+            // Note: We can't extract actual bundle IDs from opaque FamilyActivitySelection tokens,
+            // but we can count them. The backend now uses explicit app_count parameter.
+            let appCount = selectedApps.applicationTokens.count
+            let categoryCount = selectedApps.categoryTokens.count
+            let totalAppCount = appCount + categoryCount
+            
+            // Create placeholder arrays with the correct counts for storage
+            // The backend only uses the array length for storage, not for calculation
+            let appBundleIds = Array(repeating: "placeholder", count: appCount)
+            let categories = Array(repeating: "placeholder", count: categoryCount)
+            
+            // Create AppsToLimit inside detached task (nonisolated)
+            // Backend expects apps_to_limit as JSONB object with app_bundle_ids and categories arrays
+            let appsToLimit = AppsToLimit(
+                appBundleIds: appBundleIds,  // Pass correct count for storage
+                categories: categories      // Pass correct count for storage
+            )
             
             // Create request body for Edge Function
             let requestBody = CreateCommitmentEdgeFunctionBody(
                 weekStartDate: weekStartDateString,
                 limitMinutes: limitMinutes,
                 penaltyPerMinuteCents: penaltyPerMinuteCents,
+                appCount: totalAppCount,  // Pass explicit count (single source of truth)
                 appsToLimit: appsToLimit,
                 savedPaymentMethodId: savedPaymentMethodId
             )
@@ -874,6 +882,7 @@ class BackendClient {
             let p_deadline_date: String
             let p_limit_minutes: Int
             let p_penalty_per_minute_cents: Int
+            let p_app_count: Int  // NEW: Explicit app count parameter (single source of truth)
             let p_apps_to_limit: AppsToLimit
         }
         
@@ -881,6 +890,7 @@ class BackendClient {
             p_deadline_date: deadlineDateString,
             p_limit_minutes: limitMinutes,
             p_penalty_per_minute_cents: penaltyPerMinuteCents,
+            p_app_count: appCount + categoryCount,  // Pass explicit count (single source of truth)
             p_apps_to_limit: appsToLimit
         )
         
@@ -1008,7 +1018,6 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
     let reconciliationDetectedAt: String?
     let weekGraceExpiresAt: String?
     let weekEndDate: String?
-    let commitmentCreatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case userTotalPenaltyCents = "user_total_penalty_cents"
@@ -1028,7 +1037,6 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         case reconciliationDetectedAt = "reconciliation_detected_at"
         case weekGraceExpiresAt = "week_grace_expires_at"
         case weekEndDate = "week_end_date"
-        case commitmentCreatedAt = "commitment_created_at"
     }
 
     nonisolated init(
@@ -1048,8 +1056,7 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         reconciliationReason: String?,
         reconciliationDetectedAt: String?,
         weekGraceExpiresAt: String?,
-        weekEndDate: String?,
-        commitmentCreatedAt: String?
+        weekEndDate: String?
     ) {
         self.userTotalPenaltyCents = userTotalPenaltyCents
         self.userStatus = userStatus
@@ -1068,7 +1075,6 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         self.reconciliationDetectedAt = reconciliationDetectedAt
         self.weekGraceExpiresAt = weekGraceExpiresAt
         self.weekEndDate = weekEndDate
-        self.commitmentCreatedAt = commitmentCreatedAt
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -1090,7 +1096,6 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         reconciliationDetectedAt = try container.decodeIfPresent(String.self, forKey: .reconciliationDetectedAt)
         weekGraceExpiresAt = try container.decodeIfPresent(String.self, forKey: .weekGraceExpiresAt)
         weekEndDate = try container.decodeIfPresent(String.self, forKey: .weekEndDate)
-        commitmentCreatedAt = try container.decodeIfPresent(String.self, forKey: .commitmentCreatedAt)
     }
     
     nonisolated static func == (lhs: WeekStatusResponse, rhs: WeekStatusResponse) -> Bool {
@@ -1110,8 +1115,7 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
                lhs.reconciliationReason == rhs.reconciliationReason &&
                lhs.reconciliationDetectedAt == rhs.reconciliationDetectedAt &&
                lhs.weekGraceExpiresAt == rhs.weekGraceExpiresAt &&
-               lhs.weekEndDate == rhs.weekEndDate &&
-               lhs.commitmentCreatedAt == rhs.commitmentCreatedAt
+               lhs.weekEndDate == rhs.weekEndDate
     }
 }
 

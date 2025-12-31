@@ -1,16 +1,27 @@
 -- ==============================================================================
--- RPC Function: rpc_create_commitment
+-- Migration: Fix rpc_create_commitment - Drop Old Function and Ensure New One
 -- ==============================================================================
--- Creates a new commitment for the authenticated user.
--- Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
+-- Date: 2025-12-31
+-- Purpose: Drop the old 4-parameter version of rpc_create_commitment and ensure
+--          only the 5-parameter version exists that uses calculate_max_charge_cents
+-- 
+-- This fixes the discrepancy where:
+--   - Preview uses calculate_max_charge_cents (correct, new formula) → $80+
+--   - Commitment creation was using old 4-param function (wrong, old formula) → $70.38
+--
+-- After this migration, both preview and commitment will use the same function,
+-- ensuring consistent authorization amounts.
 -- ==============================================================================
 
+-- Step 1: Drop the old 4-parameter function if it exists
+DROP FUNCTION IF EXISTS public.rpc_create_commitment(date, integer, integer, jsonb);
+
+-- Step 2: Ensure the new 5-parameter function exists and uses calculate_max_charge_cents
 CREATE OR REPLACE FUNCTION public.rpc_create_commitment(
   p_deadline_date date,
   p_limit_minutes integer,
   p_penalty_per_minute_cents integer,
-  p_app_count integer,  -- Explicit app count parameter (single source of truth)
-  p_apps_to_limit jsonb,  -- Keep for storage in commitments table
+  p_apps_to_limit jsonb,
   p_saved_payment_method_id text DEFAULT NULL
 )
 RETURNS json
@@ -21,6 +32,7 @@ DECLARE
   v_has_pm boolean;
   v_commitment_start_date date;
   v_deadline_ts timestamptz;
+  v_app_count integer;
   v_max_charge_cents integer;
   v_commitment_id uuid;
   v_result json;
@@ -44,15 +56,17 @@ BEGIN
   v_commitment_start_date := current_date;
   v_deadline_ts := (p_deadline_date::timestamp AT TIME ZONE 'America/New_York') + INTERVAL '12 hours';
 
-  -- 4) Use explicit p_app_count parameter (single source of truth from client)
-  -- No longer extracting from JSONB arrays to avoid discrepancies
+  -- 4) Count apps
+  v_app_count := COALESCE(jsonb_array_length(p_apps_to_limit->'app_bundle_ids'), 0)
+               + COALESCE(jsonb_array_length(p_apps_to_limit->'categories'), 0);
 
   -- 5) Calculate max charge using the SINGLE SOURCE OF TRUTH function
+  -- This ensures preview and commitment creation use the exact same formula
   v_max_charge_cents := public.calculate_max_charge_cents(
     v_deadline_ts,
     p_limit_minutes,
     p_penalty_per_minute_cents,
-    p_app_count  -- Use explicit parameter
+    v_app_count
   );
 
   -- 6) Ensure weekly_pools entry exists (create or update to open if exists)
@@ -114,11 +128,28 @@ BEGIN
 END;
 $$;
 
--- Add comment
-COMMENT ON FUNCTION public.rpc_create_commitment(date, integer, integer, integer, jsonb, text) IS 
+-- Step 3: Add comment explaining the fix
+COMMENT ON FUNCTION public.rpc_create_commitment(date, integer, integer, jsonb, text) IS 
 'Creates a new commitment for the authenticated user.
-Uses explicit p_app_count parameter (single source of truth from client).
 Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
-This ensures preview and commitment creation use the exact same formula and app count.';
+This ensures preview and commitment creation use the exact same formula.
+Dropped old 4-parameter version to prevent function overloading issues.';
 
+-- Step 4: Verify only one version exists (for debugging)
+DO $$
+DECLARE
+  v_count integer;
+BEGIN
+  SELECT COUNT(*) INTO v_count
+  FROM pg_proc p
+  JOIN pg_namespace n ON p.pronamespace = n.oid
+  WHERE n.nspname = 'public' 
+    AND p.proname = 'rpc_create_commitment';
+  
+  IF v_count > 1 THEN
+    RAISE WARNING 'Multiple versions of rpc_create_commitment still exist: %', v_count;
+  ELSE
+    RAISE NOTICE 'Successfully ensured only one version of rpc_create_commitment exists';
+  END IF;
+END $$;
 

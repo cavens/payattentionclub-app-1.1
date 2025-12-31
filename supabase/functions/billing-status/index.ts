@@ -1,6 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
-import { checkRateLimit, createRateLimitHeaders, createRateLimitResponse } from "../_shared/rateLimit.ts";
 
 // Determine which Stripe key to use (test or production)
 // Priority: STRIPE_SECRET_KEY_TEST (if exists) → STRIPE_SECRET_KEY (fallback)
@@ -64,31 +63,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log("billing-status: Authorization header present, length:", authHeader.length);
-    console.log("billing-status: Authorization header (first 50 chars):", authHeader.substring(0, 50));
-
-    // Extract the JWT token from the Authorization header (handle both "Bearer " and "bearer ")
-    let token = authHeader;
-    if (authHeader.startsWith("Bearer ")) {
-      token = authHeader.substring(7);
-    } else if (authHeader.startsWith("bearer ")) {
-      token = authHeader.substring(7);
-    }
-    // If no Bearer prefix, assume the whole header is the token
-
-    if (!token || token.length === 0) {
-      console.error("billing-status: Token is empty after extraction");
-      return new Response(JSON.stringify({
-        error: "Invalid authorization header format"
-      }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    console.log("billing-status: Extracted token length:", token.length);
-    console.log("billing-status: Token (first 50 chars):", token.substring(0, 50));
-
     const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
       global: {
         headers: {
@@ -97,49 +71,19 @@ Deno.serve(async (req) => {
       }
     });
 
-    // Verify the token and get the user (pass token explicitly like super-service does)
-    console.log("billing-status: Calling getUser() with token...");
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      console.error("billing-status: Authentication failed");
-      console.error("billing-status: userError:", userError ? JSON.stringify(userError) : "null");
-      console.error("billing-status: user:", user ? "present" : "null");
       return new Response(JSON.stringify({
-        error: "Not authenticated",
-        details: userError?.message || "No user returned"
+        error: "Not authenticated"
       }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" }
+        status: 401
       });
     }
-
-    console.log("billing-status: ✅ Authentication successful, user ID:", user.id);
 
     const userId = user.id;
     const userEmail = user.email ?? undefined;
 
-    // 2) Rate limiting: Check if user has exceeded rate limit
-    // Payment endpoints: 10 requests per minute per user
-    const rateLimitResult = await checkRateLimit(
-      supabase,
-      userId,
-      {
-        maxRequests: 10,
-        windowMs: 60 * 1000, // 1 minute
-        keyPrefix: "billing-status",
-      }
-    );
-
-    if (!rateLimitResult.allowed) {
-      console.warn(`billing-status: Rate limit exceeded for user ${userId}`);
-      return createRateLimitResponse(rateLimitResult, {
-        "Content-Type": "application/json",
-      });
-    }
-
-    console.log(`billing-status: Rate limit check passed. Remaining: ${rateLimitResult.remaining}`);
-
-    // 3) Fetch user row from public.users
+    // 2) Fetch user row from public.users
     const { data: dbUser, error: dbUserError } = await supabase
       .from("users")
       .select("id, email, stripe_customer_id, has_active_payment_method")
@@ -247,8 +191,7 @@ Deno.serve(async (req) => {
         stripe_customer_id: stripeCustomerId
       }), {
         headers: {
-          "Content-Type": "application/json",
-          ...createRateLimitHeaders(rateLimitResult),
+          "Content-Type": "application/json"
         },
         status: 200
       });
@@ -339,8 +282,7 @@ Deno.serve(async (req) => {
       stripe_customer_id: stripeCustomerId
     }), {
       headers: {
-        "Content-Type": "application/json",
-        ...createRateLimitHeaders(rateLimitResult),
+        "Content-Type": "application/json"
       },
       status: 200
     });

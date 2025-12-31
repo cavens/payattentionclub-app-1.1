@@ -81,11 +81,6 @@ export async function callRpc<T>(
 /**
  * Call an edge function and return the JSON response.
  * Throws on non-2xx status.
- * 
- * Note: Always includes Authorization header with Supabase secret key.
- * This satisfies Supabase's middleware requirement for all Edge Functions.
- * Admin functions (like weekly-close) use the secret key internally, so passing
- * it externally is consistent and required by Supabase's platform.
  */
 export async function callEdgeFunction<T>(
   functionName: string,
@@ -94,19 +89,12 @@ export async function callEdgeFunction<T>(
 ): Promise<T> {
   const url = `${config.supabase.url}/functions/v1/${functionName}`;
   
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    // Include apikey header for Supabase secret key
-    "apikey": config.supabase.secretKey,
-    // Include Authorization header (required by Supabase middleware)
-    // Note: For weekly-close, JWT verification must be disabled in Supabase dashboard
-    // Go to: Supabase Dashboard → Edge Functions → weekly-close → Settings → Verify JWT = false
-    "Authorization": `Bearer ${config.supabase.secretKey}`,
-  };
-  
   const response = await fetch(url, {
     method,
-    headers,
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${config.supabase.secretKey}`,
+    },
     body: method === "POST" ? JSON.stringify(body) : undefined,
   });
   

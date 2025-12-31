@@ -1,6 +1,3 @@
--- Drop function first to allow changing return type
-DROP FUNCTION IF EXISTS public.rpc_get_week_status(date);
-
 CREATE OR REPLACE FUNCTION public."rpc_get_week_status"("p_week_start_date" date DEFAULT NULL::date) RETURNS TABLE("user_total_penalty_cents" integer, "user_status" text, "user_max_charge_cents" integer, "pool_total_penalty_cents" integer, "pool_status" text, "pool_instagram_post_url" text, "pool_instagram_image_url" text)
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$

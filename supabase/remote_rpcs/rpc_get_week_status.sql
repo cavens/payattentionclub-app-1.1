@@ -18,8 +18,7 @@ RETURNS TABLE (
   reconciliation_reason text,
   reconciliation_detected_at timestamptz,
   week_grace_expires_at timestamptz,
-  week_end_date timestamptz,
-  commitment_created_at timestamptz
+  week_end_date timestamptz
 )
 LANGUAGE plpgsql
 SECURITY DEFINER AS $$
@@ -48,7 +47,6 @@ begin
     from public.commitments c
     where c.user_id = v_user_id
       and c.week_end_date = v_week_deadline
-      and c.status IN ('pending', 'active')  -- Only return active commitments, not completed/cancelled
     order by c.created_at desc
     limit 1;
 
@@ -91,9 +89,6 @@ begin
       v_commitment.week_grace_expires_at,
       week_end_date + interval '24 hours'
     );
-  
-  -- Return commitment created_at for validation (check if commitment is recent)
-  commitment_created_at := v_commitment.created_at;
 
   return next;
   return;

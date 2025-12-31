@@ -157,74 +157,13 @@ struct MonitorView: View {
                 model.refreshWeekStatus()
                 
                 // Check if deadline has already passed when view appears
-                // Use backend deadline from weekStatus instead of local stored deadline
-                if let weekStatus = model.weekStatus, let weekEndDateString = weekStatus.weekEndDate {
-                    // Parse deadline from backend
-                    var deadline: Date?
-                    let isoFormatter = ISO8601DateFormatter()
-                    isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                    deadline = isoFormatter.date(from: weekEndDateString)
-                    
-                    if deadline == nil {
-                        isoFormatter.formatOptions = [.withInternetDateTime]
-                        deadline = isoFormatter.date(from: weekEndDateString)
-                    }
-                    
-                    // Try date-only format if ISO8601 fails
-                    if deadline == nil {
-                        let dateFormatter = DateFormatter()
-                        dateFormatter.dateFormat = "yyyy-MM-dd"
-                        dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
-                        if let dateOnly = dateFormatter.date(from: weekEndDateString) {
-                            var estCalendar = Calendar.current
-                            estCalendar.timeZone = TimeZone(identifier: "America/New_York")!
-                            var components = estCalendar.dateComponents([.year, .month, .day], from: dateOnly)
-                            components.hour = 12
-                            components.minute = 0
-                            components.second = 0
-                            deadline = estCalendar.date(from: components)
-                        }
-                    }
-                    
-                    if let deadline = deadline, Date() >= deadline {
-                        // Deadline has passed - check grace period
-                        var shouldNavigateToBulletin = false
-                        
-                        if let weekGraceExpiresAtString = weekStatus.weekGraceExpiresAt {
-                            var graceExpires: Date?
-                            let isoFormatter = ISO8601DateFormatter()
-                            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                            graceExpires = isoFormatter.date(from: weekGraceExpiresAtString)
-                            
-                            if graceExpires == nil {
-                                isoFormatter.formatOptions = [.withInternetDateTime]
-                                graceExpires = isoFormatter.date(from: weekGraceExpiresAtString)
-                            }
-                            
-                            if let graceExpires = graceExpires, Date() < graceExpires {
-                                // Within grace period - go to bulletin
-                                shouldNavigateToBulletin = true
-                            }
-                        } else {
-                            // No grace period info - if deadline passed less than 24 hours ago, go to bulletin
-                            let hoursSinceDeadline = deadline.timeIntervalSinceNow / -3600.0
-                            if hoursSinceDeadline <= 24 {
-                                shouldNavigateToBulletin = true
-                            }
-                        }
-                        
-                        if shouldNavigateToBulletin {
-                            NSLog("MONITOR MonitorView: ⏰ Deadline already passed on appear, navigating to bulletin")
-                            model.refreshWeekStatus()
-                            model.navigate(.bulletin)
-                            return
-                        } else {
-                            // Grace period expired - go to setup
-                            NSLog("MONITOR MonitorView: ⏰ Deadline and grace period expired, navigating to setup")
-                            model.navigate(.setup)
-                            return
-                        }
-                    }
+                let deadlinePassed = UsageTracker.shared.isCommitmentDeadlinePassed()
+                if deadlinePassed {
+                    NSLog("MONITOR MonitorView: ⏰ Deadline already passed on appear, navigating to bulletin")
+                    // Refresh week status to get final penalty data
+                    model.refreshWeekStatus()
+                    model.navigate(.bulletin)
+                    return
                 }
                 
                 // Load authorization amount from backend if not already set
@@ -301,78 +240,20 @@ struct MonitorView: View {
             let baseline = tracker.getBaselineTime()
             let usageSeconds = Int(currentTotal) - Int(baseline)
             
+            // Check if deadline has passed while viewing MonitorView
+            let deadlinePassed = tracker.isCommitmentDeadlinePassed()
+            
             // Update UI on main thread
             await MainActor.run {
                 model.currentUsageSeconds = usageSeconds
                 model.updateCurrentPenalty()
                 
-                // Check if deadline has passed while viewing MonitorView
-                // Use backend deadline from weekStatus instead of local stored deadline
-                if let weekStatus = model.weekStatus, let weekEndDateString = weekStatus.weekEndDate {
-                    // Parse deadline from backend
-                    var deadline: Date?
-                    let isoFormatter = ISO8601DateFormatter()
-                    isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                    deadline = isoFormatter.date(from: weekEndDateString)
-                    
-                    if deadline == nil {
-                        isoFormatter.formatOptions = [.withInternetDateTime]
-                        deadline = isoFormatter.date(from: weekEndDateString)
-                    }
-                    
-                    // Try date-only format if ISO8601 fails
-                    if deadline == nil {
-                        let dateFormatter = DateFormatter()
-                        dateFormatter.dateFormat = "yyyy-MM-dd"
-                        dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
-                        if let dateOnly = dateFormatter.date(from: weekEndDateString) {
-                            var estCalendar = Calendar.current
-                            estCalendar.timeZone = TimeZone(identifier: "America/New_York")!
-                            var components = estCalendar.dateComponents([.year, .month, .day], from: dateOnly)
-                            components.hour = 12
-                            components.minute = 0
-                            components.second = 0
-                            deadline = estCalendar.date(from: components)
-                        }
-                    }
-                    
-                    if let deadline = deadline, Date() >= deadline {
-                        // Deadline has passed - check grace period
-                        var shouldNavigateToBulletin = false
-                        
-                        if let weekGraceExpiresAtString = weekStatus.weekGraceExpiresAt {
-                            var graceExpires: Date?
-                            let isoFormatter = ISO8601DateFormatter()
-                            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                            graceExpires = isoFormatter.date(from: weekGraceExpiresAtString)
-                            
-                            if graceExpires == nil {
-                                isoFormatter.formatOptions = [.withInternetDateTime]
-                                graceExpires = isoFormatter.date(from: weekGraceExpiresAtString)
-                            }
-                            
-                            if let graceExpires = graceExpires, Date() < graceExpires {
-                                // Within grace period - go to bulletin
-                                shouldNavigateToBulletin = true
-                            }
-                        } else {
-                            // No grace period info - if deadline passed less than 24 hours ago, go to bulletin
-                            let hoursSinceDeadline = deadline.timeIntervalSinceNow / -3600.0
-                            if hoursSinceDeadline <= 24 {
-                                shouldNavigateToBulletin = true
-                            }
-                        }
-                        
-                        if shouldNavigateToBulletin {
-                            NSLog("MONITOR MonitorView: ⏰ Deadline passed while viewing, navigating to bulletin")
-                            model.refreshWeekStatus()
-                            model.navigate(.bulletin)
-                        } else {
-                            // Grace period expired - go to setup
-                            NSLog("MONITOR MonitorView: ⏰ Deadline and grace period expired, navigating to setup")
-                            model.navigate(.setup)
-                        }
-                    }
+                // If deadline has passed, navigate to bulletin
+                if deadlinePassed {
+                    NSLog("MONITOR MonitorView: ⏰ Deadline passed while viewing, navigating to bulletin")
+                    // Refresh week status to get final penalty data
+                    model.refreshWeekStatus()
+                    model.navigate(.bulletin)
                 }
             }
         }

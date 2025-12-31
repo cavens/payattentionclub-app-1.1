@@ -1,17 +1,9 @@
 -- ==============================================================================
--- Internal Function: calculate_max_charge_cents
+-- Migration: Update calculate_max_charge_cents function
 -- ==============================================================================
--- THE single source of truth for max charge calculation.
--- Used by both rpc_preview_max_charge and rpc_create_commitment.
---
--- Formula (Revised 2025-12-31):
---   - Baseline: 21h @ $0.10, 4 apps = ~$20
---   - Stricter limits → exponentially higher authorization
---   - Higher penalty → direct multiplier
---   - More apps → moderate increase (2% per app above 1)
---   - Minimum: $15.00 (1500 cents)
---   - Maximum: $1000.00 (100000 cents)
---
+-- Date: 2025-12-31
+-- Purpose: Update authorization amount calculation with new formula
+-- Baseline: 21h @ $0.10, 4 apps = ~$20
 -- Key improvements:
 --   1. Aggressive strictness scaling (24h to 12h = $24.28 difference)
 --   2. Minimum 1 app required (zero apps not possible)
@@ -101,7 +93,7 @@ BEGIN
 END;
 $$;
 
--- Add comment explaining the function
+-- Update comment
 COMMENT ON FUNCTION public.calculate_max_charge_cents(timestamptz, integer, integer, integer) IS 
 'Calculates the maximum charge (authorization amount) in cents for a commitment.
 This is THE single source of truth - used by both preview and commitment creation.

@@ -15,17 +15,6 @@
 #      - STAGING_SUPABASE_URL, STAGING_SUPABASE_SERVICE_ROLE_KEY (for staging)
 #      - PRODUCTION_SUPABASE_URL, PRODUCTION_SUPABASE_SERVICE_ROLE_KEY (for production)
 #      - STRIPE_SECRET_KEY_TEST (optional, for payment tests)
-#
-# Test Files (automatically included via test_*.ts pattern):
-#   - test_billing_status_auth.ts          - Edge Function authentication tests
-#   - test_create_commitment.ts            - Commitment creation tests
-#   - test_late_user_refund.ts              - Late user refund scenario tests
-#   - test_rate_limiting.ts                 - Rate limiting implementation tests
-#   - test_rpc_security_fixes.ts            - RPC function security audit tests
-#   - test_settlement_actual.ts             - Settlement actual amount tests
-#   - test_settlement_worst_case.ts         - Settlement worst-case scenario tests
-#   - test_sync_usage_penalty.ts             - Usage sync and penalty calculation tests
-#   - test_weekly_close.ts                  - Weekly close Edge Function tests
 # ==============================================================================
 
 set -e
@@ -85,15 +74,6 @@ echo ""
 
 # Change to test directory
 cd "$SCRIPT_DIR"
-
-# List all test files
-echo "Test files to run:"
-for test_file in test_*.ts; do
-    if [ -f "$test_file" ]; then
-        echo "  - $test_file"
-    fi
-done
-echo ""
 
 # Run tests
 echo "Running tests..."

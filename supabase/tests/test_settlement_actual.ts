@@ -63,13 +63,17 @@ async function createTestCommitment(options: {
   savedPaymentMethodId?: string | null;
 }): Promise<string> {
   // Use the real RPC function to get accurate max_charge_cents (same as production)
+  const appsToLimit = { app_bundle_ids: ["com.apple.Safari"], categories: [] };
+  const appCount = appsToLimit.app_bundle_ids.length + appsToLimit.categories.length;
+  
   const { data: previewData, error: previewError } = await supabase.rpc(
     "rpc_preview_max_charge",
     {
       p_deadline_date: options.weekEndDate,
       p_limit_minutes: options.limitMinutes,
       p_penalty_per_minute_cents: options.penaltyPerMinuteCents,
-      p_apps_to_limit: { app_bundle_ids: ["com.apple.Safari"], categories: [] }
+      p_app_count: appCount,  // NEW: Explicit app count parameter (single source of truth)
+      p_apps_to_limit: appsToLimit
     }
   );
   if (previewError) {
