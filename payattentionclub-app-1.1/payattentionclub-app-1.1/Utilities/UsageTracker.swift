@@ -97,6 +97,82 @@ class UsageTracker {
         return Date() >= deadline
     }
     
+    /// Store commitment ID when "Lock in" is pressed
+    func storeCommitmentId(_ commitmentId: String) {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        userDefaults.set(commitmentId, forKey: "commitmentId")
+        userDefaults.synchronize()
+    }
+    
+    /// Get commitment ID
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    nonisolated func getCommitmentId() -> String? {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return nil
+        }
+        return userDefaults.string(forKey: "commitmentId")
+    }
+    
+    /// Store consumedMinutes at deadline time (to prevent post-deadline usage from being included)
+    func storeConsumedMinutesAtDeadline(_ minutes: Double) {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        userDefaults.set(minutes, forKey: "consumedMinutesAtDeadline")
+        userDefaults.synchronize()
+    }
+    
+    /// Get consumedMinutes at deadline time (to prevent post-deadline usage from being included)
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    nonisolated func getConsumedMinutesAtDeadline() -> Double? {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return nil
+        }
+        let minutes = userDefaults.double(forKey: "consumedMinutesAtDeadline")
+        return minutes > 0 ? minutes : nil
+    }
+    
+    // MARK: - Threshold History
+    
+    /// Get threshold history from App Group
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    nonisolated func getThresholdHistory() -> [ThresholdHistoryEntry] {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return []
+        }
+        
+        guard let historyData = userDefaults.data(forKey: "thresholdHistory") else {
+            return []
+        }
+        
+        if let history = try? JSONDecoder().decode([ThresholdHistoryEntry].self, from: historyData) {
+            return history
+        }
+        
+        return []
+    }
+    
+    /// Find the last threshold that occurred before the deadline
+    /// Returns the consumedMinutes value from that threshold
+    /// This allows us to get accurate usage even if the app was killed before deadline
+    /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
+    nonisolated func getConsumedMinutesAtDeadlineFromHistory(deadline: Date) -> Double? {
+        let deadlineTimestamp = deadline.timeIntervalSince1970
+        let history = getThresholdHistory()
+        
+        // Find the last threshold where timestamp < deadline
+        let preDeadlineThresholds = history.filter { $0.timestamp < deadlineTimestamp }
+        
+        guard let lastThreshold = preDeadlineThresholds.last else {
+            // No thresholds found before deadline
+            return nil
+        }
+        
+        return lastThreshold.consumedMinutes
+    }
+    
     /// Clear expired monitoring state (called when deadline has passed)
     func clearExpiredMonitoringState() {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
@@ -104,6 +180,9 @@ class UsageTracker {
         }
         userDefaults.removeObject(forKey: "monitoringSelectionSet")
         userDefaults.removeObject(forKey: "commitmentDeadline")
+        userDefaults.removeObject(forKey: "commitmentId")
+        userDefaults.removeObject(forKey: "consumedMinutesAtDeadline")
+        userDefaults.removeObject(forKey: "thresholdHistory") // Clear threshold history when commitment expires
         userDefaults.synchronize()
     }
     

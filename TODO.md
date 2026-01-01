@@ -314,9 +314,10 @@ This is likely a system-level delay when iOS first presents the FamilyControls a
 ### Phase 1: Email Contact Limitation with Sign in with Apple
 
 **Status**: Known Issue - Potential Product Limitation  
-**Severity**: Medium (Growth & Support)  
+**Severity**: Low (Growth & Support)  
 **Date Identified**: 2025-12-01  
-**Phase**: Phase 1 - Authentication & Onboarding
+**Phase**: Phase 1 - Authentication & Onboarding  
+**Priority**: Low
 
 #### Description
 
@@ -344,20 +345,22 @@ Users signing in exclusively via "Sign in with Apple" provide randomized, pseudo
 2. Store it securely in Supabase and mark whether the user opted in.  
 3. Update backend/email logic to prefer the real email when available, fallback to Apple relay otherwise.  
 4. Add UI copy explaining why the primary email improves reminders.  
-5. Consider making this mandatory for features that rely on external communication.
+5. **For later**: Provide a mandatory email input field if users did not provide their real email address using Apple Sign-In. This ensures we always have a way to contact users for important communications (charges, refunds, account issues, etc.).
 
 #### Code/Feature Touchpoints
 
 - `AuthorizationView.swift` (post-login UI)  
 - `BackendClient` / Supabase schema (extra user field for contact email + consent flag)  
 - Reminder scheduling logic (Loops template data)  
-- Account settings view (allow editing/removal)
+- Account settings view (allow editing/removal)  
+- New: Email input form for users who didn't share email via Apple Sign-In
 
 #### Testing
 
 - Sign in via Apple, add a real email, verify Supabase stores and Loops sends to the correct address.  
 - Ensure opt-out/respect user deletion of the real email.  
-- Confirm backend falls back to Apple relay if no real email exists.
+- Confirm backend falls back to Apple relay if no real email exists.  
+- Test mandatory email collection flow for users with private relay emails.
 
 ---
 

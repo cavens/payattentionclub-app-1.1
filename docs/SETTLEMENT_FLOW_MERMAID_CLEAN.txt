@@ -1,0 +1,104 @@
+flowchart TD
+    Start([User Creates Commitment]) --> Setup[Setup Payment Method<br/>Calculate Authorization]
+    Setup --> Track[Extension Tracks Usage<br/>Stored Locally]
+    
+    Track --> Deadline{Monday 12:00 ET<br/>Week Deadline}
+    
+    Deadline --> SyncDecision{User Opens App<br/>After Monday Noon?}
+    
+    subgraph Case1["Case 1: Sync Before Tuesday Noon"]
+        Sync1[Sync Usage to Server]
+        Calc1[Calculate Actual Penalty]
+        Wait1[Wait for Tuesday 12:00 ET]
+        Sync1 --> Calc1 --> Wait1
+    end
+    
+    subgraph Case2["Case 2: No Sync Before Tuesday Noon"]
+        Wait2[Wait for Tuesday 12:00 ET<br/>No Usage Data on Server]
+    end
+    
+    SyncDecision -->|Yes| Case1
+    SyncDecision -->|No| Case2
+    
+    subgraph SettlementFunc["Settlement Function (Shared)"]
+        Settlement[Tuesday 12:00 ET<br/>Settlement Runs]
+        CheckUsage{Has Synced<br/>Usage?}
+        ChargeActual[Charge Actual Penalty<br/>Capped at Authorization]
+        ChargeWorst[Charge Authorization<br/>Worst Case]
+        Cap1[Cap: MIN actual, auth]
+        Pay1[Create Payment<br/>Status: charged_actual]
+        Pay2[Create Payment<br/>Status: charged_worst_case]
+        
+        Settlement --> CheckUsage
+        CheckUsage -->|Yes| ChargeActual
+        CheckUsage -->|No| ChargeWorst
+        ChargeActual --> Cap1 --> Pay1
+        ChargeWorst --> Pay2
+    end
+    
+    Wait1 --> Settlement
+    Wait2 --> Settlement
+    
+    Pay1 --> Settled([Settlement Complete])
+    Pay2 --> Settled
+    
+    Settled --> LateSync{User Syncs<br/>After Tuesday Noon?}
+    LateSync -->|No| End([End])
+    LateSync -->|Yes| Case3
+    
+    subgraph Case3["Case 3: Late Sync (After Tuesday Noon)"]
+        Sync3[Sync Usage to Server]
+        Calc3[Calculate Actual Penalty]
+        Cap3[Cap: MIN actual, auth]
+        Reconcile[Reconciliation Function]
+        Delta[Calculate Delta<br/>delta = capped_actual - charged]
+        CheckDelta{Delta = 0?}
+        DeltaSign{Delta < 0?}
+        
+        Sync3 --> Calc3 --> Cap3 --> Reconcile
+        Reconcile --> Delta --> CheckDelta
+        CheckDelta -->|No| DeltaSign
+    end
+    
+    subgraph Case3A["Case 3A: Refund (Overcharged)"]
+        Refund[Create Refund<br/>Status: refunded]
+    end
+    
+    subgraph Case3B["Case 3B: Extra Charge (Undercharged)"]
+        CheckCap{Under Auth Cap?}
+        ExtraCharge[Create Extra Charge<br/>Status: charged_actual_adjusted]
+        NoExtra[No Extra Charge<br/>Already at Cap]
+        CheckCap -->|Yes| ExtraCharge
+        CheckCap -->|No| NoExtra
+    end
+    
+    subgraph Case3C["Case 3C: No Change (Already Correct)"]
+        NoChange[No Reconciliation Needed<br/>Status: unchanged]
+    end
+    
+    CheckDelta -->|Yes| Case3C
+    DeltaSign -->|Yes| Case3A
+    DeltaSign -->|No| Case3B
+    
+    Refund --> ReconDone([Reconciliation Complete])
+    ExtraCharge --> ReconDone
+    NoExtra --> ReconDone
+    NoChange --> ReconDone
+    
+    ReconDone --> End
+    
+    %% Styling
+    style Start fill:#e1f5ff
+    style End fill:#d4edda
+    style Settled fill:#d4edda
+    style ReconDone fill:#d4edda
+    
+    style Case1 fill:#fff3cd,stroke:#ffc107,stroke-width:2px
+    style Case2 fill:#f8d7da,stroke:#dc3545,stroke-width:2px
+    style Case3 fill:#d1ecf1,stroke:#17a2b8,stroke-width:2px
+    style Case3A fill:#d1ecf1,stroke:#17a2b8,stroke-width:2px
+    style Case3B fill:#f8d7da,stroke:#dc3545,stroke-width:2px
+    style Case3C fill:#d4edda,stroke:#28a745,stroke-width:2px
+    
+    style SettlementFunc fill:#ffeaa7,stroke:#f39c12,stroke-width:3px
+    style Reconcile fill:#ffeaa7,stroke:#f39c12,stroke-width:2px

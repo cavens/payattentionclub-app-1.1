@@ -27,6 +27,22 @@ struct payattentionclub_app_1_1App: App {
                     #endif
                     model.handleDeepLink(url)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                    // Update daily usage and sync when app comes to foreground
+                    Task { @MainActor in
+                        // Check if deadline has passed and store consumedMinutes at deadline if needed
+                        let tracker = UsageTracker.shared
+                        if tracker.isCommitmentDeadlinePassed() {
+                            let consumedMinutes = tracker.getConsumedMinutes()
+                            // Only store if we don't already have a stored value
+                            if tracker.getConsumedMinutesAtDeadline() == nil {
+                                tracker.storeConsumedMinutesAtDeadline(consumedMinutes)
+                                NSLog("APP Foreground: ⏰ Deadline passed, stored consumedMinutes at deadline: \(consumedMinutes) min")
+                            }
+                        }
+                        await UsageSyncManager.shared.updateAndSync()
+                    }
+                }
         }
     }
 }

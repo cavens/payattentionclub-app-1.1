@@ -1,6 +1,26 @@
 import DeviceActivity
 import Foundation
 
+/// Represents a single threshold event with timestamp and consumed minutes
+/// Stored in App Group to track usage history
+struct ThresholdHistoryEntry: Codable {
+    /// Timestamp when threshold was reached (TimeInterval since 1970)
+    let timestamp: TimeInterval
+    
+    /// Consumed minutes at this threshold
+    let consumedMinutes: Double
+    
+    /// Seconds value from the threshold event
+    let seconds: Int
+    
+    /// Create a new threshold history entry
+    init(timestamp: TimeInterval, consumedMinutes: Double, seconds: Int) {
+        self.timestamp = timestamp
+        self.consumedMinutes = consumedMinutes
+        self.seconds = seconds
+    }
+}
+
 /// DeviceActivityMonitorExtension receives callbacks when usage thresholds are reached
 /// Writes usage data to App Group so main app can read it
 @available(iOS 16.0, *)
@@ -15,6 +35,9 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         
         // Reset sequence tracking when interval starts
         resetSequenceTracking()
+        
+        // Clear threshold history when interval starts (new commitment period)
+        clearThresholdHistory()
         
         // Store interval start time in App Group
         storeIntervalStart(activity: activity)
@@ -65,6 +88,9 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         storeLastThresholdEvent(event.rawValue)
         storeLastThresholdTimestamp(timestamp)
         storeLastThresholdSeconds(seconds)
+        
+        // Store threshold in history for deadline lookup
+        storeThresholdInHistory(timestamp: timestamp, consumedMinutes: consumedMinutes, seconds: seconds)
         
         NSLog("MARKERS MonitorExtension: ✅ Stored: consumedMinutes=%.1f, seconds=%d, timestamp=%.0f", 
               consumedMinutes, seconds, timestamp)
@@ -136,6 +162,56 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             return
         }
         userDefaults.removeObject(forKey: "lastThresholdSeconds")
+        userDefaults.synchronize()
+    }
+    
+    // MARK: - Threshold History Storage
+    
+    /// Store threshold event in history array
+    /// History is used to find consumedMinutes at deadline time even if app was killed
+    private func storeThresholdInHistory(timestamp: TimeInterval, consumedMinutes: Double, seconds: Int) {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        
+        // Create new entry
+        let entry = ThresholdHistoryEntry(
+            timestamp: timestamp,
+            consumedMinutes: consumedMinutes,
+            seconds: seconds
+        )
+        
+        // Read existing history
+        var history: [ThresholdHistoryEntry] = []
+        if let historyData = userDefaults.data(forKey: "thresholdHistory") {
+            if let decoded = try? JSONDecoder().decode([ThresholdHistoryEntry].self, from: historyData) {
+                history = decoded
+            }
+        }
+        
+        // Append new entry
+        history.append(entry)
+        
+        // Limit history size to prevent unbounded growth (keep last 200 entries)
+        // This should be more than enough for a week of usage (even with 1-minute thresholds)
+        let maxHistorySize = 200
+        if history.count > maxHistorySize {
+            history = Array(history.suffix(maxHistorySize))
+        }
+        
+        // Store updated history
+        if let encoded = try? JSONEncoder().encode(history) {
+            userDefaults.set(encoded, forKey: "thresholdHistory")
+            userDefaults.synchronize()
+        }
+    }
+    
+    /// Clear threshold history (called when interval starts)
+    private func clearThresholdHistory() {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return
+        }
+        userDefaults.removeObject(forKey: "thresholdHistory")
         userDefaults.synchronize()
     }
     

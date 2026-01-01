@@ -228,6 +228,157 @@ class UsageSyncManager {
         NSLog("SYNC UsageSyncManager: ✅ Marked \(markedCount) entries as synced, skipped \(skippedCount) already-synced entries")
     }
     
+    // MARK: - Create/Update Daily Usage Entries
+    
+    /// Create or update daily usage entry from consumedMinutes
+    /// This should be called periodically (on app foreground, after commitment creation)
+    /// to convert extension's consumedMinutes into DailyUsageEntry objects
+    /// IMPORTANT: Only includes usage that happened BEFORE the deadline
+    func updateDailyUsageFromConsumedMinutes() {
+        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            NSLog("SYNC UsageSyncManager: ❌ Failed to access App Group")
+            return
+        }
+        
+        // Get commitment info
+        guard let commitmentId = UsageTracker.shared.getCommitmentId(),
+              let deadline = UsageTracker.shared.getCommitmentDeadline() else {
+            // No active commitment, skip
+            return
+        }
+        
+        // CRITICAL: Check if deadline has passed
+        // If deadline has passed, we should NOT update entries with post-deadline usage
+        let now = Date()
+        let deadlinePassed = now >= deadline
+        
+        // Get consumed minutes - use stored value at deadline if deadline has passed
+        let consumedMinutes: Double
+        if deadlinePassed {
+            // Deadline has passed - try multiple strategies to get pre-deadline value:
+            // 1. First, try stored value at deadline (if app was running when deadline passed)
+            if let storedMinutes = UsageTracker.shared.getConsumedMinutesAtDeadline() {
+                consumedMinutes = storedMinutes
+                NSLog("SYNC UsageSyncManager: ⏰ Deadline passed, using stored consumedMinutes at deadline: \(storedMinutes) min")
+            } else if let historyMinutes = UsageTracker.shared.getConsumedMinutesAtDeadlineFromHistory(deadline: deadline) {
+                // 2. If no stored value, use threshold history to find last threshold before deadline
+                // This handles the case where app was killed before deadline
+                consumedMinutes = historyMinutes
+                NSLog("SYNC UsageSyncManager: ⏰ Deadline passed, using threshold history: \(historyMinutes) min (last threshold before deadline)")
+            } else {
+                // 3. Fallback: Use current value but log a warning
+                // This should rarely happen (only if no thresholds occurred before deadline)
+                consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
+                NSLog("SYNC UsageSyncManager: ⚠️ Deadline passed but no stored value or history, using current consumedMinutes: \(consumedMinutes) min (may include post-deadline usage)")
+            }
+        } else {
+            // Deadline hasn't passed yet - use current value
+            consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
+            
+            // Check if we're very close to the deadline (within 1 second) and store the value
+            // This ensures we capture the value right before the deadline
+            let timeUntilDeadline = deadline.timeIntervalSince(now)
+            if timeUntilDeadline <= 1.0 && timeUntilDeadline > 0 {
+                UsageTracker.shared.storeConsumedMinutesAtDeadline(consumedMinutes)
+                NSLog("SYNC UsageSyncManager: ⏰ Near deadline, storing consumedMinutes: \(consumedMinutes) min")
+            }
+        }
+        
+        // Get baseline minutes
+        let baselineMinutes = UsageTracker.shared.getBaselineTime() / 60.0 // Convert seconds to minutes
+        
+        // Get today's date in YYYY-MM-DD format
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone.current
+        let todayString = dateFormatter.string(from: now)
+        
+        // Format deadline as YYYY-MM-DD for weekStartDate (must match commitment's week_end_date)
+        // In testing mode, backend uses UTC date, so we use UTC here too
+        // In normal mode, backend uses ET date, so we use ET here
+        let deadlineFormatter = DateFormatter()
+        deadlineFormatter.dateFormat = "yyyy-MM-dd"
+        // Use UTC for date formatting to match backend's formatDate() function
+        // The backend's formatDate() uses UTC year/month/day, so we do the same
+        deadlineFormatter.timeZone = TimeZone(identifier: "UTC") ?? TimeZone.current
+        let weekStartDateString = deadlineFormatter.string(from: deadline)
+        
+        // Check if entry already exists for today
+        let key = "daily_usage_\(todayString)"
+        
+        if let existingData = userDefaults.data(forKey: key) {
+            // Update existing entry
+            do {
+                var entry = try JSONDecoder().decode(DailyUsageEntry.self, from: existingData)
+                
+                // Only update if this is for the same commitment
+                if entry.commitmentId == commitmentId {
+                    if deadlinePassed {
+                        // Deadline has passed - don't update with post-deadline usage
+                        // The entry should already have the correct value from before the deadline
+                        NSLog("SYNC UsageSyncManager: ⏰ Deadline has passed, skipping update to preserve pre-deadline usage")
+                        return
+                    } else {
+                        // Deadline hasn't passed yet - safe to update with current usage
+                        // Update total minutes (use max to handle case where consumedMinutes might decrease)
+                        let updatedEntry = entry.updating(totalMinutes: max(entry.totalMinutes, consumedMinutes))
+                        
+                        let encoded = try JSONEncoder().encode(updatedEntry)
+                        userDefaults.set(encoded, forKey: key)
+                        NSLog("SYNC UsageSyncManager: ✅ Updated daily usage for \(todayString): \(consumedMinutes) min")
+                    }
+                } else {
+                    NSLog("SYNC UsageSyncManager: ⚠️ Entry exists for different commitment, skipping update")
+                }
+            } catch {
+                NSLog("SYNC UsageSyncManager: ❌ Failed to decode existing entry: \(error)")
+            }
+        } else {
+            // Create new entry
+            // If deadline has passed, we still create the entry but with the current consumedMinutes
+            // This handles the case where the app was killed before the deadline and never created an entry
+            // The backend will calculate the penalty correctly based on the limit
+            let entry = DailyUsageEntry(
+                date: todayString,
+                totalMinutes: consumedMinutes,
+                baselineMinutes: baselineMinutes,
+                weekStartDate: weekStartDateString,
+                commitmentId: commitmentId,
+                synced: false
+            )
+            
+            do {
+                let encoded = try JSONEncoder().encode(entry)
+                userDefaults.set(encoded, forKey: key)
+                userDefaults.synchronize()
+                if deadlinePassed {
+                    NSLog("SYNC UsageSyncManager: ⚠️ Created daily usage entry AFTER deadline for \(todayString): \(consumedMinutes) min (deadline passed, may include post-deadline usage)")
+                } else {
+                    NSLog("SYNC UsageSyncManager: ✅ Created daily usage entry for \(todayString): \(consumedMinutes) min, weekStartDate: \(weekStartDateString)")
+                }
+            } catch {
+                NSLog("SYNC UsageSyncManager: ❌ Failed to encode entry: \(error)")
+            }
+        }
+    }
+    
+    // MARK: - Automatic Sync Trigger
+    
+    /// Update daily usage and sync to backend
+    /// This should be called on app foreground, after commitment creation, etc.
+    func updateAndSync() async {
+        // First, update daily usage entries from consumedMinutes
+        updateDailyUsageFromConsumedMinutes()
+        
+        // Then, sync to backend
+        do {
+            try await syncToBackend()
+            NSLog("SYNC UsageSyncManager: ✅ Update and sync completed successfully")
+        } catch {
+            NSLog("SYNC UsageSyncManager: ❌ Update and sync failed: \(error)")
+        }
+    }
+    
     // MARK: - Helper Methods
     
     /// Get count of unsynced entries (for UI display)

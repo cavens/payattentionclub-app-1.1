@@ -110,6 +110,10 @@ extension AuthenticationManager: ASAuthorizationControllerDelegate {
         // Clear nonce
         currentNonce = nil
         
+        // Extract email from Apple credential (only available on first sign-in)
+        // On subsequent sign-ins, this will be nil
+        let email = appleIDCredential.email
+        
         // Sign in with Supabase
         // Capture continuation to avoid multiple resumes
         guard let cont = continuation else {
@@ -122,10 +126,16 @@ extension AuthenticationManager: ASAuthorizationControllerDelegate {
             do {
                 let session = try await BackendClient.shared.signInWithApple(
                     idToken: idTokenString,
-                    nonce: nonce
+                    nonce: nonce,
+                    email: email  // Pass email if available (real email on first sign-in)
                 )
                 cont.resume(returning: session)
                 NSLog("AUTH: ✅ Successfully signed in with Apple")
+                if let email = email {
+                    NSLog("AUTH: 📧 Email from Apple credential: \(email)")
+                } else {
+                    NSLog("AUTH: 📧 No email in credential (subsequent sign-in)")
+                }
             } catch {
                 NSLog("AUTH: ❌ Failed to sign in with Supabase: \(error.localizedDescription)")
                 cont.resume(throwing: error)

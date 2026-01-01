@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
+import { TESTING_MODE, getGraceDeadline, getNextDeadline } from "../_shared/timing.ts";
 
 /* ---------- Inline helper utilities ---------- */
 
@@ -18,6 +19,7 @@ type CommitmentRow = {
   saved_payment_method_id: string | null;
   max_charge_cents: number | null;
   status: string | null;
+  created_at: string | null;
 };
 
 type UserRow = {
@@ -39,6 +41,7 @@ type UserWeekPenaltyRow = {
   refund_issued_at: string | null;
   charge_payment_intent_id: string | null;
   refund_payment_intent_id: string | null;
+  last_updated: string | null;
 };
 
 type SettlementCandidate = {
@@ -61,12 +64,32 @@ function formatDate(date: Date): string {
 function resolveWeekTarget(options?: { override?: string; now?: Date }): WeekTarget {
   const override = options?.override;
   if (override) {
-    const parsed = new Date(`${override}T12:00:00Z`);
-    const grace = new Date(parsed);
-    grace.setUTCDate(grace.getUTCDate() + 1);
-    return { weekEndDate: override, graceDeadlineIso: grace.toISOString() };
+    // If override is provided, parse it as Monday 12:00 ET
+    const parsed = new Date(`${override}T12:00:00`);
+    const mondayET = toDateInTimeZone(parsed, TIME_ZONE);
+    mondayET.setHours(12, 0, 0, 0);
+    // Use timing helper to get grace deadline (handles compressed vs normal mode)
+    const graceDeadline = getGraceDeadline(mondayET);
+    return { weekEndDate: override, graceDeadlineIso: graceDeadline.toISOString() };
   }
 
+  // In testing mode, use today's date in UTC as the week_end_date
+  // This matches how commitments are created in testing mode (they use UTC date)
+  if (TESTING_MODE) {
+    const now = options?.now ?? new Date();
+    // In testing mode, commitments use today's date in UTC as week_end_date
+    // (because formatDeadlineDate uses toISOString() which is UTC-based)
+    // So we need to use UTC date here too
+    const todayUTC = new Date(now);
+    const weekEndDate = formatDate(todayUTC); // formatDate uses UTC year/month/day
+    // For grace deadline calculation, we need a Date object
+    // Use today at 12:00 UTC as the reference point (matches commitment creation logic)
+    todayUTC.setUTCHours(12, 0, 0, 0);
+    const graceDeadline = getGraceDeadline(todayUTC);
+    return { weekEndDate, graceDeadlineIso: graceDeadline.toISOString() };
+  }
+
+  // Normal mode: Calculate previous Monday
   const reference = toDateInTimeZone(options?.now ?? new Date(), TIME_ZONE);
   const monday = new Date(reference);
   const dayOfWeek = reference.getDay(); // 0=Sun ... 6=Sat
@@ -75,8 +98,8 @@ function resolveWeekTarget(options?: { override?: string; now?: Date }): WeekTar
   monday.setHours(12, 0, 0, 0);
 
   const weekEndDate = formatDate(monday);
-  const graceDeadline = new Date(monday);
-  graceDeadline.setDate(graceDeadline.getDate() + 1);
+  // Use timing helper to get grace deadline (handles compressed vs normal mode)
+  const graceDeadline = getGraceDeadline(monday);
 
   return { weekEndDate, graceDeadlineIso: graceDeadline.toISOString() };
 }
@@ -95,7 +118,8 @@ async function fetchCommitmentsForWeek(
         "week_grace_expires_at",
         "saved_payment_method_id",
         "max_charge_cents",
-        "status"
+        "status",
+        "created_at"
       ].join(",")
     )
     .eq("week_end_date", weekEndDate);
@@ -124,7 +148,8 @@ async function fetchUserWeekPenalties(
         "charged_at",
         "refund_issued_at",
         "charge_payment_intent_id",
-        "refund_payment_intent_id"
+        "refund_payment_intent_id",
+        "last_updated"
       ].join(",")
     )
     .eq("week_start_date", weekEndDate)
@@ -198,17 +223,78 @@ async function buildSettlementCandidates(
   }));
 }
 
+function getCommitmentDeadline(candidate: SettlementCandidate): Date {
+  // In testing mode, calculate deadline from created_at
+  if (TESTING_MODE && candidate.commitment.created_at) {
+    const createdAt = new Date(candidate.commitment.created_at);
+    return new Date(createdAt.getTime() + (3 * 60 * 1000)); // 3 minutes after creation
+  }
+  
+  // Normal mode: deadline is Monday 12:00 ET (week_end_date)
+  const mondayDate = new Date(`${candidate.commitment.week_end_date}T12:00:00`);
+  const mondayET = toDateInTimeZone(mondayDate, TIME_ZONE);
+  mondayET.setHours(12, 0, 0, 0);
+  return mondayET;
+}
+
 function hasSyncedUsage(candidate: SettlementCandidate): boolean {
-  return candidate.reportedDays > 0;
+  // Check if actual_amount_cents exists AND was updated after the deadline
+  // This ensures we only count usage synced AFTER the deadline, not before
+  const penalty = candidate.penalty;
+  if (!penalty || (penalty.actual_amount_cents ?? 0) <= 0) {
+    return false; // No actual amount set
+  }
+  
+  // Calculate the deadline for this commitment
+  const deadline = getCommitmentDeadline(candidate);
+  
+  // If last_updated is not available, fall back to checking actual_amount_cents
+  // (for backward compatibility with existing records)
+  if (!penalty.last_updated) {
+    // Legacy behavior: if actual_amount_cents is set but no last_updated,
+    // we can't determine when it was synced, so assume it was synced after deadline
+    // This is conservative - it may charge actual when it should charge worst case
+    return true;
+  }
+  
+  // Check if last_updated is after the deadline
+  const lastUpdated = new Date(penalty.last_updated);
+  return lastUpdated.getTime() > deadline.getTime();
 }
 
 function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date()): boolean {
+  // If explicit grace deadline is set, use it
   const explicit = candidate.commitment.week_grace_expires_at;
-  if (explicit) return new Date(explicit).getTime() <= reference.getTime();
+  if (explicit) {
+    const expired = new Date(explicit).getTime() <= reference.getTime();
+    console.log(`isGracePeriodExpired: Using explicit grace deadline ${explicit}, expired: ${expired}`);
+    return expired;
+  }
 
-  const derived = new Date(`${candidate.commitment.week_end_date}T00:00:00Z`);
-  derived.setUTCDate(derived.getUTCDate() + 1);
-  return derived.getTime() <= reference.getTime();
+  // In testing mode, calculate grace period from created_at timestamp
+  // Deadline is 3 minutes after creation, grace expires 1 minute after deadline (4 minutes total)
+  if (TESTING_MODE && candidate.commitment.created_at) {
+    const createdAt = new Date(candidate.commitment.created_at);
+    const deadline = new Date(createdAt.getTime() + (3 * 60 * 1000)); // 3 minutes
+    const graceDeadline = new Date(deadline.getTime() + (1 * 60 * 1000)); // 1 minute after deadline
+    const expired = graceDeadline.getTime() <= reference.getTime();
+    const timeUntilGrace = graceDeadline.getTime() - reference.getTime();
+    console.log(`isGracePeriodExpired (testing mode): created_at=${createdAt.toISOString()}, deadline=${deadline.toISOString()}, graceDeadline=${graceDeadline.toISOString()}, now=${reference.toISOString()}, expired=${expired}, timeUntilGrace=${timeUntilGrace}ms (${Math.round(timeUntilGrace / 1000)}s)`);
+    return expired;
+  }
+
+  // Normal mode: derive grace deadline from week_end_date using timing helper
+  // week_end_date is Monday (e.g., "2025-01-13"), need to convert to Date object
+  const mondayDate = new Date(`${candidate.commitment.week_end_date}T12:00:00`);
+  const mondayET = toDateInTimeZone(mondayDate, TIME_ZONE);
+  mondayET.setHours(12, 0, 0, 0);
+  
+  // Use timing helper to get grace deadline (handles compressed vs normal mode)
+  const graceDeadline = getGraceDeadline(mondayET);
+  const expired = graceDeadline.getTime() <= reference.getTime();
+  console.log(`isGracePeriodExpired (normal mode): week_end_date=${candidate.commitment.week_end_date}, graceDeadline=${graceDeadline.toISOString()}, now=${reference.toISOString()}, expired=${expired}`);
+  
+  return expired;
 }
 
 function getWorstCaseAmountCents(candidate: SettlementCandidate): number {
@@ -221,20 +307,10 @@ function getActualPenaltyCents(candidate: SettlementCandidate): number {
 
 /* ---------- Main settlement logic ---------- */
 
-const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
-const STRIPE_SECRET_KEY_PROD = Deno.env.get("STRIPE_SECRET_KEY");
-const STRIPE_SECRET_KEY = STRIPE_SECRET_KEY_TEST || STRIPE_SECRET_KEY_PROD;
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
+// Environment variables are read at runtime in the handler
+// Don't read them at module level to avoid issues with Edge Function runtime
 
-if (!STRIPE_SECRET_KEY) {
-  console.error("run-weekly-settlement: Missing Stripe secret key (set STRIPE_SECRET_KEY[_TEST]).");
-}
-if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
-  console.error("run-weekly-settlement: Missing Supabase credentials.");
-}
-
-const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
+// Stripe client is created at runtime in the handler
 const CURRENCY = "usd";
 const SETTLED_STATUSES = new Set(["charged_actual", "charged_worst_case", "refunded", "refunded_partial"]);
 
@@ -262,7 +338,12 @@ function shouldSkipBecauseSettled(candidate: SettlementCandidate): boolean {
 }
 
 function getChargeAmount(candidate: SettlementCandidate, type: ChargeType): number {
-  return type === "actual" ? getActualPenaltyCents(candidate) : getWorstCaseAmountCents(candidate);
+  if (type === "actual") {
+    const actual = getActualPenaltyCents(candidate);
+    const maxCharge = getWorstCaseAmountCents(candidate); // This is max_charge_cents (authorization amount)
+    return Math.min(actual, maxCharge); // Cap actual at authorization amount - never charge more than authorized
+  }
+  return getWorstCaseAmountCents(candidate);
 }
 
 async function recordPayment(
@@ -316,11 +397,16 @@ async function updateUserWeekPenalty(
 
   if (params.status === "failed") updates["charged_amount_cents"] = 0;
 
+  // Use upsert to create record if it doesn't exist, or update if it does
   await supabase
     .from("user_week_penalties")
-    .update(updates)
-    .eq("user_id", params.userId)
-    .eq("week_start_date", params.weekEndDate);
+    .upsert({
+      user_id: params.userId,
+      week_start_date: params.weekEndDate,
+      ...updates
+    }, {
+      onConflict: "user_id,week_start_date"
+    });
 }
 
 async function chargeCandidate(
@@ -328,7 +414,8 @@ async function chargeCandidate(
   supabase: ReturnType<typeof createClient>,
   weekEndDate: string,
   chargeType: ChargeType,
-  amountCents: number
+  amountCents: number,
+  stripe: Stripe | null
 ) {
   if (!stripe) throw new Error("Stripe client is not configured.");
   if (!candidate.user?.stripe_customer_id) throw new Error("User missing stripe_customer_id.");
@@ -388,11 +475,53 @@ async function chargeCandidate(
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Use POST", { status: 405 });
-  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
-    return new Response("Supabase credentials missing", { status: 500 });
+  
+  // Read environment variables at request time
+  // Match the pattern used in other working functions (super-service, rapid-service)
+  // Also check SUPABASE_SERVICE_ROLE_KEY as fallback (legacy name, same value as SUPABASE_SECRET_KEY)
+  const SUPABASE_URL_RUNTIME = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_SECRET_KEY_RUNTIME = Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
+  const STRIPE_SECRET_KEY_PROD = Deno.env.get("STRIPE_SECRET_KEY");
+  const STRIPE_SECRET_KEY = STRIPE_SECRET_KEY_TEST || STRIPE_SECRET_KEY_PROD;
+  
+  if (!SUPABASE_URL_RUNTIME || !SUPABASE_SECRET_KEY_RUNTIME) {
+    console.error("run-weekly-settlement: Missing Supabase credentials at runtime");
+    console.error(`  SUPABASE_URL: ${SUPABASE_URL_RUNTIME ? 'SET' : 'MISSING'}`);
+    console.error(`  STAGING_SUPABASE_SECRET_KEY: ${Deno.env.get("STAGING_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
+    console.error(`  PRODUCTION_SUPABASE_SECRET_KEY: ${Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
+    console.error(`  SUPABASE_SERVICE_ROLE_KEY: ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ? 'SET' : 'MISSING'}`);
+    return new Response(JSON.stringify({
+      error: "Supabase credentials missing",
+      details: "SUPABASE_URL and either STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets."
+    }), { 
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  
+  // Initialize Stripe client at runtime
+  const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
+
+  // In testing mode, make function public (no auth required) but require manual trigger header
+  // This allows automated testing scripts to call the function without authentication
+  if (TESTING_MODE) {
+    const isManualTrigger = req.headers.get("x-manual-trigger") === "true";
+    if (!isManualTrigger) {
+      console.log("run-weekly-settlement: Skipped - testing mode active (use x-manual-trigger header)");
+      return new Response(
+        JSON.stringify({ message: "Settlement skipped - testing mode active. Use x-manual-trigger: true header to run." }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    // In testing mode, skip authentication check - function is public
+    console.log("run-weekly-settlement: Testing mode - public access allowed with x-manual-trigger header");
+  } else {
+    // In production mode, authentication is still required by Edge Function gateway
+    // (This code path won't execute if gateway requires auth, but kept for clarity)
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
+  const supabase = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
 
   let payload: RequestPayload | undefined;
   try {
@@ -431,11 +560,15 @@ Deno.serve(async (req) => {
         summary.alreadySettled += 1;
         continue;
       }
-      if (!hasUsage && !isGracePeriodExpired(candidate)) {
+      
+      // CRITICAL: Always wait for grace period to expire before settling
+      // This gives users time to sync their data, regardless of whether usage exists
+      if (!isGracePeriodExpired(candidate)) {
         summary.graceNotExpired += 1;
-        continue;
+        continue;  // Skip settlement - wait for grace period to expire
       }
 
+      // Grace period has expired - now check usage and charge accordingly
       const chargeType: ChargeType = hasUsage ? "actual" : "worst_case";
       const amountCents = getChargeAmount(candidate, chargeType);
 
@@ -460,7 +593,8 @@ Deno.serve(async (req) => {
           supabase,
           target.weekEndDate,
           chargeType,
-          amountCents
+          amountCents,
+          stripe
         );
         if (chargeType === "actual") summary.chargedActual += 1;
         else summary.chargedWorstCase += 1;

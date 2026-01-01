@@ -244,7 +244,12 @@ struct AuthorizationView: View {
             
             NSLog("LOCKIN AuthorizationView: ✅ Step 2 complete - Commitment created successfully!")
             NSLog("LOCKIN AuthorizationView: commitmentId: \(commitmentResponse.commitmentId)")
+            
+            // Store commitment ID in App Group for usage tracking
+            UsageTracker.shared.storeCommitmentId(commitmentResponse.commitmentId)
+            NSLog("LOCKIN AuthorizationView: ✅ Stored commitment ID: \(commitmentResponse.commitmentId)")
             NSLog("LOCKIN AuthorizationView: maxChargeCents: \(commitmentResponse.maxChargeCents)")
+            NSLog("LOCKIN AuthorizationView: deadlineDate from backend: \(commitmentResponse.deadlineDate)")
             
             // Step 3: Store baseline time (0 when "Lock in" is pressed)
         await MainActor.run {
@@ -257,8 +262,64 @@ struct AuthorizationView: View {
         // Store baseline in App Group
         UsageTracker.shared.storeBaselineTime(0.0)
             
-            // Store commitment deadline (next Monday noon EST)
-            let deadline = await MainActor.run { model.getNextMondayNoonEST() }
+            // Store commitment deadline - use backend deadline (compressed in testing mode, normal in production)
+            // Parse deadlineDate from backend response
+            // In testing mode: ISO 8601 format (e.g., "2025-12-31T12:06:00.000Z")
+            // In normal mode: Date only format (e.g., "2025-12-31")
+            let deadline: Date
+            
+            // Try parsing as ISO 8601 first (testing mode with full timestamp)
+            // Try with fractional seconds first, then without
+            let iso8601Formatter = ISO8601DateFormatter()
+            iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            
+            var isoDeadline: Date?
+            isoDeadline = iso8601Formatter.date(from: commitmentResponse.deadlineDate)
+            
+            if isoDeadline == nil {
+                // Try without fractional seconds
+                iso8601Formatter.formatOptions = [.withInternetDateTime]
+                isoDeadline = iso8601Formatter.date(from: commitmentResponse.deadlineDate)
+            }
+            
+            if let isoDeadline = isoDeadline {
+                // Successfully parsed as ISO 8601 (testing mode)
+                deadline = isoDeadline
+                NSLog("AUTH AuthorizationView: ✅ Using backend deadline (ISO 8601): \(deadline) (from \(commitmentResponse.deadlineDate))")
+                print("AUTH AuthorizationView: ✅ Using backend deadline (ISO 8601): \(deadline) (from \(commitmentResponse.deadlineDate))")
+                fflush(stdout)
+            } else {
+                // Try parsing as date only (normal mode: "yyyy-MM-dd")
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd"
+                dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
+                
+                if let backendDeadline = dateFormatter.date(from: commitmentResponse.deadlineDate) {
+                    // Use backend deadline (normal mode)
+                    // Set time to 12:00 ET (noon) to match backend's deadline time
+                    var components = Calendar.current.dateComponents([.year, .month, .day], from: backendDeadline)
+                    components.hour = 12
+                    components.minute = 0
+                    components.second = 0
+                    components.timeZone = TimeZone(identifier: "America/New_York")
+                    if let deadlineWithTime = Calendar.current.date(from: components) {
+                        deadline = deadlineWithTime
+                    } else {
+                        // If time setting fails, use the date as-is (will be midnight, but better than nothing)
+                        deadline = backendDeadline
+                    }
+                    NSLog("AUTH AuthorizationView: ✅ Using backend deadline (date only): \(deadline) (from \(commitmentResponse.deadlineDate))")
+                    print("AUTH AuthorizationView: ✅ Using backend deadline (date only): \(deadline) (from \(commitmentResponse.deadlineDate))")
+                    fflush(stdout)
+                } else {
+                    // Fallback to local calculation if parsing fails
+                    deadline = await MainActor.run { model.getNextMondayNoonEST() }
+                    NSLog("AUTH AuthorizationView: ⚠️ Fallback to local deadline calculation (failed to parse: \(commitmentResponse.deadlineDate))")
+                    print("AUTH AuthorizationView: ⚠️ Fallback to local deadline calculation (failed to parse: \(commitmentResponse.deadlineDate))")
+                    fflush(stdout)
+                }
+            }
+            
             NSLog("RESET AuthorizationView: 🔒 Storing commitment deadline: %@", String(describing: deadline))
             print("RESET AuthorizationView: 🔒 Storing commitment deadline: \(deadline)")
             fflush(stdout)
@@ -269,6 +330,12 @@ struct AuthorizationView: View {
             if let storedDeadline = storedDeadline {
                 NSLog("RESET AuthorizationView: ✅ Deadline stored successfully: %@", String(describing: storedDeadline))
                 print("RESET AuthorizationView: ✅ Deadline stored successfully: \(storedDeadline)")
+                fflush(stdout)
+                
+                // Update countdown model with the stored deadline (from backend, compressed in testing mode)
+                model.countdownModel?.updateDeadline(storedDeadline)
+                NSLog("RESET AuthorizationView: ✅ Updated countdown model with stored deadline")
+                print("RESET AuthorizationView: ✅ Updated countdown model with stored deadline")
                 fflush(stdout)
             } else {
                 NSLog("RESET AuthorizationView: ❌ ERROR: Deadline was NOT stored!")
@@ -321,7 +388,13 @@ struct AuthorizationView: View {
                     model.isStartingMonitoring = false
                 }
             }
-            }
+        }
+        
+        // Update daily usage and sync to backend after commitment creation
+        // This ensures any existing usage data is synced immediately
+        Task {
+            await UsageSyncManager.shared.updateAndSync()
+        }
         } catch {
             NSLog("LOCKIN AuthorizationView: ❌ Error during lock in: \(error.localizedDescription)")
             NSLog("LOCKIN AuthorizationView: Error type: \(type(of: error))")

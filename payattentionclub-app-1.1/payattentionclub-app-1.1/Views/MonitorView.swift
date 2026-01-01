@@ -243,6 +243,21 @@ struct MonitorView: View {
             // Check if deadline has passed while viewing MonitorView
             let deadlinePassed = tracker.isCommitmentDeadlinePassed()
             
+            // If deadline just passed, store consumedMinutes at deadline time
+            // This prevents post-deadline usage from being included in penalty calculations
+            if deadlinePassed {
+                let currentConsumedMinutes = await MainActor.run { tracker.getConsumedMinutes() }
+                await MainActor.run {
+                    tracker.storeConsumedMinutesAtDeadline(currentConsumedMinutes)
+                    NSLog("MONITOR MonitorView: ⏰ Deadline passed, stored consumedMinutes at deadline: \(currentConsumedMinutes) min")
+                }
+            }
+            
+            // Update daily usage entry from consumedMinutes (periodic update)
+            await MainActor.run {
+                UsageSyncManager.shared.updateDailyUsageFromConsumedMinutes()
+            }
+            
             // Update UI on main thread
             await MainActor.run {
                 model.currentUsageSeconds = usageSeconds

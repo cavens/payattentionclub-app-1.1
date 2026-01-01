@@ -184,3 +184,4 @@ Uses explicit p_app_count parameter (single source of truth from client).
 Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
 This ensures preview and commitment creation use the exact same formula and app count.';
 
+

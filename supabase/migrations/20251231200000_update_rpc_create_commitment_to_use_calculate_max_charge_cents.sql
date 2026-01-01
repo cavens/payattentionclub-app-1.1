@@ -131,3 +131,4 @@ COMMENT ON FUNCTION public.rpc_create_commitment(date, integer, integer, jsonb, 
 Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
 This ensures preview and commitment creation use the exact same formula.';
 
+

@@ -1,0 +1,206 @@
+SETTLEMENT LOGIC - SIMPLE EXPLANATION
+======================================
+
+TIMELINE
+--------
+- Monday 12:00 ET: Week deadline (week_end_date)
+- Tuesday 12:00 ET: Grace period expires, settlement runs
+
+BASIC FLOW
+----------
+1. User creates commitment → Authorization amount calculated (max_charge_cents)
+2. Extension tracks daily usage → Stored in App Group (local)
+3. User opens app → Usage syncs to server (if user opens app)
+4. Tuesday 12:00 ET → Settlement runs automatically
+5. User charged based on what we know at that time
+
+
+CASE 1: USER SYNCS AFTER MONDAY NOON BUT BEFORE TUESDAY NOON
+-------------------------------------------------------------
+What happens:
+- Week ends: Monday 12:00 ET (deadline)
+- User opens app after Monday 12:00 ET but before Tuesday 12:00 ET
+- Usage data syncs to server
+- Server calculates actual penalty from daily_usage rows
+
+On Tuesday 12:00 ET:
+- Settlement detects: User has synced usage
+- Charge: Actual penalty amount
+- BUT: Capped at authorization amount (max_charge_cents)
+- Status: charged_actual
+- charged_amount_cents: MIN(actual, authorization)
+- actual_amount_cents: true actual (uncapped)
+
+Example:
+- Authorization: $42.00 (4200 cents)
+- Actual penalty: $30.00 (3000 cents)
+- Charge: $30.00 (actual, under cap)
+
+Example (exceeds authorization):
+- Authorization: $42.00 (4200 cents)
+- Actual penalty: $50.00 (5000 cents)
+- Charge: $42.00 (capped at authorization)
+- actual_amount_cents: 5000 (true penalty, but charge is capped)
+
+
+CASE 2: USER DOES NOT SYNC AFTER MONDAY NOON (BEFORE TUESDAY NOON)
+------------------------------------------------------------------
+What happens:
+- Week ends: Monday 12:00 ET (deadline)
+- User does NOT open app after Monday 12:00 ET (before Tuesday 12:00 ET)
+- No usage data on server
+- We don't know actual penalty
+
+On Tuesday 12:00 ET:
+- Settlement detects: No synced usage
+- Grace period expired (Tuesday 12:00 ET)
+- Charge: Authorization amount (max_charge_cents) - worst case
+- Status: charged_worst_case
+- charged_amount_cents: max_charge_cents
+- actual_amount_cents: 0 (unknown at charge time)
+
+Example:
+- Authorization: $42.00 (4200 cents)
+- Actual penalty: Unknown
+- Charge: $42.00 (worst case)
+
+
+CASE 3: USER SYNCS AFTER TUESDAY NOON (LATE SYNC)
+--------------------------------------------------
+What happens:
+- Week ended: Monday 12:00 ET
+- Grace period expired: Tuesday 12:00 ET
+- User was already charged (Case 1 or Case 2)
+- User opens app on Wednesday (or later, after Tuesday 12:00 ET)
+- Usage data syncs to server
+- Server calculates actual penalty
+
+Reconciliation Logic:
+1. Get actual penalty from daily_usage rows
+2. Cap actual at authorization: MIN(actual, authorization)
+3. Calculate delta: capped_actual - charged_amount
+4. If delta = 0: No reconciliation needed
+5. If delta ≠ 0: Flag for reconciliation
+
+SUBCASE 3A: DELTA < 0 (USER WAS OVERCHARGED)
+--------------------------------------------
+Example:
+- Charged: $42.00 (worst case)
+- Actual: $30.00
+- Capped actual: $30.00
+- Delta: $30.00 - $42.00 = -$12.00
+
+Action:
+- Refund: $12.00
+- Status: refunded or refunded_partial
+- Final charge: $30.00
+
+SUBCASE 3B: DELTA > 0 (USER WAS UNDERCHARGED)
+----------------------------------------------
+Example:
+- Charged: $30.00 (actual, under authorization)
+- Actual: $40.00
+- Capped actual: $40.00 (still under authorization of $42.00)
+- Delta: $40.00 - $30.00 = +$10.00
+
+Action:
+- Extra charge: $10.00
+- Status: charged_actual_adjusted
+- Final charge: $40.00
+
+IMPORTANT: Can only charge extra if still under authorization cap!
+
+SUBCASE 3C: DELTA = 0 (ALREADY CORRECT)
+---------------------------------------
+Example:
+- Charged: $42.00 (worst case)
+- Actual: $50.00 (exceeds authorization)
+- Capped actual: $42.00 (MIN($50.00, $42.00))
+- Delta: $42.00 - $42.00 = $0.00
+
+Action:
+- No reconciliation needed
+- Status: remains charged_worst_case
+- Final charge: $42.00 (already at cap)
+
+This happens when:
+- User was charged worst case ($42.00)
+- Actual penalty exceeds authorization ($50.00)
+- But capped actual = authorization ($42.00)
+- So delta = 0 (no refund, no extra charge)
+
+
+AUTHORIZATION CAP RULES
+------------------------
+1. Charge amount is ALWAYS capped at authorization (max_charge_cents)
+   - Even if actual penalty is higher
+   - We can NEVER charge more than authorized
+
+2. Reconciliation uses CAPPED actual, not raw actual
+   - Delta = MIN(actual, authorization) - charged
+   - This prevents extra charges beyond authorization
+
+3. Extra charges only possible if:
+   - Delta > 0 AND
+   - charged + delta <= authorization
+   - If already at authorization cap, delta will be 0
+
+
+EDGE CASES
+----------
+
+EDGE CASE 1: ZERO PENALTY
+--------------------------
+- User stayed within limit
+- Actual penalty: $0.00
+- Charge: $0.00 (no charge)
+- Status: pending or no_charge
+- No payment record created
+
+EDGE CASE 2: MISSING PAYMENT METHOD
+-----------------------------------
+- User has commitment but no saved payment method
+- Settlement skips charge
+- Status: charge_failed
+- User needs to update payment method
+
+EDGE CASE 3: ALREADY SETTLED
+-----------------------------
+- Settlement runs twice (duplicate)
+- Detects: Already settled
+- Skips: No duplicate charge
+- Status: unchanged
+
+EDGE CASE 4: GRACE PERIOD NOT EXPIRED
+--------------------------------------
+- Settlement runs before Tuesday 12:00 ET
+- Grace period still active
+- Skips: Wait for grace period to expire
+- Status: pending
+
+
+SUMMARY TABLE
+-------------
+
+| User Syncs? | When? | Charge Amount | Status |
+|-------------|-------|---------------|--------|
+| Yes | After Monday noon, before Tuesday noon | MIN(actual, authorization) | charged_actual |
+| No | After Monday noon (before Tuesday noon) | authorization (worst case) | charged_worst_case |
+| Yes | After Tuesday noon (late sync) | Reconciliation: refund or extra charge | refunded / charged_actual_adjusted |
+
+| Actual vs Authorization | Charge Amount | Can Charge Extra? |
+|-------------------------|---------------|-------------------|
+| Actual < Authorization | Actual | Yes (if undercharged) |
+| Actual = Authorization | Authorization | No (already at cap) |
+| Actual > Authorization | Authorization (capped) | No (already at cap) |
+
+
+KEY POINTS
+----------
+1. Authorization cap is ALWAYS enforced
+2. We can NEVER charge more than max_charge_cents
+3. Reconciliation uses capped actual, preventing extra charges beyond authorization
+4. If user syncs late and actual exceeds authorization, delta = 0 (no refund)
+5. Extra charges only possible if under authorization cap
+6. Refunds happen when user was overcharged (worst case > actual)
+

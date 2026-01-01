@@ -1,22 +1,14 @@
 -- ==============================================================================
--- Internal Function: calculate_max_charge_cents
+-- Migration: Cap Strictness Multiplier at 10x
 -- ==============================================================================
--- THE single source of truth for max charge calculation.
--- Used by both rpc_preview_max_charge and rpc_create_commitment.
+-- Date: 2026-01-01
+-- Purpose: Prevent extreme authorization amounts for very strict limits
+-- 
+-- Problem: With very strict limits (e.g., 1 minute), the strictness multiplier
+--          becomes extremely high (e.g., 2,016x), driving authorization to $1000
+--          even when realistic overage would be much lower (e.g., $360 for 30 hours).
 --
--- Formula (Revised 2025-12-31, Updated 2026-01-01):
---   - Baseline: 21h @ $0.10, 4 apps = ~$20
---   - Stricter limits → exponentially higher authorization (capped at 10x multiplier)
---   - Higher penalty → direct multiplier
---   - More apps → moderate increase (2% per app above 1)
---   - Minimum: $15.00 (1500 cents)
---   - Maximum: $1000.00 (100000 cents)
---
--- Key improvements:
---   1. Aggressive strictness scaling (24h to 12h = $24.28 difference)
---   2. Minimum 1 app required (zero apps not possible)
---   3. Logical relationships between all factors
---   4. Strictness multiplier capped at 10x to prevent extreme values for very strict limits
+-- Solution: Cap the strictness multiplier at 10x maximum
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.calculate_max_charge_cents(
@@ -104,7 +96,7 @@ BEGIN
 END;
 $$;
 
--- Add comment explaining the function
+-- Update comment
 COMMENT ON FUNCTION public.calculate_max_charge_cents(timestamptz, integer, integer, integer) IS 
 'Calculates the maximum charge (authorization amount) in cents for a commitment.
 This is THE single source of truth - used by both preview and commitment creation.
@@ -112,4 +104,5 @@ Baseline: 21h @ $0.10, 4 apps = ~$20.
 Returns value between 1500 ($15) and 100000 ($1000) cents.
 Uses aggressive strictness scaling: stricter limits result in exponentially higher authorization.
 Strictness multiplier is capped at 10x to prevent extreme values for very strict limits (e.g., 1-minute limit).';
+
 

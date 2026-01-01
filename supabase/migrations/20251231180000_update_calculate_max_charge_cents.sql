@@ -101,3 +101,4 @@ Baseline: 21h @ $0.10, 4 apps = ~$20.
 Returns value between 1500 ($15) and 100000 ($1000) cents.
 Uses aggressive strictness scaling: stricter limits result in exponentially higher authorization.';
 
+

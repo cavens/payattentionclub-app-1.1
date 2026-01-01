@@ -1,9 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { TESTING_MODE, getNextDeadline } from "../_shared/timing.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+/**
+ * Format a Date object as YYYY-MM-DD string (normal mode)
+ * or ISO 8601 string (testing mode for precise timing)
+ */
+function formatDeadlineDate(date: Date): string {
+  if (TESTING_MODE) {
+    // In testing mode, return full ISO timestamp for precise timing
+    // Format: YYYY-MM-DDTHH:mm:ss.sssZ
+    return date.toISOString();
+  }
+  // In normal mode, return just the date (YYYY-MM-DD)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
 }
 
 serve(async (req) => {
@@ -78,11 +95,31 @@ serve(async (req) => {
       )
     }
 
+    // Determine deadline date for RPC call (always date format, RPC accepts 'date' type)
+    // In testing mode, calculate compressed deadline but extract just the date part for RPC
+    // In normal mode, use client's deadline (next Monday) as date only
+    let deadlineDateForRPC: string;
+    let compressedDeadlineISO: string | null = null; // Store full ISO timestamp for response transformation
+    
+    if (TESTING_MODE) {
+      // Override client's deadline with compressed deadline
+      const compressedDeadline = getNextDeadline();
+      // Extract date part for RPC (RPC accepts 'date' type, not timestamp)
+      deadlineDateForRPC = formatDeadlineDate(compressedDeadline).split('T')[0]; // Extract YYYY-MM-DD from ISO string
+      // Store full ISO timestamp for response transformation
+      compressedDeadlineISO = formatDeadlineDate(compressedDeadline);
+      console.log(`super-service: Testing mode - using compressed deadline date: ${deadlineDateForRPC} (for RPC), full ISO: ${compressedDeadlineISO}`);
+    } else {
+      // Use client's deadline (next Monday) as date only
+      deadlineDateForRPC = weekStartDate;
+      console.log(`super-service: Normal mode - using client deadline: ${deadlineDateForRPC}`);
+    }
+
     // Call the RPC function
-    // Note: weekStartDate is the deadline, not the start date
+    // Note: deadlineDateForRPC is the deadline date (YYYY-MM-DD), not the start date
     // The commitment starts NOW (when user commits) and ends on the deadline
     const { data, error } = await supabase.rpc('rpc_create_commitment', {
-      p_deadline_date: weekStartDate,  // This is the deadline (next Monday before noon)
+      p_deadline_date: deadlineDateForRPC,  // Date format (YYYY-MM-DD) for RPC
       p_limit_minutes: limitMinutes,
       p_penalty_per_minute_cents: penaltyPerMinuteCents,
       p_app_count: appCount,  // NEW: Explicit app count parameter (single source of truth)
@@ -98,6 +135,14 @@ serve(async (req) => {
       )
     }
 
+    // In testing mode, transform the response to include full ISO timestamp for deadline
+    // The RPC returns week_end_date as a date (YYYY-MM-DD), but we need the full timestamp
+    if (TESTING_MODE && data && compressedDeadlineISO) {
+      // Replace week_end_date with full ISO timestamp
+      data.week_end_date = compressedDeadlineISO;
+      console.log(`super-service: Testing mode - transformed week_end_date to ISO timestamp: ${compressedDeadlineISO}`);
+    }
+
     // Return the JSON response
     return new Response(
       JSON.stringify(data),
@@ -108,8 +153,9 @@ serve(async (req) => {
     )
   } catch (error) {
     console.error('Edge function error:', error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }

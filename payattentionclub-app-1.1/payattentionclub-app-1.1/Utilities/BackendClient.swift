@@ -334,8 +334,10 @@ class BackendClient {
     /// - Parameters:
     ///   - idToken: The Apple ID token string
     ///   - nonce: The nonce used for the Apple sign-in request
+    ///   - email: Optional email address from Apple credential (only available on first sign-in)
     /// - Returns: The authenticated session
-    func signInWithApple(idToken: String, nonce: String) async throws -> Session {
+    func signInWithApple(idToken: String, nonce: String, email: String?) async throws -> Session {
+        // 1. Authenticate with Supabase (uses ID token, may get private relay email)
         let session = try await supabase.auth.signInWithIdToken(
             credentials: OpenIDConnectCredentials(
                 provider: .apple,
@@ -343,7 +345,58 @@ class BackendClient {
                 nonce: nonce
             )
         )
+        
+        // 2. If we have a real email from Apple credential (not private relay), update the database
+        // Note: email is only provided on first sign-in when user chooses "Share My Email"
+        // On subsequent sign-ins, email will be nil
+        if let realEmail = email, !realEmail.contains("@privaterelay.appleid.com") {
+            do {
+                try await updateUserEmailIfReal(email: realEmail, userId: session.user.id)
+                NSLog("AUTH BackendClient: ✅ Updated user email to real email: \(realEmail)")
+            } catch {
+                // Log error but don't fail authentication if email update fails
+                NSLog("AUTH BackendClient: ⚠️ Failed to update user email: \(error.localizedDescription)")
+            }
+        } else if let email = email, email.contains("@privaterelay.appleid.com") {
+            NSLog("AUTH BackendClient: 📧 User chose to hide email, using private relay: \(email)")
+        } else {
+            NSLog("AUTH BackendClient: 📧 No email in credential (subsequent sign-in), keeping existing email")
+        }
+        
         return session
+    }
+    
+    /// Update user email in database if it's a real email (not private relay)
+    /// Uses direct table update with RLS policy ensuring user can only update their own row
+    /// - Parameters:
+    ///   - email: The email address to update
+    ///   - userId: The user ID to update
+    private func updateUserEmailIfReal(email: String, userId: UUID) async throws {
+        // Validate email is not empty and not a private relay
+        guard !email.isEmpty, !email.contains("@privaterelay.appleid.com") else {
+            NSLog("AUTH BackendClient: ⏭️ Skipping email update (empty or private relay)")
+            return
+        }
+        
+        // Direct update to public.users table
+        // RLS policy "Users can update own data" ensures user can only update their own row
+        struct UserEmailUpdate: Encodable {
+            let email: String
+            let updated_at: String
+        }
+        
+        let update = UserEmailUpdate(
+            email: email,
+            updated_at: ISO8601DateFormatter().string(from: Date())
+        )
+        
+        let response = try await supabase
+            .from("users")
+            .update(update)
+            .eq("id", value: userId.uuidString)
+            .execute()
+        
+        NSLog("AUTH BackendClient: ✅ Email updated successfully")
     }
     
     /// Sign out the current user

@@ -51,7 +51,9 @@ final class AppModel: ObservableObject {
         isInitialized = true
         
         // Initialize countdown model (lightweight operation)
-        let deadline = getNextMondayNoonEST()
+        // Prioritize stored deadline from commitment (from backend, compressed in testing mode)
+        // Fall back to calculated deadline if no stored deadline exists
+        let deadline = UsageTracker.shared.getCommitmentDeadline() ?? getNextMondayNoonEST()
         countdownModel = CountdownModel(deadline: deadline)
         refreshCachedDeadline()
         
@@ -191,11 +193,18 @@ final class AppModel: ObservableObject {
     
     /// Refresh cached deadline date (call when deadline might have changed)
     func refreshCachedDeadline() {
-        // Only recalculate if cache is empty or expired
+        // Prioritize stored deadline from commitment (from backend, compressed in testing mode)
+        // Fall back to calculated deadline if no stored deadline exists
         let newDeadline: Date
-        if let cached = cachedNextMondayNoonEST, cached > Date() {
+        if let storedDeadline = UsageTracker.shared.getCommitmentDeadline() {
+            // Use stored deadline (from backend, matches testing mode if enabled)
+            newDeadline = storedDeadline
+            NSLog("RESET AppModel: ✅ Using stored deadline from commitment: \(newDeadline)")
+        } else if let cached = cachedNextMondayNoonEST, cached > Date() {
+            // Use cached calculated deadline
             newDeadline = cached
         } else {
+            // Calculate new deadline (fallback only)
             newDeadline = getNextMondayNoonEST()
         }
         

@@ -14,7 +14,7 @@ import "https://deno.land/std@0.177.0/dotenv/load.ts";
 import Stripe from "https://esm.sh/stripe@14.5.0";
 
 // Default email - your Apple Sign-In relay email
-const DEFAULT_EMAIL = "m28rkdzs5g@privaterelay.appleid.com";
+const DEFAULT_EMAIL = "jef@cavens.io";
 
 async function main() {
   // Check for --force flag
