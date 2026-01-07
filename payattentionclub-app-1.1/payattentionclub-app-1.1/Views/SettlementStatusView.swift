@@ -148,7 +148,7 @@ private struct SettlementSummary {
         case chargedWorstCase
         case settledActual
         case refundPending
-        case adjustmentPending
+        // Note: adjustmentPending removed - late syncs can only result in refunds, never extra charges
     }
     
     let state: State
@@ -174,8 +174,10 @@ private struct SettlementSummary {
             state = .refundPending
             message = "Usage sync lowered your penalty. We'll send a refund for the difference as soon as Stripe settles."
         } else if response.needsReconciliation, response.reconciliationDeltaCents > 0 {
-            state = .adjustmentPending
-            message = "Usage sync increased your penalty. We'll run an additional charge with the saved payment method."
+            // This should never happen for late syncs (validation prevents delta > 0)
+            // But handle gracefully if it somehow occurs
+            state = .refundPending
+            message = "Reconciliation pending. Please contact support if you see this message."
         } else if normalized.contains("worst") {
             state = .chargedWorstCase
             message = "We charged the maximum because no sync arrived before Tuesday noon ET. You can still sync to trigger a refund."
@@ -201,8 +203,6 @@ private struct SettlementSummary {
             return "Settled actual"
         case .refundPending:
             return "Refund pending"
-        case .adjustmentPending:
-            return "Adjustment pending"
         }
     }
     
@@ -216,7 +216,6 @@ private struct SettlementSummary {
             return .green
         case .refundPending:
             return .blue
-        case .adjustmentPending:
             return .purple
         }
     }
@@ -231,7 +230,6 @@ private struct SettlementSummary {
             return "checkmark.seal"
         case .refundPending:
             return "arrow.triangle.2.circlepath"
-        case .adjustmentPending:
             return "exclamationmark.arrow.triangle.2.circlepath"
         }
     }

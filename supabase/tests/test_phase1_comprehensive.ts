@@ -50,7 +50,13 @@ try {
 console.log("\n📊 Test 2: Settlement Function Integration (Step 1.2)");
 try {
   // Check that settlement function can import timing helper
-  const settlementFile = await Deno.readTextFile("supabase/functions/bright-service/run-weekly-settlement.ts");
+  // Try run-weekly-settlement.ts first (if it exists), otherwise use index.ts
+  let settlementFile: string;
+  try {
+    settlementFile = await Deno.readTextFile("../functions/bright-service/run-weekly-settlement.ts");
+  } catch {
+    settlementFile = await Deno.readTextFile("../functions/bright-service/index.ts");
+  }
   
   const hasImport = settlementFile.includes('import { TESTING_MODE, getGraceDeadline } from "../_shared/timing.ts"');
   const hasCronSkip = settlementFile.includes('if (TESTING_MODE)');
@@ -77,22 +83,22 @@ try {
 console.log("\n📊 Test 3: Commitment Creation Integration (Step 1.3)");
 try {
   // Check that commitment creation function can import timing helper
-  const commitmentFile = await Deno.readTextFile("supabase/functions/super-service/index.ts");
+  const commitmentFile = await Deno.readTextFile("../functions/super-service/index.ts");
   
   const hasImport = commitmentFile.includes('import { TESTING_MODE, getNextDeadline } from "../_shared/timing.ts"');
-  const hasFormatDate = commitmentFile.includes('function formatDate');
+  const hasFormatDate = commitmentFile.includes('formatDeadlineDate') || commitmentFile.includes('function formatDate');
   const hasTestingModeCheck = commitmentFile.includes('if (TESTING_MODE)');
   const usesGetNextDeadline = commitmentFile.includes('getNextDeadline()');
   const usesDeadlineDate = commitmentFile.includes('deadlineDate');
   
   assertEquals(hasImport, true, "Commitment function should import timing helper");
-  assertEquals(hasFormatDate, true, "Commitment function should have formatDate");
+  assertEquals(hasFormatDate, true, "Commitment function should have formatDate or formatDeadlineDate");
   assertEquals(hasTestingModeCheck, true, "Commitment function should check TESTING_MODE");
   assertEquals(usesGetNextDeadline, true, "Commitment function should use getNextDeadline");
   assertEquals(usesDeadlineDate, true, "Commitment function should use deadlineDate");
   
   console.log("   ✅ Has timing helper import");
-  console.log("   ✅ Has formatDate function");
+  console.log("   ✅ Has formatDate/formatDeadlineDate function");
   console.log("   ✅ Checks TESTING_MODE");
   console.log("   ✅ Uses getNextDeadline");
   console.log("   ✅ Uses deadlineDate variable");

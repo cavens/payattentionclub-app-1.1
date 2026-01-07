@@ -64,26 +64,25 @@ flowchart TD
         Refund[Create Refund<br/>Status: refunded]
     end
     
-    subgraph Case3B["Case 3B: Extra Charge (Undercharged)"]
-        CheckCap{Under Auth Cap?}
-        ExtraCharge[Create Extra Charge<br/>Status: charged_actual_adjusted]
-        NoExtra[No Extra Charge<br/>Already at Cap]
-        CheckCap -->|Yes| ExtraCharge
-        CheckCap -->|No| NoExtra
-    end
-    
-    subgraph Case3C["Case 3C: No Change (Already Correct)"]
+    subgraph Case3B["Case 3B: No Change (Already Correct)"]
         NoChange[No Reconciliation Needed<br/>Status: unchanged]
     end
     
-    CheckDelta -->|Yes| Case3C
+    subgraph Validate["Validation: Prevent Invalid Delta"]
+        ValidateDelta{Delta > 0?}
+        SkipInvalid[Skip: Invalid Delta<br/>Late syncs can only refund,<br/>never charge extra]
+        ValidateDelta -->|Yes| SkipInvalid
+        ValidateDelta -->|No| NoChange2[Delta = 0<br/>No Reconciliation]
+    end
+    
+    CheckDelta -->|Yes| Case3B
     DeltaSign -->|Yes| Case3A
-    DeltaSign -->|No| Case3B
+    DeltaSign -->|No| Validate
     
     Refund --> ReconDone([Reconciliation Complete])
-    ExtraCharge --> ReconDone
-    NoExtra --> ReconDone
     NoChange --> ReconDone
+    SkipInvalid --> ReconDone
+    NoChange2 --> ReconDone
     
     ReconDone --> End
     
@@ -97,8 +96,8 @@ flowchart TD
     style Case2 fill:#f8d7da,stroke:#dc3545,stroke-width:2px
     style Case3 fill:#d1ecf1,stroke:#17a2b8,stroke-width:2px
     style Case3A fill:#d1ecf1,stroke:#17a2b8,stroke-width:2px
-    style Case3B fill:#f8d7da,stroke:#dc3545,stroke-width:2px
-    style Case3C fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style Case3B fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style Validate fill:#fff3cd,stroke:#ffc107,stroke-width:2px
     
     style SettlementFunc fill:#ffeaa7,stroke:#f39c12,stroke-width:3px
     style Reconcile fill:#ffeaa7,stroke:#f39c12,stroke-width:2px

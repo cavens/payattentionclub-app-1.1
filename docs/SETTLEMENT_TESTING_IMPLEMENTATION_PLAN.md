@@ -457,11 +457,12 @@ switch (command) {
 2. Pre-Test Setup section
 3. Test Case 1 section
 4. Test Case 2 section
-5. Test Case 3A section
-6. Test Case 3B section
-7. Test Case 3C section
-8. Post-Test Cleanup section
-9. Results panel
+5. Test Case 3A section (Late Sync - Refund)
+6. Test Case 3B section (Late Sync - No Change)
+7. Post-Test Cleanup section
+8. Results panel
+
+**Note**: Test Case 3C was removed - late syncs can only result in refunds (Case 3A) or no change (Case 3B), never extra charges.
 
 **Dependencies**: Step 4.1  
 **Testing**: Verify all buttons render correctly
@@ -580,6 +581,8 @@ supabase functions deploy testing-command-runner
 
 ## Phase 7: Testing & Validation
 
+**⚠️ NEXT STEP: Testing is the next priority. All implementation phases are complete. Tomorrow, proceed with Phase 7 testing steps.**
+
 ### Step 7.1: Test Compressed Timeline
 
 **Actions**:
@@ -601,9 +604,10 @@ supabase functions deploy testing-command-runner
 **Actions**:
 1. Run through Test Case 1 using web interface
 2. Run through Test Case 2 using web interface
-3. Run through Test Case 3A using web interface
-4. Run through Test Case 3B using web interface
-5. Run through Test Case 3C using web interface
+3. Run through Test Case 3A (Late Sync - Refund) using web interface
+4. Run through Test Case 3B (Late Sync - No Change) using web interface
+
+**Note**: Test Case 3C was removed - late syncs can only result in refunds (Case 3A) or no change (Case 3B), never extra charges.
 
 **Dependencies**: Step 7.1  
 **Expected**: All cases work correctly
@@ -658,19 +662,24 @@ supabase functions deploy testing-command-runner
 ## Implementation Order
 
 ### Week 1: Core Functionality
-1. ✅ Phase 1: Backend Testing Mode (Steps 1.1-1.4)
-2. ✅ Phase 2: iOS App Fix (Step 2.1)
-3. ✅ Phase 6: Environment Setup (Step 6.1)
+1. ✅ Phase 1: Backend Testing Mode (Steps 1.1-1.4) - **COMPLETE**
+2. ✅ Phase 2: iOS App Fix (Step 2.1) - **COMPLETE**
+3. ⏳ Phase 6: Environment Setup (Step 6.1) - **STATUS UNKNOWN** (needs Supabase dashboard check)
 
 ### Week 2: Tools & Interface
-4. ✅ Phase 3: Verification Tools (Steps 3.1-3.3)
-5. ✅ Phase 4: Command Runner (Step 4.1)
-6. ✅ Phase 5: Web Interface (Steps 5.1-5.4)
+4. ⚠️ Phase 3: Verification Tools (Steps 3.1-3.3) - **PARTIAL**
+   - ✅ Step 3.3: `manual_settlement_trigger.ts` exists
+   - ❌ Step 3.1: `rpc_verify_test_settlement` SQL function - **MISSING**
+   - ❌ Step 3.2: `verify_test_results.ts` script - **MISSING**
+5. ❌ Phase 4: Command Runner (Step 4.1) - **NOT STARTED**
+6. ❌ Phase 5: Web Interface (Steps 5.1-5.4) - **NOT STARTED**
 
 ### Week 3: Testing & Polish
-7. ✅ Phase 6: Deploy (Step 6.2)
-8. ✅ Phase 7: Testing (Steps 7.1-7.3)
-9. ✅ Phase 8: Documentation (Steps 8.1-8.2)
+7. ⏳ Phase 6: Deploy (Step 6.2) - **STATUS UNKNOWN** (depends on completion)
+8. ⏳ Phase 7: Testing (Steps 7.1-7.3) - **NOT STARTED**
+9. ⚠️ Phase 8: Documentation (Steps 8.1-8.2) - **PARTIAL**
+   - ✅ Plan document exists (this file)
+   - ❌ Quick Start Guide - **MISSING**
 
 ---
 
@@ -771,22 +780,78 @@ All Steps
 
 ## Next Steps
 
-**CURRENT STATUS (Active Work):**
-- 🔧 **Debugging Settlement Logic** - Investigating why settlement charges "actual" penalty when it should charge "worst-case" in the scenario where:
-  - App was killed before the deadline
-  - App was not reopened during the grace period
-  - Grace period should not have expired yet
-  - Expected behavior: Wait until grace period expires, then charge worst-case if no usage synced
-  - Location: `supabase/functions/bright-service/index.ts` (lines 265-298, 566-569)
-  - Debug logging added to `isGracePeriodExpired()` function to trace timing calculations
-  - Next action: Run settlement script and analyze debug logs to identify root cause
+## Current Implementation Status
 
-**Remaining Implementation:**
-1. Complete settlement logic debugging (current priority)
+### ✅ **COMPLETED**
+
+**Phase 1: Backend Testing Mode Infrastructure** - **100% COMPLETE**
+- ✅ Step 1.1: Shared timing helper (`supabase/functions/_shared/timing.ts`) - **EXISTS**
+- ✅ Step 1.2: Settlement function with compressed timing and cron skip - **IMPLEMENTED**
+  - Uses `TESTING_MODE` and `getGraceDeadline()` from timing helper
+  - Cron skip logic with `x-manual-trigger` header check - **IMPLEMENTED**
+- ✅ Step 1.3: Commitment creation with compressed deadline - **IMPLEMENTED**
+  - `super-service/index.ts` uses `getNextDeadline()` in testing mode
+  - Returns ISO timestamp in testing mode, date-only in normal mode
+- ✅ Step 1.4: Grace period calculation fix - **IMPLEMENTED**
+  - `isGracePeriodExpired()` uses timing helper and handles compressed mode
+
+**Phase 2: iOS App - Use Backend Deadline** - **100% COMPLETE**
+- ✅ Step 2.1: AuthorizationView uses backend deadline - **IMPLEMENTED**
+  - Parses ISO 8601 (testing mode) or date-only (normal mode)
+  - Stores deadline in UsageTracker
+  - Updates countdown model with backend deadline
+  - Has fallback to local calculation if parsing fails
+
+**Phase 3: Verification Tools** - **33% COMPLETE**
+- ✅ Step 3.3: Manual settlement trigger script - **EXISTS** (`supabase/tests/manual_settlement_trigger.ts`)
+- ❌ Step 3.1: Verification SQL function - **MISSING** (`rpc_verify_test_settlement`)
+- ❌ Step 3.2: Verification TypeScript script - **MISSING** (`verify_test_results.ts`)
+
+### ❌ **NOT STARTED**
+
+**Phase 4: Testing Command Runner Edge Function**
+- ❌ Step 4.1: Command runner function - **NOT CREATED**
+  - No `supabase/functions/testing-command-runner/` directory found
+
+**Phase 5: Web Testing Interface**
+- ❌ Step 5.1: HTML interface - **NOT CREATED**
+- ❌ Step 5.2: JavaScript for commands - **NOT CREATED**
+- ❌ Step 5.3: Styling - **NOT CREATED**
+- ❌ Step 5.4: Serve interface - **NOT IMPLEMENTED**
+
+### ⏳ **STATUS UNKNOWN** (Requires Manual Verification)
+
+**Phase 6: Environment Setup**
+- ⏳ Step 6.1: `TESTING_MODE=true` environment variable - **NEEDS CHECK** (Supabase dashboard)
+- ⏳ Step 6.2: Function deployments - **NEEDS CHECK** (verify all functions deployed)
+
+**Phase 7: Testing & Validation**
+- ⏳ Step 7.1: Compressed timeline test - **NOT VERIFIED**
+- ⏳ Step 7.2: All settlement cases test - **NOT VERIFIED**
+- ⏳ Step 7.3: Cron skip test - **NOT VERIFIED**
+
+**Phase 8: Documentation**
+- ✅ Step 8.1: Testing script document - **EXISTS** (this plan document)
+- ❌ Step 8.2: Quick Start Guide - **MISSING** (`docs/TESTING_QUICK_START.md`)
+
+---
+
+**CURRENT PRIORITY:**
+1. 🔧 **Debugging Settlement Logic** - Investigating why settlement charges "actual" penalty when it should charge "worst-case" in the scenario where:
+   - App was killed before the deadline
+   - App was not reopened during the grace period
+   - Grace period should not have expired yet
+   - Expected behavior: Wait until grace period expires, then charge worst-case if no usage synced
+   - Location: `supabase/functions/bright-service/index.ts` (lines 265-298, 566-569)
+   - Debug logging added to `isGracePeriodExpired()` function to trace timing calculations
+   - Next action: Run settlement script and analyze debug logs to identify root cause
+
+**NEXT STEPS (After Debugging):**
+1. Complete Phase 3: Create missing verification tools (Steps 3.1-3.2)
 2. Phase 4: Command Runner (Step 4.1)
 3. Phase 5: Web Interface (Steps 5.1-5.4)
 4. Phase 7: Testing & Validation (Steps 7.1-7.3)
-5. Phase 8: Documentation (Steps 8.1-8.2)
+5. Phase 8: Documentation (Step 8.2 - Quick Start Guide)
 
 ---
 

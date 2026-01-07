@@ -46,21 +46,19 @@ flowchart TD
     Reconcile --> Delta[Calculate Delta<br/>delta = capped_actual - charged]
     Delta --> CheckDelta{Delta = 0?}
     
-    CheckDelta -->|Yes| Case3C[Case 3C: No Change<br/>Already Correct]
+    CheckDelta -->|Yes| Case3B[Case 3B: No Change<br/>Already Correct]
     CheckDelta -->|No| DeltaSign{Delta < 0?}
     
     DeltaSign -->|Yes| Case3A[Case 3A: Refund<br/>User Overcharged]
-    DeltaSign -->|No| Case3B[Case 3B: Extra Charge<br/>User Undercharged]
+    DeltaSign -->|No| ValidateDelta[Validate: Delta > 0?]
     
     Case3A --> Refund[Create Refund<br/>Status: refunded]
-    Case3B --> CheckCap{Under Auth Cap?}
-    CheckCap -->|Yes| ExtraCharge[Create Extra Charge<br/>Status: charged_actual_adjusted]
-    CheckCap -->|No| NoExtra[No Extra Charge<br/>Already at Cap]
+    ValidateDelta -->|Yes| SkipInvalid[Skip: Invalid Delta<br/>Late syncs can only refund,<br/>never charge extra]
+    ValidateDelta -->|No| Case3B
     
-    Case3C --> ReconDone([Reconciliation Complete])
+    Case3B --> ReconDone([Reconciliation Complete])
     Refund --> ReconDone
-    ExtraCharge --> ReconDone
-    NoExtra --> ReconDone
+    SkipInvalid --> ReconDone
     
     ReconDone --> End
     
@@ -89,8 +87,9 @@ flowchart TD
     style Cap3 fill:#d1ecf1
     style Case3A fill:#d1ecf1
     style Refund fill:#d1ecf1
-    style Case3B fill:#f8d7da
-    style Case3C fill:#d4edda
+    style Case3B fill:#d4edda
+    style ValidateDelta fill:#fff3cd
+    style SkipInvalid fill:#f8d7da
     
     style Settlement fill:#ffeaa7,stroke:#f39c12,stroke-width:4px
     style Reconcile fill:#ffeaa7,stroke:#f39c12,stroke-width:3px

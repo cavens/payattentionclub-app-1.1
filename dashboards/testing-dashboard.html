@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PayAttentionClub - Settlement Testing Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .config-section {
+            background: #f8f9fa;
+            padding: 25px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .config-row {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .config-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .config-row label {
+            font-weight: 600;
+            min-width: 150px;
+            color: #495057;
+        }
+
+        .config-row input {
+            flex: 1;
+            min-width: 300px;
+            padding: 12px;
+            border: 2px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: 'Monaco', 'Courier New', monospace;
+        }
+
+        .config-row input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .save-config-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .save-config-btn:hover {
+            background: #218838;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 0;
+        }
+
+        .main-panel {
+            padding: 30px;
+        }
+
+        .sidebar {
+            background: #f8f9fa;
+            padding: 30px;
+            border-left: 2px solid #e9ecef;
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            border: 2px solid #e9ecef;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .section-header h2 {
+            font-size: 1.5em;
+            color: #495057;
+        }
+
+        .section-icon {
+            font-size: 1.8em;
+        }
+
+        .section.pre-test { border-left: 4px solid #17a2b8; }
+        .section.test-case-1 { border-left: 4px solid #28a745; }
+        .section.test-case-2 { border-left: 4px solid #ffc107; }
+        .section.test-case-3a { border-left: 4px solid #fd7e14; }
+        .section.test-case-3b { border-left: 4px solid #e83e8c; }
+        .section.test-case-3c { border-left: 4px solid #6f42c1; }
+        .section.post-test { border-left: 4px solid #dc3545; }
+
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background: #e0a800;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-info {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #138496;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .results-panel {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-top: 20px;
+        }
+
+        .results-panel:empty {
+            display: none;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .results-header h3 {
+            color: #d4d4d4;
+            font-size: 1.2em;
+        }
+
+        .copy-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .copy-btn:hover {
+            background: #5568d3;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-indicator.success {
+            background: #28a745;
+        }
+
+        .status-indicator.error {
+            background: #dc3545;
+        }
+
+        .status-indicator.loading {
+            background: #ffc107;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .test-description {
+            color: #6c757d;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+
+        .user-id-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            margin-bottom: 15px;
+        }
+
+        .user-id-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        @media (max-width: 1024px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                border-left: none;
+                border-top: 2px solid #e9ecef;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧪 Settlement Testing Dashboard</h1>
+            <p>Test settlement cases with compressed timeline (3 min week, 1 min grace)</p>
+        </div>
+
+        <div class="config-section">
+            <div class="config-row">
+                <label>Supabase URL:</label>
+                <input type="text" id="supabaseUrl" placeholder="https://your-project.supabase.co">
+            </div>
+            <div class="config-row">
+                <label>Supabase Anon Key:</label>
+                <input type="password" id="supabaseAnonKey" placeholder="your-anon-key">
+            </div>
+            <div class="config-row">
+                <button class="save-config-btn" onclick="saveConfig()">💾 Save Configuration</button>
+                <span id="configStatus" style="margin-left: 15px; color: #28a745; font-weight: 600;"></span>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="main-panel">
+                <div class="section pre-test">
+                    <div class="section-header">
+                        <span class="section-icon">🧹</span>
+                        <h2>Pre-Test Setup</h2>
+                    </div>
+                    <div class="test-description">
+                        Clear all test data before starting a new test run. This ensures a clean state.
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-danger" onclick="executeCommand('clear_data', { deleteTestUsers: false })">
+                            🗑️ Clear Test Data
+                        </button>
+                        <button class="btn btn-danger" onclick="executeCommand('clear_data', { deleteTestUsers: true })">
+                            🗑️ Clear Test Data + Users
+                        </button>
+                    </div>
+                </div>
+
+                <div class="section test-case-1">
+                    <div class="section-header">
+                        <span class="section-icon">✅</span>
+                        <h2>Test Case 1: Sync Before Grace Expires</h2>
+                    </div>
+                    <div class="test-description">
+                        User syncs usage before grace period expires. Settlement should charge actual penalty (capped at authorization).
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="executeCommand('get_commitment')">
+                            📋 Get Commitment
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_usage')">
+                            📊 Get Usage
+                        </button>
+                        <button class="btn btn-success" onclick="executeCommand('trigger_settlement')">
+                            ⚡ Trigger Settlement
+                        </button>
+                        <button class="btn btn-info" onclick="executeCommand('verify_results')">
+                            🔍 Verify Results
+                        </button>
+                    </div>
+                </div>
+
+                <div class="section test-case-2">
+                    <div class="section-header">
+                        <span class="section-icon">⚠️</span>
+                        <h2>Test Case 2: No Sync Before Grace Expires</h2>
+                    </div>
+                    <div class="test-description">
+                        User doesn't sync usage before grace period expires. Settlement should charge worst case (max_charge_cents).
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="executeCommand('get_commitment')">
+                            📋 Get Commitment
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_usage')">
+                            📊 Get Usage
+                        </button>
+                        <button class="btn btn-warning" onclick="executeCommand('trigger_settlement')">
+                            ⚡ Trigger Settlement (Worst Case)
+                        </button>
+                        <button class="btn btn-info" onclick="executeCommand('verify_results')">
+                            🔍 Verify Results
+                        </button>
+                    </div>
+                </div>
+
+                <div class="section test-case-3a">
+                    <div class="section-header">
+                        <span class="section-icon">💰</span>
+                        <h2>Test Case 3A: Late Sync - Refund</h2>
+                    </div>
+                    <div class="test-description">
+                        Settlement charged worst case, then user syncs usage showing lower actual. Should trigger refund.
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="executeCommand('get_penalty')">
+                            📋 Get Penalty Record
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_usage')">
+                            📊 Get Usage
+                        </button>
+                        <button class="btn btn-success" onclick="executeCommand('trigger_reconciliation')">
+                            🔄 Trigger Reconciliation
+                        </button>
+                        <button class="btn btn-info" onclick="executeCommand('verify_results')">
+                            🔍 Verify Results
+                        </button>
+                    </div>
+                </div>
+
+                <div class="section test-case-3b">
+                    <div class="section-header">
+                        <span class="section-icon">➡️</span>
+                        <h2>Test Case 3B: Late Sync - No Change</h2>
+                    </div>
+                    <div class="test-description">
+                        Settlement charged worst case, actual exceeds authorization. Capped actual = charged amount, no reconciliation needed.
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="executeCommand('get_penalty')">
+                            📋 Get Penalty Record
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_usage')">
+                            📊 Get Usage
+                        </button>
+                        <button class="btn btn-info" onclick="executeCommand('verify_results')">
+                            🔍 Verify Results
+                        </button>
+                    </div>
+                </div>
+
+                <div class="section post-test">
+                    <div class="section-header">
+                        <span class="section-icon">🧹</span>
+                        <h2>Post-Test Cleanup</h2>
+                    </div>
+                    <div class="test-description">
+                        Clean up all test data after completing tests.
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-danger" onclick="executeCommand('clear_data', { deleteTestUsers: false })">
+                            🗑️ Clear Test Data
+                        </button>
+                        <button class="btn btn-danger" onclick="executeCommand('clear_data', { deleteTestUsers: true })">
+                            🗑️ Clear Test Data + Users
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div style="margin-bottom: 20px;">
+                    <label for="userId" style="display: block; margin-bottom: 8px; font-weight: 600; color: #495057;">
+                        Test User ID:
+                    </label>
+                    <input 
+                        type="text" 
+                        id="userId" 
+                        class="user-id-input" 
+                        placeholder="11111111-1111-1111-1111-111111111111"
+                        onchange="saveUserId()"
+                    >
+                </div>
+
+                <div class="section" style="margin-bottom: 0;">
+                    <div class="section-header">
+                        <span class="section-icon">📊</span>
+                        <h2>Quick Actions</h2>
+                    </div>
+                    <div class="button-group" style="flex-direction: column;">
+                        <button class="btn btn-info" onclick="executeCommand('verify_results')" style="width: 100%;">
+                            🔍 Verify All Results
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_commitment')" style="width: 100%;">
+                            📋 Get Commitment
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_penalty')" style="width: 100%;">
+                            📊 Get Penalty
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_payments')" style="width: 100%;">
+                            💳 Get Payments
+                        </button>
+                        <button class="btn btn-primary" onclick="executeCommand('get_usage')" style="width: 100%;">
+                            📈 Get Usage
+                        </button>
+                    </div>
+                </div>
+
+                <div class="results-panel-container" style="margin-top: 20px;">
+                    <div class="results-header">
+                        <h3>Results</h3>
+                        <button class="copy-btn" onclick="copyResults()">📋 Copy</button>
+                    </div>
+                    <div id="results" class="results-panel"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        let SUPABASE_URL = '';
+        let SUPABASE_ANON_KEY = '';
+        let CURRENT_USER_ID = '';
+
+        // Load saved configuration
+        function loadConfig() {
+            const savedUrl = localStorage.getItem('testing_dashboard_supabase_url');
+            const savedKey = localStorage.getItem('testing_dashboard_supabase_anon_key');
+            const savedUserId = localStorage.getItem('testing_dashboard_user_id');
+
+            if (savedUrl) {
+                document.getElementById('supabaseUrl').value = savedUrl;
+                SUPABASE_URL = savedUrl;
+            }
+            if (savedKey) {
+                document.getElementById('supabaseAnonKey').value = savedKey;
+                SUPABASE_ANON_KEY = savedKey;
+            }
+            if (savedUserId) {
+                document.getElementById('userId').value = savedUserId;
+                CURRENT_USER_ID = savedUserId;
+            }
+        }
+
+        // Save configuration
+        function saveConfig() {
+            const url = document.getElementById('supabaseUrl').value.trim();
+            const key = document.getElementById('supabaseAnonKey').value.trim();
+
+            if (!url || !key) {
+                showConfigStatus('❌ Please fill in both URL and Anon Key', 'error');
+                return;
+            }
+
+            SUPABASE_URL = url;
+            SUPABASE_ANON_KEY = key;
+
+            localStorage.setItem('testing_dashboard_supabase_url', url);
+            localStorage.setItem('testing_dashboard_supabase_anon_key', key);
+
+            showConfigStatus('✅ Configuration saved!', 'success');
+        }
+
+        function showConfigStatus(message, type) {
+            const statusEl = document.getElementById('configStatus');
+            statusEl.textContent = message;
+            statusEl.style.color = type === 'success' ? '#28a745' : '#dc3545';
+            setTimeout(() => {
+                statusEl.textContent = '';
+            }, 3000);
+        }
+
+        // Save user ID
+        function saveUserId() {
+            const userId = document.getElementById('userId').value.trim();
+            CURRENT_USER_ID = userId;
+            localStorage.setItem('testing_dashboard_user_id', userId);
+        }
+
+        // Execute command
+        async function executeCommand(command, params = {}) {
+            if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+                showResults('❌ Error: Please configure Supabase URL and Anon Key first', 'error');
+                return;
+            }
+
+            const userId = document.getElementById('userId').value.trim();
+            if (!userId && command !== 'clear_data' && command !== 'trigger_settlement') {
+                showResults('❌ Error: Please enter a User ID', 'error');
+                return;
+            }
+
+            const resultsPanel = document.getElementById('results');
+            resultsPanel.style.display = 'block';
+            showResults(`🔄 Executing: ${command}...\n`, 'loading');
+
+            try {
+                const requestBody = {
+                    command: command,
+                    userId: userId || undefined,
+                    params: params
+                };
+
+                const response = await fetch(`${SUPABASE_URL}/functions/v1/testing-command-runner`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showResults(`❌ Error (${response.status}): ${JSON.stringify(data, null, 2)}`, 'error');
+                    return;
+                }
+
+                showResults(`✅ Success!\n\n${formatJSON(data)}`, 'success');
+
+            } catch (error) {
+                showResults(`❌ Error: ${error.message}\n\n${error.stack}`, 'error');
+            }
+        }
+
+        // Display results
+        function showResults(message, type) {
+            const resultsPanel = document.getElementById('results');
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'loading' ? '🔄' : '✅';
+            
+            resultsPanel.textContent = `[${timestamp}] ${prefix} ${message}\n\n${resultsPanel.textContent}`;
+            resultsPanel.scrollTop = 0;
+        }
+
+        // Format JSON
+        function formatJSON(obj) {
+            return JSON.stringify(obj, null, 2);
+        }
+
+        // Copy results to clipboard
+        function copyResults() {
+            const resultsPanel = document.getElementById('results');
+            const text = resultsPanel.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                alert('Failed to copy: ' + err);
+            });
+        }
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadConfig();
+        });
+    </script>
+</body>
+</html>
+

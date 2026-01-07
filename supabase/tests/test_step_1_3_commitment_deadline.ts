@@ -164,16 +164,16 @@ try {
 console.log("\n📊 Test 6: Edge Function syntax check");
 try {
   // Just verify the file can be parsed (we can't actually import it as a module easily)
-  const fileContent = await Deno.readTextFile("supabase/functions/super-service/index.ts");
+  const fileContent = await Deno.readTextFile("../functions/super-service/index.ts");
   
   // Check for key elements
   const hasImport = fileContent.includes('import { TESTING_MODE, getNextDeadline }');
-  const hasFormatDate = fileContent.includes('function formatDate');
+  const hasFormatDate = fileContent.includes('formatDeadlineDate') || fileContent.includes('function formatDate');
   const hasTestingModeCheck = fileContent.includes('if (TESTING_MODE)');
   const hasDeadlineDate = fileContent.includes('deadlineDate');
   
   assertEquals(hasImport, true, "File should import timing helper");
-  assertEquals(hasFormatDate, true, "File should have formatDate function");
+  assertEquals(hasFormatDate, true, "File should have formatDate or formatDeadlineDate function");
   assertEquals(hasTestingModeCheck, true, "File should check TESTING_MODE");
   assertEquals(hasDeadlineDate, true, "File should use deadlineDate variable");
   

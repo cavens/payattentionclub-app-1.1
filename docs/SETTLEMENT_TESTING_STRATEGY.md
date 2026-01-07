@@ -152,7 +152,7 @@ IF user syncs AFTER being charged:
 
 ---
 
-### Scenario D: User Syncs AFTER Tuesday Noon (Late Sync - Extra Charge)
+### Scenario D: User Syncs AFTER Tuesday Noon (Late Sync - No Change)
 
 **Setup:**
 1. Complete Scenario B (user charged worst case: 4200 cents)
@@ -168,6 +168,7 @@ IF user syncs AFTER being charged:
      - But reconciliation uses **capped actual**: `MIN(5000, 4200) = 4200`
    - Verify reconciliation delta: `4200 - 4200 = 0` (no refund, no extra charge)
    - Verify `needs_reconciliation = false` (delta is 0)
+   - **CRITICAL**: Verify validation prevents delta > 0 for late syncs
 
 **Expected Outcome:**
 - User charged 4200 cents (worst case)
@@ -175,7 +176,7 @@ IF user syncs AFTER being charged:
 - No reconciliation needed (already charged the cap)
 - Settlement status: `charged_worst_case` (unchanged)
 
-**Note**: This scenario tests that the authorization cap is enforced correctly in reconciliation.
+**Note**: This scenario tests that the authorization cap is enforced correctly in reconciliation and that extra charges are impossible for late syncs.
 
 ---
 
