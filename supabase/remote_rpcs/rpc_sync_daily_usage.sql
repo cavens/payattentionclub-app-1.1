@@ -168,22 +168,7 @@ BEGIN
       IF v_prev_settlement_status = ANY(V_SETTLED_STATUSES) THEN
         -- Use capped actual for reconciliation delta (not raw actual)
         v_reconciliation_delta := v_capped_actual_cents - COALESCE(v_prev_charged_amount, 0);
-        
-        -- Validation: Late syncs can only result in refunds, never extra charges
-        -- If charged worst case (cap), actual ≤ cap, so delta ≤ 0
-        IF v_prev_settlement_status = 'charged_worst_case' AND v_reconciliation_delta > 0 THEN
-          -- This is impossible: if charged worst case (cap), actual ≤ cap, so delta ≤ 0
-          -- Set delta to 0 and skip reconciliation
-          v_reconciliation_delta := 0;
-          v_needs_reconciliation := false;
-        ELSIF v_prev_settlement_status = 'charged_actual' AND v_reconciliation_delta > 0 THEN
-          -- This is suspicious - settlement already used the data, so delta should be 0
-          -- If user synced during grace period, settlement already happened on Tuesday
-          -- A later sync would be for a new week, not a late sync for the same week
-          -- Set delta to 0 and skip reconciliation
-          v_reconciliation_delta := 0;
-          v_needs_reconciliation := false;
-        ELSIF v_reconciliation_delta <> 0 THEN
+        IF v_reconciliation_delta <> 0 THEN
           v_needs_reconciliation := true;
         END IF;
       END IF;

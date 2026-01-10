@@ -633,7 +633,7 @@ deno run --allow-net --allow-env supabase/tests/verify_test_results.ts <your-use
 
 ## Test Case 3: Late Sync (After Settlement)
 
-**Scenario**: User syncs usage AFTER settlement already ran → Reconciliation (refund only, never extra charge)
+**Scenario**: User syncs usage AFTER settlement already ran → Reconciliation (refund or extra charge)
 
 **Timeline**:
 - T+0:00 - Create commitment
@@ -736,8 +736,8 @@ LIMIT 1;
 - Capped actual = MIN(actual_penalty, max_charge_cents)
 - Delta = capped_actual - charged_amount
 - If delta < 0: Refund needed (Case 3A)
-- If delta = 0: No change (Case 3B)
-- If delta > 0: This is impossible for late syncs (validation prevents this)
+- If delta > 0: Extra charge needed (Case 3B)
+- If delta = 0: No change (Case 3C)
 
 **Record**:
 - Actual penalty: `_________________` cents
@@ -878,7 +878,65 @@ deno run --allow-net --allow-env supabase/tests/verify_test_results.ts <your-use
 
 ---
 
-## Test Case 3B: No Change (Already at Cap)
+## Test Case 3B: Extra Charge (Undercharged)
+
+**Scenario**: User was charged actual, but actual penalty increased → Extra charge (if under authorization)
+
+**Setup**: Ensure actual penalty > initial charge, but still under authorization
+
+---
+
+### Step 1: Create Commitment and Sync Early
+
+**Action**: Create commitment, sync usage immediately (before settlement)
+
+1. **Create commitment** (T+0:00)
+2. **Sync usage immediately** (T+0:30)
+3. **Wait for settlement** (T+4:00)
+
+**Result**: Settlement charges actual penalty (lower amount)
+
+**Record**:
+- Initial charged amount: `_________________` cents
+
+---
+
+### Step 2: Sync Additional Usage (T+5:00)
+
+**Action**: Sync more usage data (increases actual penalty)
+
+1. **Open iOS app**
+2. **Trigger sync** (adds more usage data)
+
+**Verify**:
+- Actual penalty increased
+- Still under authorization cap
+
+---
+
+### Step 3: Verify Reconciliation
+
+**Check**:
+```sql
+SELECT 
+  reconciliation_delta_cents,
+  needs_reconciliation,
+  status
+FROM public.user_week_penalties
+WHERE user_id = '<your-test-user-id>'
+ORDER BY week_start_date DESC
+LIMIT 1;
+```
+
+**Expected**:
+- `reconciliation_delta_cents` > 0
+- `needs_reconciliation` = true
+
+**Trigger reconciliation** and verify extra charge was applied.
+
+---
+
+## Test Case 3C: No Change (Already at Cap)
 
 **Scenario**: User was charged worst case, actual exceeds authorization, but capped actual = charged → No reconciliation
 
@@ -886,9 +944,9 @@ deno run --allow-net --allow-env supabase/tests/verify_test_results.ts <your-use
 
 ---
 
-### Step 1-5: Same as Case 3A
+### Step 1-5: Same as Case 3
 
-**But ensure**: Actual penalty ≥ authorization amount (so capped = authorization)
+**But ensure**: Actual penalty > authorization amount
 
 **Example**:
 - Authorization: 4200 cents ($42.00)
@@ -1015,7 +1073,7 @@ After each test case, verify:
 - [ ] **Stripe Payment**: Created in Stripe (check dashboard)
 - [ ] **Usage Data**: Synced correctly (if applicable)
 - [ ] **Reconciliation**: Flagged correctly (if late sync)
-- [ ] **Refund**: Applied correctly (if Case 3A, delta < 0)
+- [ ] **Refund/Extra Charge**: Applied correctly (if Case 3)
 
 ---
 
@@ -1080,7 +1138,13 @@ TESTING_MODE=false
 - [ ] Refund issued
 - [ ] Status = 'refunded' or 'refunded_partial'
 
-### Case 3B: Late Sync - No Change
+### Case 3B: Late Sync - Extra Charge
+- [ ] Settlement charged actual (lower)
+- [ ] Additional usage synced
+- [ ] Extra charge issued (if under cap)
+- [ ] Status = 'charged_actual_adjusted'
+
+### Case 3C: Late Sync - No Change
 - [ ] Settlement charged worst case
 - [ ] Actual exceeds authorization
 - [ ] Capped actual = charged amount

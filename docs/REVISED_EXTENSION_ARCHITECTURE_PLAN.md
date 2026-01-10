@@ -197,9 +197,8 @@ func syncDailyUsage(_ entries: [DailyUsageEntry]) async throws -> SyncResponse
    - **Tests:** simulate a late sync in SQL and confirm the RPC response plus table rows flag the delta correctly.
 
 6. **Step 4B – Reconciliation processor (Edge Function) ✅**
-   - `supabase/functions/settlement-reconcile/index.ts` scans `user_week_penalties` for `needs_reconciliation = true`, issues Stripe refunds (negative deltas), and logs each update in `payments`.
-   - **Note**: Positive deltas (extra charges) are now prevented by validation - late syncs can only result in refunds, never extra charges.
-   - On success it brings rows back to steady state (`needs_reconciliation = false`, `settlement_status` → `refunded[_partial]`).
+   - `supabase/functions/settlement-reconcile/index.ts` scans `user_week_penalties` for `needs_reconciliation = true`, issues Stripe refunds (negative deltas) or incremental PaymentIntents (positive deltas), and logs each update in `payments`.
+   - On success it brings rows back to steady state (`needs_reconciliation = false`, `settlement_status` → `refunded[_partial]` or `charged_actual_adjusted`).
    - **Tests:** seed via `rpc_setup_test_data`, flag deltas with `rpc_sync_daily_usage`, then POST to the new function (optionally `dryRun`) and verify Stripe + DB mutations.
 
 7. **Step 4C – Integration + guardrails ✅**

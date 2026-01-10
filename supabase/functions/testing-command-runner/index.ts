@@ -99,12 +99,13 @@ serve(async (req) => {
       }
 
       case "trigger_settlement": {
-        // Trigger settlement with manual trigger header
+        // Trigger settlement with manual trigger header and authentication
         const settlementUrl = `${supabaseUrl}/functions/v1/bright-service`;
         const settlementResponse = await fetch(settlementUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseSecretKey}`,
             'x-manual-trigger': 'true',
           },
           body: JSON.stringify(params.options || {}),

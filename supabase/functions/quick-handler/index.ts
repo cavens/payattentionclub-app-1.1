@@ -266,8 +266,6 @@ async function resolveWithCharge(
   chargeId: string | null,
   paymentStatus: string
 ) {
-  // NOTE: This function is now unreachable for late syncs due to validation
-  // that prevents delta > 0. It's kept for backward compatibility and edge cases.
   const newCharged = (penalty.charged_amount_cents ?? 0) + amountCents;
   const finalStatus =
     newCharged === (penalty.actual_amount_cents ?? newCharged)
@@ -355,33 +353,6 @@ async function processCandidate(
   }
 
   // Positive delta => additional charge
-  // Validation: Late syncs can only result in refunds, never extra charges
-  if (delta > 0) {
-    // Check if this is a late sync scenario
-    if (candidate.penalty.settlement_status === 'charged_worst_case') {
-      // This is impossible: if charged worst case (cap), actual ≤ cap, so delta ≤ 0
-      return {
-        action: "refund",
-        amountCents: 0,
-        skipped: "invalid_positive_delta_for_late_sync"
-      };
-    }
-    
-    if (candidate.penalty.settlement_status === 'charged_actual') {
-      // This is suspicious - settlement already used the data, so delta should be 0
-      // If user synced during grace period, settlement already happened on Tuesday
-      // A later sync would be for a new week, not a late sync for the same week
-      return {
-        action: "refund",
-        amountCents: 0,
-        skipped: "invalid_positive_delta_after_actual_charge"
-      };
-    }
-    
-    // Only allow positive delta for other statuses (refunded, refunded_partial)
-    // which might need adjustment charges, but this is edge case territory
-  }
-
   if (!candidate.user?.stripe_customer_id) {
     return {
       action: "charge",

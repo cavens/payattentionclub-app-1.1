@@ -115,10 +115,7 @@ flowchart TD
     ForEachCandidate --> CheckDeltaSign{Delta < 0?}
     
     CheckDeltaSign -->|Yes| RefundPath[Refund Path]
-    CheckDeltaSign -->|No| ValidateDelta[Validate: Delta > 0?]
-    
-    ValidateDelta -->|Yes| SkipInvalidDelta[Skip: invalid_positive_delta<br/>Late syncs can only refund,<br/>never charge extra]
-    ValidateDelta -->|No| NoReconciliation2[No Reconciliation<br/>Delta = 0]
+    CheckDeltaSign -->|No| ChargePath[Extra Charge Path]
     
     RefundPath --> CheckPaymentIntent{Has charge_payment_intent_id?}
     CheckPaymentIntent -->|No| SkipRefund[Skip: missing_payment_intent]
@@ -126,10 +123,22 @@ flowchart TD
     CreateRefund --> UpdateRefund[Update user_week_penalties<br/>Status: refunded or refunded_partial<br/>refund_amount_cents += abs delta<br/>charged_amount_cents -= abs delta<br/>needs_reconciliation = false]
     UpdateRefund --> RecordRefundPayment[Record Payment<br/>Type: penalty_refund]
     
+    ChargePath --> CheckCustomer{Has Stripe<br/>Customer?}
+    CheckCustomer -->|No| SkipCharge1[Skip: missing_stripe_customer]
+    CheckCustomer -->|Yes| CheckPaymentMethod{Has Payment<br/>Method?}
+    CheckPaymentMethod -->|No| SkipCharge2[Skip: missing_payment_method]
+    CheckPaymentMethod -->|Yes| CheckUnderCap{Delta > 0 AND<br/>charged + delta <=<br/>authorization?}
+    CheckUnderCap -->|No: At Cap| NoExtraCharge[No Extra Charge<br/>Already at authorization cap]
+    CheckUnderCap -->|Yes: Under Cap| CreateCharge[Create Stripe PaymentIntent<br/>Amount: delta]
+    CreateCharge --> UpdateCharge[Update user_week_penalties<br/>Status: charged_actual_adjusted<br/>charged_amount_cents += delta<br/>needs_reconciliation = false]
+    UpdateCharge --> RecordChargePayment[Record Payment<br/>Type: penalty_adjustment]
+    
     RecordRefundPayment --> ReconciliationDone([Reconciliation Complete])
+    RecordChargePayment --> ReconciliationDone
     SkipRefund --> ReconciliationDone
-    SkipInvalidDelta --> ReconciliationDone
-    NoReconciliation2 --> ReconciliationDone
+    SkipCharge1 --> ReconciliationDone
+    SkipCharge2 --> ReconciliationDone
+    NoExtraCharge --> ReconciliationDone
     NoReconciliation --> ReconciliationDone
     
     ReconciliationDone --> NextCandidate{More<br/>Candidates?}
@@ -145,9 +154,10 @@ flowchart TD
     style CapActual fill:#ffeaa7
     style CapActualLate fill:#ffeaa7
     style RefundPath fill:#d1ecf1
-    style ValidateDelta fill:#fff3cd
-    style SkipInvalidDelta fill:#f8d7da
+    style ChargePath fill:#f8d7da
     style CheckDeltaSign fill:#fff3cd
+    style NoExtraCharge fill:#ffeaa7
+    style CheckUnderCap fill:#ffeaa7
 ```
 
 ---
@@ -174,5 +184,5 @@ This single diagram shows:
 - ✅ Settlement decision logic (actual vs worst case)
 - ✅ Authorization cap enforcement
 - ✅ Late sync reconciliation flow
-- ✅ Refund logic (extra charges are impossible for late syncs)
+- ✅ Refund and extra charge logic
 - ✅ All decision points and outcomes
