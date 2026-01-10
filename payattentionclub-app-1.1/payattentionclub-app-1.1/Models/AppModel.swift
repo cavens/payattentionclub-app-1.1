@@ -100,24 +100,6 @@ final class AppModel: ObservableObject {
                 )
                 weekStatus = response
                 weekStatusError = nil
-                
-                // Auto-trigger reconciliation if needed (when user opens app after grace period)
-                if response.needsReconciliation {
-                    NSLog("SETTLEMENT AppModel: ⚠️ Reconciliation needed (delta: \(response.reconciliationDeltaCents) cents), triggering automatically...")
-                    Task.detached(priority: .userInitiated) {
-                        do {
-                            try await BackendClient.shared.triggerReconciliation()
-                            NSLog("SETTLEMENT AppModel: ✅ Reconciliation triggered successfully")
-                            // Refresh week status after reconciliation to get updated state
-                            await MainActor.run {
-                                self.refreshWeekStatus(weekStartDateOverride: weekStartDateOverride)
-                            }
-                        } catch {
-                            NSLog("SETTLEMENT AppModel: ❌ Failed to trigger reconciliation: \(error)")
-                            // Don't show error to user - reconciliation will happen eventually
-                        }
-                    }
-                }
             } catch let backendError as BackendError {
                 switch backendError {
                 case .notAuthenticated:

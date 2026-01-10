@@ -772,21 +772,28 @@ All Steps
 ## Next Steps
 
 **CURRENT STATUS (Active Work):**
-- 🔧 **Debugging Settlement Logic** - Investigating why settlement charges "actual" penalty when it should charge "worst-case" in the scenario where:
-  - App was killed before the deadline
-  - App was not reopened during the grace period
-  - Grace period should not have expired yet
-  - Expected behavior: Wait until grace period expires, then charge worst-case if no usage synced
-  - Location: `supabase/functions/bright-service/index.ts` (lines 265-298, 566-569)
-  - Debug logging added to `isGracePeriodExpired()` function to trace timing calculations
-  - Next action: Run settlement script and analyze debug logs to identify root cause
+- ✅ **Auto-Settlement Infrastructure Deployed** - `auto-settlement-checker` Edge Function and `pg_cron` job are deployed and active
+- 🔧 **Testing Automatic Settlement** - Investigating why automatic settlement didn't trigger after grace period expired
+
+**Test Results Analysis (2026-01-10):**
+- ✅ Commitment created successfully at `22:32:16`
+- ✅ Usage synced within grace period (22 cents penalty calculated)
+- ❌ **Issue**: Settlement status still `pending` after grace period expired
+  - Grace period should have expired at `22:36:16` (4 minutes after creation: 3 min week + 1 min grace)
+  - Verification at `22:48:38` shows settlement still pending (12 minutes after grace expired)
+  - Expected: Automatic settlement should have triggered via `auto-settlement-checker` cron job
+
+**Next Session Tasks:**
+1. **Verify Cron Job Status** - Check if `pg_cron` job `auto-settlement-checker` is running and executing
+2. **Manually Trigger Settlement** - Use dashboard to manually trigger settlement to verify settlement logic works independently
+3. **Fix `week_grace_expires_at`** - Update `rpc_create_commitment` to set `week_grace_expires_at` when creating commitment (currently `null`)
+4. **Check Auto-Settlement-Checker Logs** - Review Edge Function logs to see if it's running and what it's finding
+5. **Debug Filter Logic** - Verify `auto-settlement-checker` is correctly identifying commitments with expired grace periods
 
 **Remaining Implementation:**
-1. Complete settlement logic debugging (current priority)
-2. Phase 4: Command Runner (Step 4.1)
-3. Phase 5: Web Interface (Steps 5.1-5.4)
-4. Phase 7: Testing & Validation (Steps 7.1-7.3)
-5. Phase 8: Documentation (Steps 8.1-8.2)
+1. Complete automatic settlement debugging (current priority)
+2. Phase 7: Testing & Validation (Steps 7.1-7.3)
+3. Phase 8: Documentation (Steps 8.1-8.2)
 
 ---
 

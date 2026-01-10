@@ -986,45 +986,6 @@ class BackendClient {
             throw BackendError.serverError("Failed to trigger weekly close: \(error.localizedDescription)")
         }
     }
-    
-    /// Trigger reconciliation for late syncs (refunds or no change)
-    /// This is called automatically when the app detects needsReconciliation = true
-    /// Calls: quick-handler Edge Function
-    nonisolated func triggerReconciliation() async throws {
-        guard await isAuthenticated else {
-            throw BackendError.notAuthenticated
-        }
-        
-        // Get current user ID
-        guard let userId = try? await supabase.auth.session.user.id else {
-            throw BackendError.notAuthenticated
-        }
-        
-        struct ReconciliationRequest: Encodable, Sendable {
-            let userId: String
-        }
-        
-        do {
-            // Call quick-handler with current user ID to trigger reconciliation
-            // The response is a summary object, but we don't need to parse it
-            struct ReconciliationResponse: Decodable, Sendable {
-                let processed: Int?
-                let refundsIssued: Int?
-                let chargesIssued: Int?
-            }
-            let _: ReconciliationResponse = try await supabase.functions.invoke(
-                "quick-handler",
-                options: FunctionInvokeOptions(
-                    method: .post,
-                    body: ReconciliationRequest(userId: userId.uuidString)
-                )
-            )
-            NSLog("RECONCILE BackendClient: ✅ Reconciliation triggered successfully for user \(userId.uuidString)")
-        } catch {
-            NSLog("RECONCILE BackendClient: ❌ Failed to trigger reconciliation: \(error)")
-            throw BackendError.serverError("Failed to trigger reconciliation: \(error.localizedDescription)")
-        }
-    }
 
 }
 
