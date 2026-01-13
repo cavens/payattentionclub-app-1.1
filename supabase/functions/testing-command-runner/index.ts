@@ -98,7 +98,46 @@ serve(async (req) => {
         break;
       }
 
+      case "delete_test_user": {
+        // Delete the test user (jef@cavens.io) completely
+        const testUserEmail = params.email || "jef@cavens.io";
+        
+        const { data, error } = await supabase.rpc('rpc_delete_user_completely', {
+          p_email: testUserEmail,
+        });
+
+        if (error) {
+          return new Response(
+            JSON.stringify({ error: 'Failed to delete test user', details: error.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        result = {
+          success: true,
+          email: testUserEmail,
+          deleted: data
+        };
+        break;
+      }
+
       case "trigger_settlement": {
+        // If userId is provided, fetch commitment to get week_end_date
+        let targetWeek = params.options?.targetWeek;
+        if (userId && !targetWeek) {
+          const { data: commitments, error: commitError } = await supabase
+            .from('commitments')
+            .select('week_end_date')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (!commitError && commitments) {
+            targetWeek = commitments.week_end_date;
+          }
+        }
+
         // Trigger settlement with manual trigger header
         const settlementUrl = `${supabaseUrl}/functions/v1/bright-service`;
         const settlementResponse = await fetch(settlementUrl, {
@@ -106,8 +145,12 @@ serve(async (req) => {
           headers: {
             'Content-Type': 'application/json',
             'x-manual-trigger': 'true',
+            'Authorization': `Bearer ${supabaseSecretKey}`, // Required for gateway authentication
           },
-          body: JSON.stringify(params.options || {}),
+          body: JSON.stringify({ 
+            ...(params.options || {}),
+            ...(targetWeek ? { targetWeek } : {})
+          }),
         });
 
         if (!settlementResponse.ok) {
@@ -124,14 +167,18 @@ serve(async (req) => {
 
       case "trigger_reconciliation": {
         // Trigger reconciliation via quick-handler function
+        // If userId is provided, pass it to quick-handler
         const reconciliationUrl = `${supabaseUrl}/functions/v1/quick-handler`;
         const reconciliationResponse = await fetch(reconciliationUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${supabaseSecretKey}`,
+            'Authorization': `Bearer ${supabaseSecretKey}`, // Use service role key for auth
           },
-          body: JSON.stringify(params.options || {}),
+          body: JSON.stringify({
+            ...(params.options || {}),
+            ...(userId ? { userId } : {})
+          }),
         });
 
         if (!reconciliationResponse.ok) {

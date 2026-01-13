@@ -1064,6 +1064,143 @@ The deployment script performs:
 
 ---
 
+### 20. Production Environment Setup (Migration: weekly-close → bright-service)
+
+**Status**: TODO  
+**Severity**: High (Production Readiness)  
+**Date Identified**: 2026-01-11  
+**Phase**: Migration: weekly-close → bright-service
+
+#### Description
+
+Production environment needs to be updated to match staging configuration for the migration from `weekly-close` to `bright-service`. Currently, staging is fully configured, but production still needs the same updates applied.
+
+#### Required Steps
+
+1. **Apply Migration to Production Database**
+   - Run the migration SQL: `supabase/migrations/20260111170000_update_call_weekly_close_environment_aware_PRODUCTION.sql`
+   - Or apply the function update manually via Supabase Dashboard → Production → SQL Editor
+   - This updates `call_weekly_close()` to be environment-aware and call `bright-service`
+
+2. **Configure Production app.settings**
+   - Set `app.settings.service_role_key` = production secret key
+   - Set `app.settings.supabase_url` = `https://whdftvcrtrsnefhprebj.supabase.co`
+   - Can be done via SQL in the migration script, or manually in Supabase Dashboard → Database → Settings → Custom Postgres Config
+
+3. **Set Up Production Cron Job**
+   - Create `weekly-close-production` cron job
+   - Schedule: Every Monday at 17:00 UTC (12:00 PM EST)
+   - Command: `SELECT public.call_weekly_close();`
+   - This is included in the migration SQL script
+
+4. **Verify Production Deployment**
+   - Edge Functions are already deployed: `bright-service` and `admin-close-week-now`
+   - Verify `call_weekly_close()` function works correctly
+   - Verify cron job is active and scheduled correctly
+   - Test manual trigger to ensure it calls production's `bright-service`
+
+#### Current Status
+
+**Staging**: ✅ Complete
+- Function updated and environment-aware
+- Settings configured
+- Cron job active
+
+**Production**: ⚠️ Pending
+- Edge Functions: ✅ Deployed
+- Database function: ⚠️ Needs migration SQL applied
+- Settings: ⚠️ Needs configuration
+- Cron job: ⚠️ Needs creation
+
+#### Impact
+
+**Production Readiness**: ⚠️ High - Production will continue using old `weekly-close` until migration is complete  
+**Functionality**: ⚠️ Medium - Production missing new features (revoked monitoring estimation, weekly_pools closing)  
+**Consistency**: ⚠️ Medium - Staging and production will have different behavior until migration is complete
+
+#### Files/Resources
+
+- Migration SQL: `supabase/migrations/20260111170000_update_call_weekly_close_environment_aware_PRODUCTION.sql`
+- Setup script: `scripts/setup_cron_jobs.sh production` (alternative to manual SQL)
+- Production project ref: `whdftvcrtrsnefhprebj`
+- Production URL: `https://whdftvcrtrsnefhprebj.supabase.co`
+
+#### Testing
+
+After applying changes to production:
+1. Verify `call_weekly_close()` function exists and is updated
+2. Verify `app.settings.service_role_key` is set (check via SQL: `SELECT current_setting('app.settings.service_role_key', true);`)
+3. Verify `app.settings.supabase_url` is set (check via SQL: `SELECT current_setting('app.settings.supabase_url', true);`)
+4. Verify cron job exists: `SELECT * FROM cron.job WHERE jobname = 'weekly-close-production';`
+5. Manually test: `SELECT public.call_weekly_close();` (should call production's `bright-service`)
+6. Check Edge Function logs to confirm `bright-service` was called
+
+**Priority**: High  
+**Timeline**: Before production deployment (should match staging configuration)
+
+---
+
+### 21. Production Reconciliation Cron Job Verification
+
+**Status**: TODO  
+**Severity**: High (Financial/Operational)  
+**Date Identified**: 2026-01-11  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Verify that the 10-minute reconciliation cron job in production is correctly configured and working. Specifically, ensure it is using the recent reconciliation queue implementation and processing reconciliation requests as expected.
+
+#### Verification Steps
+
+1. **Verify Cron Job Exists**
+   - Check that the 10-minute reconciliation cron job exists in production
+   - Confirm the cron job name and schedule (every 10 minutes)
+   - Verify the cron job is active and enabled
+
+2. **Verify Queue Implementation**
+   - Confirm the cron job is using the recent reconciliation queue (not an old implementation)
+   - Check that it's calling the correct Edge Function or RPC function
+   - Verify it's processing items from the correct queue/table
+
+3. **Test Functionality**
+   - Manually trigger the cron job to verify it executes correctly
+   - Check Edge Function logs to confirm it's being called
+   - Verify it processes reconciliation items as expected
+   - Test with sample data to ensure end-to-end flow works
+
+4. **Compare with Staging**
+   - Ensure production cron job configuration matches staging
+   - Verify both environments use the same queue implementation
+   - Confirm schedule and parameters are consistent
+
+#### Impact
+
+**Financial**: ⚠️ High - Reconciliation is critical for accurate charges/refunds  
+**Operational**: ⚠️ High - Cron job must work correctly for settlement process  
+**Data Integrity**: ⚠️ Medium - Incorrect reconciliation could affect user charges
+
+#### Code/Configuration Locations
+
+- Production Supabase Dashboard → Database → Cron Jobs
+- Reconciliation Edge Function: `quick-handler` or `settlement-reconcile`
+- Queue/table implementation (recent reconciliation queue)
+- Cron job SQL definition
+
+#### Testing
+
+1. Query production cron jobs: `SELECT * FROM cron.job WHERE jobname LIKE '%reconcile%';`
+2. Check cron job schedule and command
+3. Manually trigger the cron job and verify execution
+4. Check Edge Function logs for successful execution
+5. Verify reconciliation items are processed correctly
+6. Compare configuration with staging environment
+
+**Priority**: High  
+**Timeline**: Before production deployment (critical for settlement process)
+
+---
+
 ## Notes
 
 - All issues documented here are **non-blocking** - development can continue

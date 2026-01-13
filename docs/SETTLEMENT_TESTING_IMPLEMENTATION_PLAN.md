@@ -771,29 +771,46 @@ All Steps
 
 ## Next Steps
 
-**CURRENT STATUS (Active Work):**
-- ✅ **Auto-Settlement Infrastructure Deployed** - `auto-settlement-checker` Edge Function and `pg_cron` job are deployed and active
-- 🔧 **Testing Automatic Settlement** - Investigating why automatic settlement didn't trigger after grace period expired
+**CURRENT STATUS (2026-01-11):**
+- ✅ **Auto-Settlement Infrastructure** - `auto-settlement-checker` Edge Function and `pg_cron` job deployed and working
+- ✅ **Automatic Reconciliation Queue** - Queue-based system implemented and working
+- ✅ **Function Signature Fixes** - Fixed `net.http_post` signature in `process_reconciliation_queue` and `call_weekly_close`
+- ✅ **End-to-End Test Success** - Automatic settlement and reconciliation working correctly
 
-**Test Results Analysis (2026-01-10):**
-- ✅ Commitment created successfully at `22:32:16`
-- ✅ Usage synced within grace period (22 cents penalty calculated)
-- ❌ **Issue**: Settlement status still `pending` after grace period expired
-  - Grace period should have expired at `22:36:16` (4 minutes after creation: 3 min week + 1 min grace)
-  - Verification at `22:48:38` shows settlement still pending (12 minutes after grace expired)
-  - Expected: Automatic settlement should have triggered via `auto-settlement-checker` cron job
+**Recent Test Results (2026-01-11):**
+- ✅ Commitment created successfully
+- ✅ Automatic settlement triggered after grace period expired (worst-case charge: 1500 cents)
+- ✅ Automatic reconciliation triggered when app synced usage (refund: 1468 cents)
+- ✅ Complete flow verified: Grace period → Settlement → Usage sync → Reconciliation
 
-**Next Session Tasks:**
-1. **Verify Cron Job Status** - Check if `pg_cron` job `auto-settlement-checker` is running and executing
-2. **Manually Trigger Settlement** - Use dashboard to manually trigger settlement to verify settlement logic works independently
-3. **Fix `week_grace_expires_at`** - Update `rpc_create_commitment` to set `week_grace_expires_at` when creating commitment (currently `null`)
-4. **Check Auto-Settlement-Checker Logs** - Review Edge Function logs to see if it's running and what it's finding
-5. **Debug Filter Logic** - Verify `auto-settlement-checker` is correctly identifying commitments with expired grace periods
+**Completed Work:**
+1. ✅ Fixed `net.http_post` function signature (5 parameters: url, body, params, headers, timeout)
+2. ✅ Implemented reconciliation queue system (`reconciliation_queue` table + `process_reconciliation_queue` function)
+3. ✅ Set up dual cron jobs (testing: 1-minute, normal: 10-minute schedules)
+4. ✅ Verified production cron job configuration
+5. ✅ Fixed environment isolation (functions read from `app_config`)
+
+**Next Session Tasks (2026-01-12):**
+1. **Phase 7: Complete Testing & Validation** - Run all remaining test cases with all different possibilities
+   - Test Case 1: Usage synced within grace period ✅ (Completed)
+   - Test Case 2: Late sync reconciliation ✅ (Completed)
+   - Test Case 3A: Zero usage, synced during grace period
+   - Test Case 3B: Below-minimum penalty handling
+   - Test Case 3C: Multiple reconciliation scenarios
+   - Test all edge cases and different combinations of scenarios
+2. **Phase 8: Documentation** - Update documentation (Steps 8.1-8.2)
+   - Update testing script document with new reconciliation flow
+   - Create quick start guide for automatic reconciliation testing
+3. **Production Deployment** - Deploy to production after testing complete
+   - Apply migrations to production
+   - Set up production cron jobs
+   - Configure `app_config` for production
+   - Verify production cron jobs are working
 
 **Remaining Implementation:**
-1. Complete automatic settlement debugging (current priority)
-2. Phase 7: Testing & Validation (Steps 7.1-7.3)
-3. Phase 8: Documentation (Steps 8.1-8.2)
+1. Phase 7: Complete remaining test cases (3A, 3B, 3C)
+2. Phase 8: Documentation updates
+3. Production deployment and verification
 
 ---
 

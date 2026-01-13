@@ -1,8 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_SECRET_KEY");
+// Environment variables are read at runtime in the handler
+// Don't read them at module level to avoid issues with Edge Function runtime
 const STRIPE_SECRET_KEY =
   Deno.env.get("STRIPE_SECRET_KEY_TEST") ?? Deno.env.get("STRIPE_SECRET_KEY");
 
@@ -404,14 +404,21 @@ Deno.serve(async (req) => {
     return new Response("Use POST", { status: 405 });
   }
 
-  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+  // Read environment variables at runtime (same pattern as bright-service)
+  const SUPABASE_URL_RUNTIME = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_SECRET_KEY_RUNTIME = 
+    Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || 
+    Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") ||
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"); // Fallback for legacy name
+
+  if (!SUPABASE_URL_RUNTIME || !SUPABASE_SECRET_KEY_RUNTIME) {
     return new Response("Supabase credentials missing", { status: 500 });
   }
   if (!stripe) {
     return new Response("Stripe credentials missing", { status: 500 });
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
+  const supabase = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
 
   let payload: RequestPayload | undefined;
   try {

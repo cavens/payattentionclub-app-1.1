@@ -56,9 +56,9 @@ Deno.serve(async (req)=>{
         status: 403
       });
     }
-    // 3) Call the weekly-close Edge Function directly
-    // This gives us the actual output from weekly-close
-    const weeklyCloseUrl = `${SUPABASE_URL}/functions/v1/weekly-close`;
+    // 3) Call the bright-service Edge Function directly
+    // This gives us the actual output from bright-service (replaces weekly-close)
+    const weeklyCloseUrl = `${SUPABASE_URL}/functions/v1/bright-service`;
     const weeklyCloseResponse = await fetch(weeklyCloseUrl, {
       method: "POST",
       headers: {
@@ -70,7 +70,7 @@ Deno.serve(async (req)=>{
     
     if (!weeklyCloseResponse.ok) {
       const errorText = await weeklyCloseResponse.text();
-      console.error("Error calling weekly-close:", errorText);
+      console.error("Error calling bright-service:", errorText);
       return new Response(JSON.stringify({
         error: "Failed to trigger weekly close",
         details: errorText

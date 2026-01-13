@@ -7,6 +7,19 @@ project_id = "payattentionclub-app-1.1"
 [functions]
 # extra_paths = ["./functions/_shared"]
 
+# Disable JWT verification for auto-settlement-checker (called by pg_cron)
+[functions.auto-settlement-checker]
+verify_jwt = false
+
+# Disable JWT verification for bright-service (allows manual triggers in testing mode)
+# The function itself validates x-manual-trigger header for security
+[functions.bright-service]
+verify_jwt = false
+
+# Disable JWT verification for quick-handler (allows reconciliation triggers in testing mode)
+[functions.quick-handler]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

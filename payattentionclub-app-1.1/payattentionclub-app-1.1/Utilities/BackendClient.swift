@@ -890,6 +890,49 @@ class BackendClient {
         }
     }
     
+    /// 6. Trigger reconciliation for late syncs
+    /// Calls: Edge Function quick-handler
+    /// - Parameter userId: Optional user ID to reconcile (defaults to current user)
+    /// - Returns: ReconciliationResponse with processing summary
+    /// - Throws: BackendError if reconciliation fails
+    nonisolated func triggerReconciliation(userId: String? = nil) async throws -> ReconciliationResponse {
+        guard await isAuthenticated else {
+            throw BackendError.notAuthenticated
+        }
+        
+        // Get current user ID if not provided
+        let targetUserId: String
+        if let userId = userId {
+            targetUserId = userId
+        } else {
+            guard let currentUserId = try? await supabase.auth.session.user.id else {
+                throw BackendError.notAuthenticated
+            }
+            targetUserId = currentUserId.uuidString
+        }
+        
+        struct ReconciliationRequest: Encodable, Sendable {
+            let userId: String
+        }
+        
+        do {
+            // Call quick-handler Edge Function to trigger reconciliation
+            let request = ReconciliationRequest(userId: targetUserId)
+            let response: ReconciliationResponse = try await supabase.functions.invoke(
+                "quick-handler",
+                options: FunctionInvokeOptions(
+                    method: .post,
+                    body: request
+                )
+            )
+            NSLog("RECONCILE BackendClient: ✅ Reconciliation triggered successfully for user \(targetUserId)")
+            return response
+        } catch {
+            NSLog("RECONCILE BackendClient: ❌ Failed to trigger reconciliation: \(error)")
+            throw BackendError.serverError("Failed to trigger reconciliation: \(error.localizedDescription)")
+        }
+    }
+    
     /// 5. Preview the max charge amount before creating a commitment
     /// Calls: RPC function rpc_preview_max_charge
     /// - Parameters:
@@ -1200,4 +1243,58 @@ struct AdminCloseWeekResponse: Codable, Sendable {
         try container.encode(message, forKey: .message)
         try container.encodeIfPresent(triggeredBy, forKey: .triggeredBy)
     }
+}
+
+// MARK: - Reconciliation Response
+
+struct ReconciliationResponse: Codable, Sendable {
+    let dryRun: Bool
+    let requestedLimit: Int
+    let totalCandidates: Int
+    let processed: Int
+    let refundsIssued: Int
+    let chargesIssued: Int
+    let skipped: SkippedCounts
+    let failures: [ReconciliationFailure]
+    let details: [ReconciliationDetail]
+    
+    enum CodingKeys: String, CodingKey {
+        case dryRun
+        case requestedLimit
+        case totalCandidates
+        case processed
+        case refundsIssued
+        case chargesIssued
+        case skipped
+        case failures
+        case details
+    }
+}
+
+struct SkippedCounts: Codable, Sendable {
+    let zeroDelta: Int
+    let missingStripeCustomer: Int
+    let missingPaymentMethod: Int
+    let missingPaymentIntent: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case zeroDelta
+        case missingStripeCustomer
+        case missingPaymentMethod
+        case missingPaymentIntent
+    }
+}
+
+struct ReconciliationFailure: Codable, Sendable {
+    let userId: String
+    let weekStartDate: String
+    let reason: String
+}
+
+struct ReconciliationDetail: Codable, Sendable {
+    let userId: String
+    let weekStartDate: String
+    let action: String
+    let amountCents: Int
+    let dryRun: Bool
 }

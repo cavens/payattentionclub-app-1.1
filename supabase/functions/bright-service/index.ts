@@ -238,28 +238,32 @@ function getCommitmentDeadline(candidate: SettlementCandidate): Date {
 }
 
 function hasSyncedUsage(candidate: SettlementCandidate): boolean {
-  // Check if actual_amount_cents exists AND was updated after the deadline
+  // Check if usage was synced after the deadline
   // This ensures we only count usage synced AFTER the deadline, not before
+  // Note: actual_amount_cents can be 0 (no penalty), but we still want to charge actual if synced
   const penalty = candidate.penalty;
-  if (!penalty || (penalty.actual_amount_cents ?? 0) <= 0) {
-    return false; // No actual amount set
+  if (!penalty) {
+    return false; // No penalty record means no usage synced
   }
   
   // Calculate the deadline for this commitment
   const deadline = getCommitmentDeadline(candidate);
   
-  // If last_updated is not available, fall back to checking actual_amount_cents
-  // (for backward compatibility with existing records)
-  if (!penalty.last_updated) {
-    // Legacy behavior: if actual_amount_cents is set but no last_updated,
-    // we can't determine when it was synced, so assume it was synced after deadline
-    // This is conservative - it may charge actual when it should charge worst case
-    return true;
+  // If last_updated is available, check if it's after the deadline
+  if (penalty.last_updated) {
+    const lastUpdated = new Date(penalty.last_updated);
+    return lastUpdated.getTime() > deadline.getTime();
   }
   
-  // Check if last_updated is after the deadline
-  const lastUpdated = new Date(penalty.last_updated);
-  return lastUpdated.getTime() > deadline.getTime();
+  // If last_updated is not available, check if actual_amount_cents is set (even if 0)
+  // This handles cases where usage was synced but resulted in 0 penalty
+  // For backward compatibility: if actual_amount_cents exists (even as 0), assume synced
+  // This is conservative - it may charge actual when it should charge worst case
+  if (penalty.actual_amount_cents !== null && penalty.actual_amount_cents !== undefined) {
+    return true; // actual_amount_cents is set (even if 0), so usage was synced
+  }
+  
+  return false; // No indication that usage was synced
 }
 
 function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date()): boolean {
@@ -534,6 +538,85 @@ Deno.serve(async (req) => {
   console.log("run-weekly-settlement: target week", target.weekEndDate);
 
   try {
+    // Step 1: Insert estimated rows for commitments with revoked monitoring
+    // This handles cases where users revoked monitoring mid-week - we estimate their usage
+    // FIXED: Use week_end_date (deadline) to identify commitments for this week
+    // week_end_date stores the deadline (next Monday), which groups commitments by week
+    console.log("run-weekly-settlement: Checking for revoked monitoring commitments...");
+    const { data: revokedCommitments, error: revokedError } = await supabase
+      .from("commitments")
+      .select("id, user_id, week_start_date, week_end_date, limit_minutes, penalty_per_minute_cents, monitoring_status, monitoring_revoked_at")
+      .eq("week_end_date", target.weekEndDate)
+      .eq("monitoring_status", "revoked");
+    
+    if (revokedError) {
+      console.error("Error fetching revoked commitments:", revokedError);
+      return new Response(
+        JSON.stringify({ error: "Error fetching revoked commitments", details: revokedError.message }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    if (revokedCommitments && revokedCommitments.length > 0) {
+      console.log(`run-weekly-settlement: Found ${revokedCommitments.length} revoked commitment(s) for estimation`);
+      
+      for (const c of revokedCommitments) {
+        if (!c.monitoring_revoked_at) continue;
+        const revDate = new Date(c.monitoring_revoked_at);
+        // Start from the date of revocation (date-only)
+        let d = new Date(formatDate(revDate));
+        const commitmentEnd = new Date(c.week_end_date || target.weekEndDate);
+        
+        while (d < commitmentEnd) {
+          const dayStr = formatDate(d);
+          // Check if there's already a daily_usage row for this day
+          const { data: existing, error: existingErr } = await supabase
+            .from("daily_usage")
+            .select("id")
+            .eq("user_id", c.user_id)
+            .eq("commitment_id", c.id)
+            .eq("date", dayStr)
+            .maybeSingle();
+          
+          if (existingErr) {
+            console.error("Error checking existing daily_usage:", existingErr);
+            break;
+          }
+          
+          if (!existing) {
+            // Simple estimation rule: assume double usage → full limit exceeded
+            const usedMinutes = c.limit_minutes * 2;
+            const exceededMinutes = c.limit_minutes; // "extra" over the limit
+            const penaltyCents = exceededMinutes * c.penalty_per_minute_cents;
+            
+            const { error: insertEstErr } = await supabase
+              .from("daily_usage")
+              .insert({
+                user_id: c.user_id,
+                commitment_id: c.id,
+                date: dayStr,
+                used_minutes: usedMinutes,
+                limit_minutes: c.limit_minutes,
+                exceeded_minutes: exceededMinutes,
+                penalty_cents: penaltyCents,
+                is_estimated: true,
+                reported_at: new Date().toISOString()
+              });
+            
+            if (insertEstErr) {
+              console.error("Error inserting estimated daily_usage:", insertEstErr);
+              break;
+            }
+          }
+          d.setUTCDate(d.getUTCDate() + 1);
+        }
+      }
+      
+      console.log(`run-weekly-settlement: Completed revoked monitoring estimation for ${revokedCommitments.length} commitment(s)`);
+    } else {
+      console.log("run-weekly-settlement: No revoked commitments found for this week");
+    }
+
     const candidates = await buildSettlementCandidates(supabase, target.weekEndDate);
 
     const summary: Summary = {
@@ -583,7 +666,76 @@ Deno.serve(async (req) => {
         continue;
       }
       if (amountCents <= 0) {
-        summary.zeroAmount += 1;
+        // Zero amount - mark as settled with 0 charged
+        console.log(`run-weekly-settlement: Amount is 0 cents. Marking as settled with 0 charged.`);
+        
+        const settlementStatus = chargeType === "actual" ? "charged_actual" : "charged_worst_case";
+        await updateUserWeekPenalty(supabase, {
+          userId: candidate.commitment.user_id,
+          weekEndDate: target.weekEndDate,
+          amountCents: 0, // No charge for zero amount
+          actualAmountCents: chargeType === "actual" ? amountCents : getActualPenaltyCents(candidate),
+          paymentIntentId: "zero_amount",
+          chargeType,
+          status: "succeeded" // Mark as succeeded since we're intentionally not charging
+        });
+
+        // Record a payment entry noting the amount was zero
+        await recordPayment(supabase, {
+          userId: candidate.commitment.user_id,
+          weekEndDate: target.weekEndDate,
+          amountCents: 0,
+          paymentIntentId: "zero_amount",
+          paymentStatus: "succeeded",
+          chargeType,
+          stripeChargeId: null
+        });
+
+        if (chargeType === "actual") {
+          summary.chargedActual += 1;
+        } else {
+          summary.chargedWorstCase += 1;
+        }
+        continue;
+      }
+
+      // Stripe minimum charge is 50 cents (or equivalent in other currencies)
+      // Note: If Stripe account uses EUR, USD amounts are converted
+      // At current rates, €0.50 ≈ $0.55 USD, so we use 60 cents USD as a safe minimum
+      // to account for currency conversion and exchange rate fluctuations
+      const STRIPE_MINIMUM_CENTS = 60; // Increased from 50 to account for EUR conversion
+      if (amountCents < STRIPE_MINIMUM_CENTS) {
+        // Amount is too small to charge via Stripe
+        // Mark as settled with 0 charged, but record the actual amount for reference
+        console.log(`run-weekly-settlement: Amount ${amountCents} cents is below Stripe minimum ${STRIPE_MINIMUM_CENTS} cents. Marking as settled with 0 charged.`);
+        
+        const settlementStatus = chargeType === "actual" ? "charged_actual" : "charged_worst_case";
+        await updateUserWeekPenalty(supabase, {
+          userId: candidate.commitment.user_id,
+          weekEndDate: target.weekEndDate,
+          amountCents: 0, // No charge due to minimum
+          actualAmountCents: chargeType === "actual" ? amountCents : getActualPenaltyCents(candidate),
+          paymentIntentId: "below_minimum",
+          chargeType,
+          status: "succeeded" // Mark as succeeded since we're intentionally not charging
+        });
+
+        // Record a payment entry noting the amount was too small
+        await recordPayment(supabase, {
+          userId: candidate.commitment.user_id,
+          weekEndDate: target.weekEndDate,
+          amountCents: 0,
+          paymentIntentId: "below_minimum",
+          paymentStatus: "succeeded",
+          chargeType,
+          stripeChargeId: null
+        });
+
+        if (chargeType === "actual") {
+          summary.chargedActual += 1;
+        } else {
+          summary.chargedWorstCase += 1;
+        }
         continue;
       }
 
@@ -605,18 +757,77 @@ Deno.serve(async (req) => {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("run-weekly-settlement: charge failed", candidate.commitment.user_id, message);
-        summary.chargeFailures.push({ userId: candidate.commitment.user_id, message });
+        
+        // Check if this is a "below minimum" error (currency conversion issue)
+        const isBelowMinimum = message.includes("Amount must convert to at least") || 
+                               message.includes("below minimum") ||
+                               message.includes("minimum charge");
+        
+        if (isBelowMinimum) {
+          // Handle as "below minimum" - mark as settled with 0 charged
+          console.log(`run-weekly-settlement: Amount ${amountCents} cents is below Stripe minimum after currency conversion. Marking as settled with 0 charged.`);
+          
+          const settlementStatus = chargeType === "actual" ? "charged_actual" : "charged_worst_case";
+          await updateUserWeekPenalty(supabase, {
+            userId: candidate.commitment.user_id,
+            weekEndDate: target.weekEndDate,
+            amountCents: 0, // No charge due to minimum
+            actualAmountCents: chargeType === "actual" ? amountCents : getActualPenaltyCents(candidate),
+            paymentIntentId: "below_minimum",
+            chargeType,
+            status: "succeeded" // Mark as succeeded since we're intentionally not charging
+          });
 
-        await updateUserWeekPenalty(supabase, {
-          userId: candidate.commitment.user_id,
-          weekEndDate: target.weekEndDate,
-          amountCents: 0,
-          actualAmountCents: getActualPenaltyCents(candidate),
-          paymentIntentId: "failed",
-          chargeType,
-          status: "failed"
-        });
+          // Record a payment entry noting the amount was too small
+          await recordPayment(supabase, {
+            userId: candidate.commitment.user_id,
+            weekEndDate: target.weekEndDate,
+            amountCents: 0,
+            paymentIntentId: "below_minimum",
+            paymentStatus: "succeeded",
+            chargeType,
+            stripeChargeId: null
+          });
+
+          if (chargeType === "actual") {
+            summary.chargedActual += 1;
+          } else {
+            summary.chargedWorstCase += 1;
+          }
+        } else {
+          // Other error - mark as failed
+          summary.chargeFailures.push({ userId: candidate.commitment.user_id, message });
+
+          await updateUserWeekPenalty(supabase, {
+            userId: candidate.commitment.user_id,
+            weekEndDate: target.weekEndDate,
+            amountCents: 0,
+            actualAmountCents: getActualPenaltyCents(candidate),
+            paymentIntentId: "failed",
+            chargeType,
+            status: "failed"
+          });
+        }
       }
+    }
+
+    // Step 2: Close weekly_pools for this week
+    // Note: weekly_pools.week_start_date stores the deadline (legacy naming)
+    // All users with the same deadline share the same pool
+    console.log("run-weekly-settlement: Closing weekly_pools for week", target.weekEndDate);
+    const { error: closePoolErr } = await supabase
+      .from("weekly_pools")
+      .update({
+        status: "closed",
+        closed_at: new Date().toISOString()
+      })
+      .eq("week_start_date", target.weekEndDate); // Uses deadline as identifier
+    
+    if (closePoolErr) {
+      console.error("run-weekly-settlement: Error closing weekly_pools:", closePoolErr);
+      // Don't fail the entire settlement if pool closing fails - log and continue
+    } else {
+      console.log("run-weekly-settlement: Successfully closed weekly_pools for week", target.weekEndDate);
     }
 
     return new Response(JSON.stringify(summary), {

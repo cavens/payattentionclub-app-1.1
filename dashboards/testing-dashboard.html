@@ -101,7 +101,7 @@
 
         .content {
             display: grid;
-            grid-template-columns: 1fr 400px;
+            grid-template-columns: 1fr 600px;
             gap: 0;
         }
 
@@ -113,7 +113,7 @@
             background: #f8f9fa;
             padding: 30px;
             border-left: 2px solid #e9ecef;
-            max-height: calc(100vh - 200px);
+            max-height: calc(100vh - 100px);
             overflow-y: auto;
         }
 
@@ -237,7 +237,8 @@
             border-radius: 8px;
             font-family: 'Monaco', 'Courier New', monospace;
             font-size: 12px;
-            max-height: 500px;
+            max-height: calc(100vh - 400px);
+            min-height: 600px;
             overflow-y: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
@@ -373,6 +374,9 @@
                         </button>
                         <button class="btn btn-danger" onclick="executeCommand('clear_data', { deleteTestUsers: true })">
                             🗑️ Clear Test Data + Users
+                        </button>
+                        <button class="btn btn-danger" onclick="executeCommand('delete_test_user', { email: 'jef@cavens.io' })">
+                            🗑️ Delete Test User (jef@cavens.io)
                         </button>
                     </div>
                 </div>
@@ -530,7 +534,7 @@
                 <div class="results-panel-container" style="margin-top: 20px;">
                     <div class="results-header">
                         <h3>Results</h3>
-                        <button class="copy-btn" onclick="copyResults()">📋 Copy</button>
+                        <button class="copy-btn" onclick="copyResults(event)">📋 Copy</button>
                     </div>
                     <div id="results" class="results-panel"></div>
                 </div>
@@ -662,17 +666,19 @@
         }
 
         // Copy results to clipboard
-        function copyResults() {
+        function copyResults(event) {
             const resultsPanel = document.getElementById('results');
             const text = resultsPanel.textContent;
             
             navigator.clipboard.writeText(text).then(() => {
-                const btn = event.target;
-                const originalText = btn.textContent;
-                btn.textContent = '✅ Copied!';
-                setTimeout(() => {
-                    btn.textContent = originalText;
-                }, 2000);
+                const btn = event ? event.target : document.querySelector('.copy-btn');
+                if (btn) {
+                    const originalText = btn.textContent;
+                    btn.textContent = '✅ Copied!';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                    }, 2000);
+                }
             }).catch(err => {
                 alert('Failed to copy: ' + err);
             });

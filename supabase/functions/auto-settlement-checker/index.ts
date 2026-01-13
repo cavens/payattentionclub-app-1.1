@@ -71,8 +71,7 @@ serve(async (req) => {
     const { data: commitments, error: fetchError } = await supabase
       .from('commitments')
       .select('id, user_id, week_end_date, week_grace_expires_at, created_at, status')
-      .eq('status', 'active')
-      .or('status.eq.pending');
+      .in('status', ['active', 'pending']);
 
     if (fetchError) {
       console.error("AUTO_SETTLEMENT_CHECKER: Error fetching commitments:", fetchError);

@@ -1,3 +1,13 @@
+-- Fix: Prevent reconciliation when both previous charge and current actual are below Stripe minimum
+-- 
+-- Issue: When a user was charged 0 cents (below minimum) and then opens the app again,
+-- rpc_sync_daily_usage was incorrectly flagging reconciliation as needed if the actual
+-- amount was also below minimum. This is wrong because we can't charge the actual amount
+-- anyway (it's below minimum), so no reconciliation is needed.
+--
+-- Fix: Check if previous charge was 0 due to "below_minimum" or "zero_amount", and if
+-- current actual is also below minimum, skip reconciliation.
+
 CREATE OR REPLACE FUNCTION public.rpc_sync_daily_usage(
   p_entries jsonb
 )
@@ -26,7 +36,6 @@ DECLARE
   v_prev_settlement_status text;
   v_prev_charged_amount integer;
   v_prev_payment_intent_id text;
-  v_prev_needs_reconciliation boolean;
   v_needs_reconciliation boolean;
   v_reconciliation_delta integer;
   v_max_charge_cents integer;
@@ -141,10 +150,9 @@ BEGIN
       v_prev_settlement_status := NULL;
       v_prev_charged_amount := 0;
       v_prev_payment_intent_id := NULL;
-      v_prev_needs_reconciliation := false;
       BEGIN
-        SELECT settlement_status, COALESCE(charged_amount_cents, 0), charge_payment_intent_id, COALESCE(needs_reconciliation, false)
-        INTO v_prev_settlement_status, v_prev_charged_amount, v_prev_payment_intent_id, v_prev_needs_reconciliation
+        SELECT settlement_status, COALESCE(charged_amount_cents, 0), charge_payment_intent_id
+        INTO v_prev_settlement_status, v_prev_charged_amount, v_prev_payment_intent_id
         FROM public.user_week_penalties
         WHERE user_id = v_user_id
           AND week_start_date = v_week;
@@ -153,7 +161,6 @@ BEGIN
           v_prev_settlement_status := NULL;
           v_prev_charged_amount := 0;
           v_prev_payment_intent_id := NULL;
-          v_prev_needs_reconciliation := false;
       END;
 
       -- Get max_charge_cents (authorization amount) from the commitment
@@ -236,56 +243,6 @@ BEGIN
         settlement_status = COALESCE(public.user_week_penalties.settlement_status, EXCLUDED.settlement_status),
         last_updated = NOW();
 
-      -- Automatically queue reconciliation if it was just flagged
-      -- This happens when a late sync detects a difference between charged amount and actual amount
-      -- Only queue if reconciliation was just set (was false, now true) to avoid duplicate triggers
-      -- The queue will be processed by a cron job that can use pg_net (which works in cron context)
-      IF v_needs_reconciliation AND NOT v_prev_needs_reconciliation THEN
-        BEGIN
-          -- Log that we're queuing reconciliation
-          RAISE NOTICE 'Queuing automatic reconciliation for user % week % (delta: % cents)', 
-            v_user_id, v_week, v_reconciliation_delta;
-
-          -- Insert into reconciliation queue (will be processed by cron job)
-          -- Use ON CONFLICT to handle race conditions (multiple syncs at once)
-          -- The partial unique index ensures only one pending entry per user/week
-          INSERT INTO public.reconciliation_queue (
-            user_id,
-            week_start_date,
-            reconciliation_delta_cents,
-            status,
-            created_at
-          )
-          VALUES (
-            v_user_id,
-            v_week,
-            v_reconciliation_delta,
-            'pending',
-            NOW()
-          )
-          ON CONFLICT (user_id, week_start_date) 
-          WHERE status = 'pending'
-          DO UPDATE SET
-            reconciliation_delta_cents = EXCLUDED.reconciliation_delta_cents,
-            created_at = EXCLUDED.created_at,
-            retry_count = 0; -- Reset retry count if re-queued
-          
-          RAISE NOTICE '✅ Reconciliation queued successfully for user % week %', 
-            v_user_id, v_week;
-        EXCEPTION
-          WHEN OTHERS THEN
-            -- Don't fail the sync if queue insert fails
-            -- The reconciliation can be triggered manually later if needed
-            RAISE WARNING '❌ Failed to queue reconciliation for user % week %: %', 
-              v_user_id, v_week, SQLERRM;
-        END;
-      ELSE
-        -- Log why reconciliation wasn't triggered (for debugging)
-        IF v_needs_reconciliation THEN
-          RAISE NOTICE 'Reconciliation needed but not triggered: prev_needs_reconciliation=% (already flagged)', v_prev_needs_reconciliation;
-        END IF;
-      END IF;
-
       SELECT COALESCE(SUM(total_penalty_cents), 0)
       INTO v_pool_total_cents
       FROM public.user_week_penalties
@@ -337,5 +294,6 @@ BEGIN
   RETURN v_result;
 END;
 $$;
+
 
 

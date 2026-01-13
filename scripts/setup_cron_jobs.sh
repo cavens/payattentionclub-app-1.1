@@ -2,8 +2,13 @@
 # ==============================================================================
 # Setup Cron Jobs for Weekly Close (Phase 6)
 # ==============================================================================
-# Sets up pg_cron jobs to automatically call weekly-close Edge Function
-# every Monday at 12:00 PM EST (17:00 UTC)
+# Sets up pg_cron jobs to automatically call bright-service Edge Function
+# via call_weekly_close() RPC function
+# 
+# Note: call_weekly_close() now routes to bright-service (replaces weekly-close)
+# 
+# Current schedule: Every Monday at 12:00 PM EST (17:00 UTC)
+# Note: Consider updating to Tuesday 12:00 ET to run after grace period expires
 # 
 # Usage:
 #   ./scripts/setup_cron_jobs.sh [staging|production|both]
@@ -34,11 +39,13 @@ setup_cron_for_env() {
         project_ref="auqujbppoytkeqdsgrbl"
         db_url="$STAGING_DB_URL"
         supabase_secret_key="$STAGING_SUPABASE_SECRET_KEY"
+        supabase_url="$STAGING_SUPABASE_URL"
         echo "Setting up cron job for STAGING..."
     elif [ "$env" = "production" ]; then
         project_ref="whdftvcrtrsnefhprebj"
         db_url="$PRODUCTION_DB_URL"
         supabase_secret_key="$PRODUCTION_SUPABASE_SECRET_KEY"
+        supabase_url="$PRODUCTION_SUPABASE_URL"
         echo "Setting up cron job for PRODUCTION..."
     else
         echo "Error: Invalid environment: $env"
@@ -55,6 +62,11 @@ setup_cron_for_env() {
         return 1
     fi
     
+    if [ -z "$supabase_url" ]; then
+        echo "❌ Error: Supabase URL not found in .env for $env"
+        return 1
+    fi
+    
     echo ""
     echo "Project: $project_ref"
     echo "Database URL: ${db_url%%@*}" # Hide password
@@ -65,21 +77,26 @@ setup_cron_for_env() {
     cat > "$sql_file" <<EOF
 -- Setup Cron Job for Weekly Close ($env)
 -- ==========================================
+-- Note: call_weekly_close() now routes to bright-service (replaces weekly-close)
 
 -- Step 1: Enable pg_cron extension
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 
--- Step 2: Set supabase_secret_key (required for call_weekly_close function)
+-- Step 2: Set app.settings (required for call_weekly_close function)
 -- Note: This uses ALTER DATABASE which requires superuser privileges
 -- If this fails, you may need to set it manually in Supabase Dashboard
 DO \$\$
 BEGIN
+    -- Set service_role_key
     EXECUTE format('ALTER DATABASE postgres SET app.settings.service_role_key = %L', '$supabase_secret_key');
+    -- Set supabase_url (for environment-aware Edge Function calls)
+    EXECUTE format('ALTER DATABASE postgres SET app.settings.supabase_url = %L', '$supabase_url');
 EXCEPTION
     WHEN insufficient_privilege THEN
-        RAISE NOTICE 'Cannot set supabase_secret_key via SQL. Please set it manually in Supabase Dashboard → Database → Settings → Database Settings → Custom Postgres Config';
+        RAISE NOTICE 'Cannot set app.settings via SQL. Please set it manually in Supabase Dashboard → Database → Settings → Database Settings → Custom Postgres Config';
+        RAISE NOTICE 'Required settings: app.settings.service_role_key and app.settings.supabase_url';
     WHEN OTHERS THEN
-        RAISE WARNING 'Error setting supabase_secret_key: %', SQLERRM;
+        RAISE WARNING 'Error setting app.settings: %', SQLERRM;
 END;
 \$\$;
 

@@ -261,6 +261,11 @@ struct AuthorizationView: View {
         
         // Store baseline in App Group
         UsageTracker.shared.storeBaselineTime(0.0)
+        
+        // CRITICAL: Reset consumedMinutes when creating a new commitment
+        // This clears any leftover data from previous tests or earlier in the day
+        // Without this, consumedMinutes might have a value from before the commitment was created
+        UsageTracker.shared.resetConsumedMinutes()
             
             // Store commitment deadline - use backend deadline (compressed in testing mode, normal in production)
             // Parse deadlineDate from backend response
