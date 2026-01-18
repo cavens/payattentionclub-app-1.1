@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { TESTING_MODE, getNextDeadline } from "../_shared/timing.ts"
+import { getNextDeadline } from "../_shared/timing.ts"
+import { getTestingMode } from "../_shared/mode-check.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,8 +12,8 @@ const corsHeaders = {
  * Format a Date object as YYYY-MM-DD string (normal mode)
  * or ISO 8601 string (testing mode for precise timing)
  */
-function formatDeadlineDate(date: Date): string {
-  if (TESTING_MODE) {
+function formatDeadlineDate(date: Date, isTestingMode: boolean): string {
+  if (isTestingMode) {
     // In testing mode, return full ISO timestamp for precise timing
     return date.toISOString();
   }
@@ -44,6 +45,11 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseSecretKey)
 
+    // Check testing mode from database (primary source) or env var (fallback)
+    // This ensures consistent mode checking across all functions
+    const isTestingMode = await getTestingMode(supabase);
+    console.log(`preview-service: Testing mode: ${isTestingMode} (checked from database/env var)`);
+
     // Parse request body
     const body = await req.json()
     const { limitMinutes, penaltyPerMinuteCents, appCount, appsToLimit } = body
@@ -67,11 +73,11 @@ serve(async (req) => {
     // Calculate deadline internally (single source of truth)
     // Testing mode: 3 minutes from now
     // Normal mode: Next Monday 12:00 ET
-    const deadline = getNextDeadline();
-    const deadlineDateForRPC = formatDeadlineDate(deadline).split('T')[0]; // Extract YYYY-MM-DD
-    const deadlineISO = TESTING_MODE ? deadline.toISOString() : null;
+    const deadline = getNextDeadline(isTestingMode);
+    const deadlineDateForRPC = formatDeadlineDate(deadline, isTestingMode).split('T')[0]; // Extract YYYY-MM-DD
+    const deadlineISO = isTestingMode ? deadline.toISOString() : null;
     
-    console.log(`preview-service: Calculated deadline date: ${deadlineDateForRPC} (testing mode: ${TESTING_MODE})`);
+    console.log(`preview-service: Calculated deadline date: ${deadlineDateForRPC} (testing mode: ${isTestingMode})`);
     console.log(`🧪 TEST 5 - PREVIEW: Backend calculated deadline at ${new Date().toISOString()}: ${deadlineISO || deadlineDateForRPC}`);
 
     // Call the RPC function with calculated deadline

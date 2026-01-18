@@ -851,7 +851,46 @@
                     toggle.checked = data.result.testing_mode;
                     status.textContent = data.result.testing_mode ? 'ON' : 'OFF';
                     status.style.color = data.result.testing_mode ? '#28a745' : '#dc3545';
-                    showResults(`✅ ${data.result.message}`, 'success');
+                    
+                    // Show detailed result with secret update status
+                    const result = data.result || {};
+                    let resultMessage = `✅ ${result.message || 'Toggle successful'}\n\n`;
+                    resultMessage += `📊 Update Status:\n`;
+                    
+                    // Check app_config_updated (should always be true if we got here)
+                    const appConfigUpdated = result.app_config_updated !== undefined ? result.app_config_updated : true;
+                    resultMessage += `  • app_config: ${appConfigUpdated ? '✅ Updated' : '❌ Failed'}\n`;
+                    
+                    // Check secret_updated
+                    const secretUpdated = result.secret_updated === true;
+                    resultMessage += `  • Edge Function secret: ${secretUpdated ? '✅ Updated' : '❌ Failed'}\n`;
+                    
+                    if (result.secret_update_error) {
+                        resultMessage += `\n⚠️ Secret Update Error: ${result.secret_update_error}\n`;
+                    }
+                    
+                    if (result.warning) {
+                        resultMessage += `\n⚠️ Warning: ${result.warning}\n`;
+                    }
+                    
+                    if (secretUpdated && appConfigUpdated) {
+                        resultMessage += `\n🎉 Both locations updated successfully!`;
+                    } else if (!secretUpdated) {
+                        resultMessage += `\n⚠️ Note: Database updated, but Edge Function secret update failed.`;
+                        resultMessage += `\n   Edge Functions will use database value on next check.`;
+                        resultMessage += `\n   Check if PAT is configured in app_config.supabase_access_token`;
+                    }
+                    
+                    // Debug: Show full response in console and in results
+                    console.log('Toggle response:', JSON.stringify(data, null, 2));
+                    
+                    // Add debug info to message
+                    resultMessage += `\n\n🔍 Debug Info:\n`;
+                    resultMessage += `  • app_config_updated value: ${JSON.stringify(result.app_config_updated)}\n`;
+                    resultMessage += `  • secret_updated value: ${JSON.stringify(result.secret_updated)}\n`;
+                    resultMessage += `  • Full response in browser console (F12)\n`;
+                    
+                    showResults(resultMessage, 'success');
                 } else {
                     showResults(`❌ Error: ${JSON.stringify(data, null, 2)}`, 'error');
                     loadTestingModeStatus(); // Reset to current state

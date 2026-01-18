@@ -274,6 +274,20 @@ struct AuthorizationView: View {
             NSLog("LOCKIN AuthorizationView: maxChargeCents: \(commitmentResponse.maxChargeCents)")
             NSLog("LOCKIN AuthorizationView: deadlineDate from backend: \(commitmentResponse.deadlineDate)")
             
+            // Request notification permissions and reset notification state for new commitment
+            await MainActor.run {
+                NotificationManager.shared.resetNotificationState()
+            }
+            // Request permission (non-blocking - don't wait for user response)
+            Task {
+                let granted = await NotificationManager.shared.requestPermission()
+                if granted {
+                    NSLog("LOCKIN AuthorizationView: ✅ Notification permission granted")
+                } else {
+                    NSLog("LOCKIN AuthorizationView: ⚠️ Notification permission denied - notifications will be skipped")
+                }
+            }
+            
             // Test 5: Compare preview and commitment deadlines
             NSLog("🧪 TEST 5 - COMMITMENT: iOS app received deadline from backend: \(commitmentResponse.deadlineDate) at \(Date().ISO8601Format())")
             if let previewDeadline = previewDeadlineDate {

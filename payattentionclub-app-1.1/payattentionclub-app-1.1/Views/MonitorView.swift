@@ -263,6 +263,16 @@ struct MonitorView: View {
                 model.currentUsageSeconds = usageSeconds
                 model.updateCurrentPenalty()
                 
+                // Check and send notifications if limits are exceeded
+                Task {
+                    await NotificationManager.shared.checkAndNotifyIfNeeded(
+                        currentUsageSeconds: model.currentUsageSeconds,
+                        baselineUsageSeconds: model.baselineUsageSeconds,
+                        limitMinutes: model.limitMinutes,
+                        penaltyPerMinute: model.penaltyPerMinute
+                    )
+                }
+                
                 // If deadline has passed, navigate to bulletin
                 if deadlinePassed {
                     NSLog("MONITOR MonitorView: ⏰ Deadline passed while viewing, navigating to bulletin")

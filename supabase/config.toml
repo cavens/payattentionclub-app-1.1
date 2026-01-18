@@ -11,6 +11,10 @@ project_id = "payattentionclub-app-1.1"
 [functions.bright-service]
 verify_jwt = false
 
+# Disable JWT verification for update-secret (allows public access with secret header authentication)
+[functions.update-secret]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

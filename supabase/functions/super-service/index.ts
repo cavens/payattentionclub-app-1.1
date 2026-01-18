@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { TESTING_MODE, getNextDeadline } from "../_shared/timing.ts"
+import { getNextDeadline } from "../_shared/timing.ts"
+import { getTestingMode } from "../_shared/mode-check.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,35 +75,11 @@ serve(async (req) => {
       )
     }
 
-    // Check testing mode from both environment variable AND database config
-    // This allows testing mode to work even if only database config is set
-    // Database config (app_config) is the primary source of truth
-    let isTestingMode = TESTING_MODE;
-    
-    if (!isTestingMode) {
-      // Check database app_config table for testing mode
-      // Use service role key to bypass RLS (if enabled)
-      try {
-        const supabaseAdmin = createClient(supabaseUrl, supabaseSecretKey);
-        const { data: config, error: configError } = await supabaseAdmin
-          .from('app_config')
-          .select('value')
-          .eq('key', 'testing_mode')
-          .single();
-        
-        if (!configError && config && config.value === 'true') {
-          isTestingMode = true;
-          console.log('super-service: Testing mode enabled via app_config table');
-        } else if (configError) {
-          console.log(`super-service: Could not read app_config: ${configError.message}`);
-        }
-      } catch (error) {
-        // If app_config table doesn't exist or query fails, continue with env var check
-        console.log(`super-service: Could not check app_config: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    } else {
-      console.log('super-service: Testing mode enabled via environment variable');
-    }
+    // Check testing mode from database (primary source) or env var (fallback)
+    // This ensures consistent mode checking across all functions
+    const supabaseAdmin = createClient(supabaseUrl, supabaseSecretKey);
+    const isTestingMode = await getTestingMode(supabaseAdmin);
+    console.log(`super-service: Testing mode: ${isTestingMode} (checked from database/env var)`);
 
     // Parse request body
     const body = await req.json()
@@ -128,12 +105,8 @@ serve(async (req) => {
     // Calculate deadline internally (single source of truth)
     // Testing mode: 3 minutes from now
     // Normal mode: Next Monday 12:00 ET
-    // Note: We use isTestingMode (from database or env var) instead of TESTING_MODE constant
-    // because getNextDeadline() uses the constant which is evaluated at module load time
     const now = new Date();
-    const deadline = isTestingMode 
-      ? new Date(now.getTime() + (3 * 60 * 1000)) // 3 minutes from now
-      : getNextDeadline(now); // Normal mode: next Monday 12:00 ET
+    const deadline = getNextDeadline(isTestingMode, now);
     
     const deadlineDateForRPC = formatDeadlineDate(deadline, isTestingMode).split('T')[0]; // Extract YYYY-MM-DD
     const deadlineTimestampForRPC = isTestingMode ? formatDeadlineDate(deadline, isTestingMode) : null; // Precise timestamp for testing mode

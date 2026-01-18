@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
-import { TESTING_MODE as ENV_TESTING_MODE, getGraceDeadline } from "../_shared/timing.ts";
+import { getGraceDeadline } from "../_shared/timing.ts";
+import { getTestingMode } from "../_shared/mode-check.ts";
 
 /* ---------- Inline helper utilities ---------- */
 
@@ -445,30 +446,11 @@ Deno.serve(async (req) => {
   // Initialize Stripe client at runtime
   const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
 
-  // Check testing mode from both environment variable AND database config
-  // Database config (app_config) is the primary source of truth
-  let isTestingMode = ENV_TESTING_MODE; // Start with environment variable value
-
-  // Create a Supabase client with service role key for app_config access
+  // Check testing mode from database (primary source) or env var (fallback)
+  // This ensures consistent mode checking across all functions
   const supabaseAdmin = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
-
-  if (!isTestingMode) {
-    // Check database app_config table for testing mode
-    try {
-      const { data: config, error: configError } = await supabaseAdmin
-        .from('app_config')
-        .select('value')
-        .eq('key', 'testing_mode')
-        .single();
-
-      if (!configError && config && config.value === 'true') {
-        isTestingMode = true;
-        console.log('run-weekly-settlement: Testing mode enabled via app_config table');
-      }
-    } catch (error) {
-      console.log('run-weekly-settlement: Could not check app_config, using environment variable only');
-    }
-  }
+  const isTestingMode = await getTestingMode(supabaseAdmin);
+  console.log(`run-weekly-settlement: Testing mode: ${isTestingMode} (checked from database/env var)`);
 
   // In testing mode, make function public (no auth required) but require manual trigger header
   // This allows automated testing scripts to call the function without authentication

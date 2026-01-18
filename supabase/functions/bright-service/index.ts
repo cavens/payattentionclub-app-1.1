@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
-import { TESTING_MODE as ENV_TESTING_MODE, getGraceDeadline, getNextDeadline } from "../_shared/timing.ts";
+import { getGraceDeadline, getWeekDurationMs } from "../_shared/timing.ts";
+import { getTestingMode } from "../_shared/mode-check.ts";
 
 /* ---------- Inline helper utilities ---------- */
 
@@ -227,16 +228,17 @@ async function buildSettlementCandidates(
   }));
 }
 
-function getCommitmentDeadline(candidate: SettlementCandidate): Date {
+function getCommitmentDeadline(candidate: SettlementCandidate, isTestingMode: boolean): Date {
   // Prefer stored precise timestamp if available (testing mode with new column)
   if (candidate.commitment.week_end_timestamp) {
     return new Date(candidate.commitment.week_end_timestamp);
   }
   
   // Fallback: In testing mode, calculate deadline from created_at (backward compatibility)
-  if (TESTING_MODE && candidate.commitment.created_at) {
+  if (isTestingMode && candidate.commitment.created_at) {
     const createdAt = new Date(candidate.commitment.created_at);
-    return new Date(createdAt.getTime() + (3 * 60 * 1000)); // 3 minutes after creation
+    const weekDurationMs = getWeekDurationMs(isTestingMode);
+    return new Date(createdAt.getTime() + weekDurationMs);
   }
   
   // Normal mode: deadline is Monday 12:00 ET (week_end_date)
@@ -246,7 +248,7 @@ function getCommitmentDeadline(candidate: SettlementCandidate): Date {
   return mondayET;
 }
 
-function hasSyncedUsage(candidate: SettlementCandidate): boolean {
+function hasSyncedUsage(candidate: SettlementCandidate, isTestingMode: boolean): boolean {
   // Check if actual_amount_cents exists AND was updated after the deadline
   // This ensures we only count usage synced AFTER the deadline, not before
   const penalty = candidate.penalty;
@@ -255,7 +257,7 @@ function hasSyncedUsage(candidate: SettlementCandidate): boolean {
   }
   
   // Calculate the deadline for this commitment
-  const deadline = getCommitmentDeadline(candidate);
+  const deadline = getCommitmentDeadline(candidate, isTestingMode);
   
   // If last_updated is not available, fall back to checking actual_amount_cents
   // (for backward compatibility with existing records)
@@ -281,7 +283,7 @@ function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = 
   }
 
   // Get the commitment deadline (prefers week_end_timestamp if available)
-  const deadline = getCommitmentDeadline(candidate);
+  const deadline = getCommitmentDeadline(candidate, isTestingMode ?? false);
   
   // Use timing helper to get grace deadline (handles compressed vs normal mode)
   // Pass isTestingMode parameter to ensure correct calculation
@@ -517,30 +519,11 @@ Deno.serve(async (req) => {
   // Initialize Stripe client at runtime
   const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
 
-  // Check testing mode from both environment variable AND database config
-  // Database config (app_config) is the primary source of truth
-  let isTestingMode = ENV_TESTING_MODE; // Start with environment variable value
-
-  // Create a Supabase client with service role key for app_config access
+  // Check testing mode from database (primary source) or env var (fallback)
+  // This ensures consistent mode checking across all functions
   const supabaseAdmin = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
-
-  if (!isTestingMode) {
-    // Check database app_config table for testing mode
-    try {
-      const { data: config, error: configError } = await supabaseAdmin
-        .from('app_config')
-        .select('value')
-        .eq('key', 'testing_mode')
-        .single();
-
-      if (!configError && config && config.value === 'true') {
-        isTestingMode = true;
-        console.log('run-weekly-settlement: Testing mode enabled via app_config table');
-      }
-    } catch (error) {
-      console.log('run-weekly-settlement: Could not check app_config, using environment variable only');
-    }
-  }
+  const isTestingMode = await getTestingMode(supabaseAdmin);
+  console.log(`run-weekly-settlement: Testing mode: ${isTestingMode} (checked from database/env var)`);
 
   // In testing mode, also require manual trigger header (in addition to secret)
   // This provides an extra layer of control for testing
@@ -587,7 +570,7 @@ Deno.serve(async (req) => {
     };
 
     for (const candidate of candidates) {
-      const hasUsage = hasSyncedUsage(candidate);
+      const hasUsage = hasSyncedUsage(candidate, isTestingMode);
       if (hasUsage) summary.candidatesWithUsage += 1;
       else summary.candidatesWithoutUsage += 1;
 

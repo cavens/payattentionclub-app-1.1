@@ -1533,6 +1533,52 @@ Or via Supabase Dashboard → Edge Functions → quick-handler → Secrets
 
 ---
 
+### 25. Settlement Safety Improvements (Priority 4)
+
+**Status**: TODO  
+**Severity**: Medium (Financial/Operational)  
+**Date Identified**: 2026-01-18  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Add idempotency keys, settlement attempt tracking, and retry logic to the settlement process to prevent duplicate charges and handle partial failures gracefully. This becomes critical as the user base grows (50+ users per week).
+
+**Priority**: Medium  
+**Timeline**: Fix soon (before reaching 50+ users per week)
+
+---
+
+### 26. Grace Period Storage (Priority 4) - TEST FIRST THING TOMORROW
+
+**Status**: ✅ Implemented - Needs Testing  
+**Severity**: Medium (Data Accuracy)  
+**Date Identified**: 2026-01-18  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Updated `rpc_create_commitment` to calculate and store `week_grace_expires_at` explicitly in the database. This eliminates runtime calculation errors and provides an audit trail.
+
+**Implementation Complete**: ✅
+- Function updated to calculate grace deadline
+- Stores `week_grace_expires_at` for both testing mode (1 minute) and normal mode (Tuesday 12:00 ET)
+
+**⚠️ ACTION REQUIRED - FIRST THING TOMORROW (2026-01-19):**
+1. Deploy the updated `rpc_create_commitment` function
+2. Test in testing mode (verify 1 minute grace period)
+3. Test in normal mode (verify Tuesday 12:00 ET grace period)
+4. Verify settlement function uses stored value
+
+**Test Resources:**
+- Test script: `supabase/sql-drafts/test_grace_period_storage.sql`
+- Detailed guide: `docs/TEST_GRACE_PERIOD_STORAGE.md`
+
+**Priority**: High (Test immediately after deployment)  
+**Timeline**: Test first thing tomorrow (2026-01-19)
+
+---
+
 ## Notes
 
 - All issues documented here are **non-blocking** - development can continue

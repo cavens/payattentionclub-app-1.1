@@ -330,7 +330,7 @@ serve(async (req) => {
       }
 
       case "toggle_testing_mode": {
-        // Toggle testing mode in app_config table
+        // Toggle testing mode in BOTH app_config table AND Edge Function secrets
         const { data: currentConfig, error: fetchError } = await supabase
           .from('app_config')
           .select('value')
@@ -346,6 +346,7 @@ serve(async (req) => {
           newValue = 'true';
         }
 
+        // Step 1: Update app_config table
         const { data: updatedConfig, error: updateError } = await supabase
           .from('app_config')
           .upsert({
@@ -363,15 +364,54 @@ serve(async (req) => {
 
         if (updateError) {
           return new Response(
-            JSON.stringify({ error: 'Failed to toggle testing mode', details: updateError.message }),
+            JSON.stringify({ error: 'Failed to toggle testing mode in app_config', details: updateError.message }),
             { status: 500, headers: corsHeaders }
           );
         }
 
+        // Step 2: Update TESTING_MODE Edge Function secret
+        let secretUpdateSuccess = false;
+        let secretUpdateError: string | null = null;
+        
+        try {
+          const updateSecretUrl = `${supabaseUrl}/functions/v1/update-secret`;
+          const secretResponse = await fetch(updateSecretUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseSecretKey}`,
+            },
+            body: JSON.stringify({
+              secretName: 'TESTING_MODE',
+              secretValue: newValue,
+            }),
+          });
+
+          if (secretResponse.ok) {
+            secretUpdateSuccess = true;
+            console.log('toggle_testing_mode: Successfully updated TESTING_MODE Edge Function secret');
+          } else {
+            const errorData = await secretResponse.json();
+            secretUpdateError = errorData.error || `HTTP ${secretResponse.status}`;
+            console.warn('toggle_testing_mode: Failed to update TESTING_MODE secret:', secretUpdateError);
+          }
+        } catch (error) {
+          secretUpdateError = error instanceof Error ? error.message : String(error);
+          console.error('toggle_testing_mode: Error calling update-secret:', secretUpdateError);
+        }
+
+        // Return result with status of both updates
+        const isEnabled = updatedConfig.value === 'true';
         result = {
           success: true,
-          testing_mode: updatedConfig.value === 'true',
-          message: `Testing mode ${updatedConfig.value === 'true' ? 'enabled' : 'disabled'}`
+          testing_mode: isEnabled,
+          message: `Testing mode ${isEnabled ? 'enabled' : 'disabled'}`,
+          app_config_updated: true,
+          secret_updated: secretUpdateSuccess,
+          secret_update_error: secretUpdateError || null,
+          warning: secretUpdateError 
+            ? `⚠️ Testing mode updated in database, but Edge Function secret update failed. Please update TESTING_MODE manually in Supabase Dashboard → Edge Functions → Settings → Secrets to: ${newValue}`
+            : null
         };
         break;
       }
