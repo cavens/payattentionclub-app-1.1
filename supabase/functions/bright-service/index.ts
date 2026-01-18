@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
-import { TESTING_MODE, getGraceDeadline, getNextDeadline } from "../_shared/timing.ts";
+import { TESTING_MODE as ENV_TESTING_MODE, getGraceDeadline, getNextDeadline } from "../_shared/timing.ts";
 
 /* ---------- Inline helper utilities ---------- */
 
@@ -15,6 +15,7 @@ type CommitmentRow = {
   id: string;
   user_id: string;
   week_end_date: string;
+  week_end_timestamp: string | null;  // Precise timestamp (testing mode) or NULL (normal mode)
   week_grace_expires_at: string | null;
   saved_payment_method_id: string | null;
   max_charge_cents: number | null;
@@ -61,21 +62,23 @@ function formatDate(date: Date): string {
   ).padStart(2, "0")}`;
 }
 
-function resolveWeekTarget(options?: { override?: string; now?: Date }): WeekTarget {
+function resolveWeekTarget(options?: { override?: string; now?: Date; isTestingMode?: boolean }): WeekTarget {
   const override = options?.override;
+  const isTestingMode = options?.isTestingMode;
+  
   if (override) {
     // If override is provided, parse it as Monday 12:00 ET
     const parsed = new Date(`${override}T12:00:00`);
     const mondayET = toDateInTimeZone(parsed, TIME_ZONE);
     mondayET.setHours(12, 0, 0, 0);
     // Use timing helper to get grace deadline (handles compressed vs normal mode)
-    const graceDeadline = getGraceDeadline(mondayET);
+    const graceDeadline = getGraceDeadline(mondayET, isTestingMode);
     return { weekEndDate: override, graceDeadlineIso: graceDeadline.toISOString() };
   }
 
   // In testing mode, use today's date in UTC as the week_end_date
   // This matches how commitments are created in testing mode (they use UTC date)
-  if (TESTING_MODE) {
+  if (isTestingMode) {
     const now = options?.now ?? new Date();
     // In testing mode, commitments use today's date in UTC as week_end_date
     // (because formatDeadlineDate uses toISOString() which is UTC-based)
@@ -85,7 +88,7 @@ function resolveWeekTarget(options?: { override?: string; now?: Date }): WeekTar
     // For grace deadline calculation, we need a Date object
     // Use today at 12:00 UTC as the reference point (matches commitment creation logic)
     todayUTC.setUTCHours(12, 0, 0, 0);
-    const graceDeadline = getGraceDeadline(todayUTC);
+    const graceDeadline = getGraceDeadline(todayUTC, isTestingMode);
     return { weekEndDate, graceDeadlineIso: graceDeadline.toISOString() };
   }
 
@@ -99,7 +102,7 @@ function resolveWeekTarget(options?: { override?: string; now?: Date }): WeekTar
 
   const weekEndDate = formatDate(monday);
   // Use timing helper to get grace deadline (handles compressed vs normal mode)
-  const graceDeadline = getGraceDeadline(monday);
+  const graceDeadline = getGraceDeadline(monday, isTestingMode);
 
   return { weekEndDate, graceDeadlineIso: graceDeadline.toISOString() };
 }
@@ -115,6 +118,7 @@ async function fetchCommitmentsForWeek(
         "id",
         "user_id",
         "week_end_date",
+        "week_end_timestamp",
         "week_grace_expires_at",
         "saved_payment_method_id",
         "max_charge_cents",
@@ -224,7 +228,12 @@ async function buildSettlementCandidates(
 }
 
 function getCommitmentDeadline(candidate: SettlementCandidate): Date {
-  // In testing mode, calculate deadline from created_at
+  // Prefer stored precise timestamp if available (testing mode with new column)
+  if (candidate.commitment.week_end_timestamp) {
+    return new Date(candidate.commitment.week_end_timestamp);
+  }
+  
+  // Fallback: In testing mode, calculate deadline from created_at (backward compatibility)
   if (TESTING_MODE && candidate.commitment.created_at) {
     const createdAt = new Date(candidate.commitment.created_at);
     return new Date(createdAt.getTime() + (3 * 60 * 1000)); // 3 minutes after creation
@@ -238,35 +247,31 @@ function getCommitmentDeadline(candidate: SettlementCandidate): Date {
 }
 
 function hasSyncedUsage(candidate: SettlementCandidate): boolean {
-  // Check if usage was synced after the deadline
+  // Check if actual_amount_cents exists AND was updated after the deadline
   // This ensures we only count usage synced AFTER the deadline, not before
-  // Note: actual_amount_cents can be 0 (no penalty), but we still want to charge actual if synced
   const penalty = candidate.penalty;
-  if (!penalty) {
-    return false; // No penalty record means no usage synced
+  if (!penalty || (penalty.actual_amount_cents ?? 0) <= 0) {
+    return false; // No actual amount set
   }
   
   // Calculate the deadline for this commitment
   const deadline = getCommitmentDeadline(candidate);
   
-  // If last_updated is available, check if it's after the deadline
-  if (penalty.last_updated) {
-    const lastUpdated = new Date(penalty.last_updated);
-    return lastUpdated.getTime() > deadline.getTime();
+  // If last_updated is not available, fall back to checking actual_amount_cents
+  // (for backward compatibility with existing records)
+  if (!penalty.last_updated) {
+    // Legacy behavior: if actual_amount_cents is set but no last_updated,
+    // we can't determine when it was synced, so assume it was synced after deadline
+    // This is conservative - it may charge actual when it should charge worst case
+    return true;
   }
   
-  // If last_updated is not available, check if actual_amount_cents is set (even if 0)
-  // This handles cases where usage was synced but resulted in 0 penalty
-  // For backward compatibility: if actual_amount_cents exists (even as 0), assume synced
-  // This is conservative - it may charge actual when it should charge worst case
-  if (penalty.actual_amount_cents !== null && penalty.actual_amount_cents !== undefined) {
-    return true; // actual_amount_cents is set (even if 0), so usage was synced
-  }
-  
-  return false; // No indication that usage was synced
+  // Check if last_updated is after the deadline
+  const lastUpdated = new Date(penalty.last_updated);
+  return lastUpdated.getTime() > deadline.getTime();
 }
 
-function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date()): boolean {
+function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date(), isTestingMode?: boolean): boolean {
   // If explicit grace deadline is set, use it
   const explicit = candidate.commitment.week_grace_expires_at;
   if (explicit) {
@@ -275,28 +280,18 @@ function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = 
     return expired;
   }
 
-  // In testing mode, calculate grace period from created_at timestamp
-  // Deadline is 3 minutes after creation, grace expires 1 minute after deadline (4 minutes total)
-  if (TESTING_MODE && candidate.commitment.created_at) {
-    const createdAt = new Date(candidate.commitment.created_at);
-    const deadline = new Date(createdAt.getTime() + (3 * 60 * 1000)); // 3 minutes
-    const graceDeadline = new Date(deadline.getTime() + (1 * 60 * 1000)); // 1 minute after deadline
-    const expired = graceDeadline.getTime() <= reference.getTime();
-    const timeUntilGrace = graceDeadline.getTime() - reference.getTime();
-    console.log(`isGracePeriodExpired (testing mode): created_at=${createdAt.toISOString()}, deadline=${deadline.toISOString()}, graceDeadline=${graceDeadline.toISOString()}, now=${reference.toISOString()}, expired=${expired}, timeUntilGrace=${timeUntilGrace}ms (${Math.round(timeUntilGrace / 1000)}s)`);
-    return expired;
-  }
-
-  // Normal mode: derive grace deadline from week_end_date using timing helper
-  // week_end_date is Monday (e.g., "2025-01-13"), need to convert to Date object
-  const mondayDate = new Date(`${candidate.commitment.week_end_date}T12:00:00`);
-  const mondayET = toDateInTimeZone(mondayDate, TIME_ZONE);
-  mondayET.setHours(12, 0, 0, 0);
+  // Get the commitment deadline (prefers week_end_timestamp if available)
+  const deadline = getCommitmentDeadline(candidate);
   
   // Use timing helper to get grace deadline (handles compressed vs normal mode)
-  const graceDeadline = getGraceDeadline(mondayET);
+  // Pass isTestingMode parameter to ensure correct calculation
+  const graceDeadline = getGraceDeadline(deadline, isTestingMode);
   const expired = graceDeadline.getTime() <= reference.getTime();
-  console.log(`isGracePeriodExpired (normal mode): week_end_date=${candidate.commitment.week_end_date}, graceDeadline=${graceDeadline.toISOString()}, now=${reference.toISOString()}, expired=${expired}`);
+  
+  const deadlineSource = candidate.commitment.week_end_timestamp 
+    ? 'week_end_timestamp' 
+    : (isTestingMode ? 'calculated from created_at' : 'week_end_date');
+  console.log(`isGracePeriodExpired: deadline source=${deadlineSource}, deadline=${deadline.toISOString()}, graceDeadline=${graceDeadline.toISOString()}, now=${reference.toISOString()}, expired=${expired}, isTestingMode=${isTestingMode}`);
   
   return expired;
 }
@@ -488,6 +483,7 @@ Deno.serve(async (req) => {
   const STRIPE_SECRET_KEY_TEST = Deno.env.get("STRIPE_SECRET_KEY_TEST");
   const STRIPE_SECRET_KEY_PROD = Deno.env.get("STRIPE_SECRET_KEY");
   const STRIPE_SECRET_KEY = STRIPE_SECRET_KEY_TEST || STRIPE_SECRET_KEY_PROD;
+  const SETTLEMENT_SECRET = Deno.env.get("SETTLEMENT_SECRET"); // Secret for public function access
   
   if (!SUPABASE_URL_RUNTIME || !SUPABASE_SECRET_KEY_RUNTIME) {
     console.error("run-weekly-settlement: Missing Supabase credentials at runtime");
@@ -504,12 +500,51 @@ Deno.serve(async (req) => {
     });
   }
   
+  // Security: If function is public, require secret header (works in both testing and production)
+  // This allows the function to be public for testing while maintaining security
+  if (SETTLEMENT_SECRET) {
+    const providedSecret = req.headers.get("x-settlement-secret");
+    if (providedSecret !== SETTLEMENT_SECRET) {
+      console.log("run-weekly-settlement: Unauthorized - invalid or missing settlement secret");
+      return new Response(
+        JSON.stringify({ error: "Unauthorized", message: "Invalid or missing settlement secret" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    console.log("run-weekly-settlement: Authorized via settlement secret");
+  }
+  
   // Initialize Stripe client at runtime
   const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
 
-  // In testing mode, make function public (no auth required) but require manual trigger header
-  // This allows automated testing scripts to call the function without authentication
-  if (TESTING_MODE) {
+  // Check testing mode from both environment variable AND database config
+  // Database config (app_config) is the primary source of truth
+  let isTestingMode = ENV_TESTING_MODE; // Start with environment variable value
+
+  // Create a Supabase client with service role key for app_config access
+  const supabaseAdmin = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
+
+  if (!isTestingMode) {
+    // Check database app_config table for testing mode
+    try {
+      const { data: config, error: configError } = await supabaseAdmin
+        .from('app_config')
+        .select('value')
+        .eq('key', 'testing_mode')
+        .single();
+
+      if (!configError && config && config.value === 'true') {
+        isTestingMode = true;
+        console.log('run-weekly-settlement: Testing mode enabled via app_config table');
+      }
+    } catch (error) {
+      console.log('run-weekly-settlement: Could not check app_config, using environment variable only');
+    }
+  }
+
+  // In testing mode, also require manual trigger header (in addition to secret)
+  // This provides an extra layer of control for testing
+  if (isTestingMode) {
     const isManualTrigger = req.headers.get("x-manual-trigger") === "true";
     if (!isManualTrigger) {
       console.log("run-weekly-settlement: Skipped - testing mode active (use x-manual-trigger header)");
@@ -518,11 +553,7 @@ Deno.serve(async (req) => {
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
-    // In testing mode, skip authentication check - function is public
-    console.log("run-weekly-settlement: Testing mode - public access allowed with x-manual-trigger header");
-  } else {
-    // In production mode, authentication is still required by Edge Function gateway
-    // (This code path won't execute if gateway requires auth, but kept for clarity)
+    console.log("run-weekly-settlement: Testing mode - processing with manual trigger header");
   }
 
   const supabase = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
@@ -534,89 +565,10 @@ Deno.serve(async (req) => {
     payload = undefined;
   }
 
-  const target = resolveWeekTarget({ override: payload?.targetWeek });
-  console.log("run-weekly-settlement: target week", target.weekEndDate);
+  const target = resolveWeekTarget({ override: payload?.targetWeek, isTestingMode });
+  console.log("run-weekly-settlement: target week", target.weekEndDate, `(testing mode: ${isTestingMode})`);
 
   try {
-    // Step 1: Insert estimated rows for commitments with revoked monitoring
-    // This handles cases where users revoked monitoring mid-week - we estimate their usage
-    // FIXED: Use week_end_date (deadline) to identify commitments for this week
-    // week_end_date stores the deadline (next Monday), which groups commitments by week
-    console.log("run-weekly-settlement: Checking for revoked monitoring commitments...");
-    const { data: revokedCommitments, error: revokedError } = await supabase
-      .from("commitments")
-      .select("id, user_id, week_start_date, week_end_date, limit_minutes, penalty_per_minute_cents, monitoring_status, monitoring_revoked_at")
-      .eq("week_end_date", target.weekEndDate)
-      .eq("monitoring_status", "revoked");
-    
-    if (revokedError) {
-      console.error("Error fetching revoked commitments:", revokedError);
-      return new Response(
-        JSON.stringify({ error: "Error fetching revoked commitments", details: revokedError.message }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    if (revokedCommitments && revokedCommitments.length > 0) {
-      console.log(`run-weekly-settlement: Found ${revokedCommitments.length} revoked commitment(s) for estimation`);
-      
-      for (const c of revokedCommitments) {
-        if (!c.monitoring_revoked_at) continue;
-        const revDate = new Date(c.monitoring_revoked_at);
-        // Start from the date of revocation (date-only)
-        let d = new Date(formatDate(revDate));
-        const commitmentEnd = new Date(c.week_end_date || target.weekEndDate);
-        
-        while (d < commitmentEnd) {
-          const dayStr = formatDate(d);
-          // Check if there's already a daily_usage row for this day
-          const { data: existing, error: existingErr } = await supabase
-            .from("daily_usage")
-            .select("id")
-            .eq("user_id", c.user_id)
-            .eq("commitment_id", c.id)
-            .eq("date", dayStr)
-            .maybeSingle();
-          
-          if (existingErr) {
-            console.error("Error checking existing daily_usage:", existingErr);
-            break;
-          }
-          
-          if (!existing) {
-            // Simple estimation rule: assume double usage → full limit exceeded
-            const usedMinutes = c.limit_minutes * 2;
-            const exceededMinutes = c.limit_minutes; // "extra" over the limit
-            const penaltyCents = exceededMinutes * c.penalty_per_minute_cents;
-            
-            const { error: insertEstErr } = await supabase
-              .from("daily_usage")
-              .insert({
-                user_id: c.user_id,
-                commitment_id: c.id,
-                date: dayStr,
-                used_minutes: usedMinutes,
-                limit_minutes: c.limit_minutes,
-                exceeded_minutes: exceededMinutes,
-                penalty_cents: penaltyCents,
-                is_estimated: true,
-                reported_at: new Date().toISOString()
-              });
-            
-            if (insertEstErr) {
-              console.error("Error inserting estimated daily_usage:", insertEstErr);
-              break;
-            }
-          }
-          d.setUTCDate(d.getUTCDate() + 1);
-        }
-      }
-      
-      console.log(`run-weekly-settlement: Completed revoked monitoring estimation for ${revokedCommitments.length} commitment(s)`);
-    } else {
-      console.log("run-weekly-settlement: No revoked commitments found for this week");
-    }
-
     const candidates = await buildSettlementCandidates(supabase, target.weekEndDate);
 
     const summary: Summary = {
@@ -646,7 +598,8 @@ Deno.serve(async (req) => {
       
       // CRITICAL: Always wait for grace period to expire before settling
       // This gives users time to sync their data, regardless of whether usage exists
-      if (!isGracePeriodExpired(candidate)) {
+      // Pass isTestingMode to ensure correct grace period calculation
+      if (!isGracePeriodExpired(candidate, new Date(), isTestingMode)) {
         summary.graceNotExpired += 1;
         continue;  // Skip settlement - wait for grace period to expire
       }
@@ -666,76 +619,7 @@ Deno.serve(async (req) => {
         continue;
       }
       if (amountCents <= 0) {
-        // Zero amount - mark as settled with 0 charged
-        console.log(`run-weekly-settlement: Amount is 0 cents. Marking as settled with 0 charged.`);
-        
-        const settlementStatus = chargeType === "actual" ? "charged_actual" : "charged_worst_case";
-        await updateUserWeekPenalty(supabase, {
-          userId: candidate.commitment.user_id,
-          weekEndDate: target.weekEndDate,
-          amountCents: 0, // No charge for zero amount
-          actualAmountCents: chargeType === "actual" ? amountCents : getActualPenaltyCents(candidate),
-          paymentIntentId: "zero_amount",
-          chargeType,
-          status: "succeeded" // Mark as succeeded since we're intentionally not charging
-        });
-
-        // Record a payment entry noting the amount was zero
-        await recordPayment(supabase, {
-          userId: candidate.commitment.user_id,
-          weekEndDate: target.weekEndDate,
-          amountCents: 0,
-          paymentIntentId: "zero_amount",
-          paymentStatus: "succeeded",
-          chargeType,
-          stripeChargeId: null
-        });
-
-        if (chargeType === "actual") {
-          summary.chargedActual += 1;
-        } else {
-          summary.chargedWorstCase += 1;
-        }
-        continue;
-      }
-
-      // Stripe minimum charge is 50 cents (or equivalent in other currencies)
-      // Note: If Stripe account uses EUR, USD amounts are converted
-      // At current rates, €0.50 ≈ $0.55 USD, so we use 60 cents USD as a safe minimum
-      // to account for currency conversion and exchange rate fluctuations
-      const STRIPE_MINIMUM_CENTS = 60; // Increased from 50 to account for EUR conversion
-      if (amountCents < STRIPE_MINIMUM_CENTS) {
-        // Amount is too small to charge via Stripe
-        // Mark as settled with 0 charged, but record the actual amount for reference
-        console.log(`run-weekly-settlement: Amount ${amountCents} cents is below Stripe minimum ${STRIPE_MINIMUM_CENTS} cents. Marking as settled with 0 charged.`);
-        
-        const settlementStatus = chargeType === "actual" ? "charged_actual" : "charged_worst_case";
-        await updateUserWeekPenalty(supabase, {
-          userId: candidate.commitment.user_id,
-          weekEndDate: target.weekEndDate,
-          amountCents: 0, // No charge due to minimum
-          actualAmountCents: chargeType === "actual" ? amountCents : getActualPenaltyCents(candidate),
-          paymentIntentId: "below_minimum",
-          chargeType,
-          status: "succeeded" // Mark as succeeded since we're intentionally not charging
-        });
-
-        // Record a payment entry noting the amount was too small
-        await recordPayment(supabase, {
-          userId: candidate.commitment.user_id,
-          weekEndDate: target.weekEndDate,
-          amountCents: 0,
-          paymentIntentId: "below_minimum",
-          paymentStatus: "succeeded",
-          chargeType,
-          stripeChargeId: null
-        });
-
-        if (chargeType === "actual") {
-          summary.chargedActual += 1;
-        } else {
-          summary.chargedWorstCase += 1;
-        }
+        summary.zeroAmount += 1;
         continue;
       }
 
@@ -757,77 +641,18 @@ Deno.serve(async (req) => {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("run-weekly-settlement: charge failed", candidate.commitment.user_id, message);
-        
-        // Check if this is a "below minimum" error (currency conversion issue)
-        const isBelowMinimum = message.includes("Amount must convert to at least") || 
-                               message.includes("below minimum") ||
-                               message.includes("minimum charge");
-        
-        if (isBelowMinimum) {
-          // Handle as "below minimum" - mark as settled with 0 charged
-          console.log(`run-weekly-settlement: Amount ${amountCents} cents is below Stripe minimum after currency conversion. Marking as settled with 0 charged.`);
-          
-          const settlementStatus = chargeType === "actual" ? "charged_actual" : "charged_worst_case";
-          await updateUserWeekPenalty(supabase, {
-            userId: candidate.commitment.user_id,
-            weekEndDate: target.weekEndDate,
-            amountCents: 0, // No charge due to minimum
-            actualAmountCents: chargeType === "actual" ? amountCents : getActualPenaltyCents(candidate),
-            paymentIntentId: "below_minimum",
-            chargeType,
-            status: "succeeded" // Mark as succeeded since we're intentionally not charging
-          });
+        summary.chargeFailures.push({ userId: candidate.commitment.user_id, message });
 
-          // Record a payment entry noting the amount was too small
-          await recordPayment(supabase, {
-            userId: candidate.commitment.user_id,
-            weekEndDate: target.weekEndDate,
-            amountCents: 0,
-            paymentIntentId: "below_minimum",
-            paymentStatus: "succeeded",
-            chargeType,
-            stripeChargeId: null
-          });
-
-          if (chargeType === "actual") {
-            summary.chargedActual += 1;
-          } else {
-            summary.chargedWorstCase += 1;
-          }
-        } else {
-          // Other error - mark as failed
-          summary.chargeFailures.push({ userId: candidate.commitment.user_id, message });
-
-          await updateUserWeekPenalty(supabase, {
-            userId: candidate.commitment.user_id,
-            weekEndDate: target.weekEndDate,
-            amountCents: 0,
-            actualAmountCents: getActualPenaltyCents(candidate),
-            paymentIntentId: "failed",
-            chargeType,
-            status: "failed"
-          });
-        }
+        await updateUserWeekPenalty(supabase, {
+          userId: candidate.commitment.user_id,
+          weekEndDate: target.weekEndDate,
+          amountCents: 0,
+          actualAmountCents: getActualPenaltyCents(candidate),
+          paymentIntentId: "failed",
+          chargeType,
+          status: "failed"
+        });
       }
-    }
-
-    // Step 2: Close weekly_pools for this week
-    // Note: weekly_pools.week_start_date stores the deadline (legacy naming)
-    // All users with the same deadline share the same pool
-    console.log("run-weekly-settlement: Closing weekly_pools for week", target.weekEndDate);
-    const { error: closePoolErr } = await supabase
-      .from("weekly_pools")
-      .update({
-        status: "closed",
-        closed_at: new Date().toISOString()
-      })
-      .eq("week_start_date", target.weekEndDate); // Uses deadline as identifier
-    
-    if (closePoolErr) {
-      console.error("run-weekly-settlement: Error closing weekly_pools:", closePoolErr);
-      // Don't fail the entire settlement if pool closing fails - log and continue
-    } else {
-      console.log("run-weekly-settlement: Successfully closed weekly_pools for week", target.weekEndDate);
     }
 
     return new Response(JSON.stringify(summary), {

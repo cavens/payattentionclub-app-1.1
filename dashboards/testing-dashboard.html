@@ -32,6 +32,7 @@
             color: white;
             padding: 30px;
             text-align: center;
+            position: relative;
         }
 
         .header h1 {
@@ -42,6 +43,63 @@
         .header p {
             opacity: 0.9;
             font-size: 1.1em;
+        }
+
+        .testing-mode-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 10px 20px;
+            border-radius: 25px;
+            backdrop-filter: blur(10px);
+        }
+
+        .testing-mode-toggle label {
+            font-weight: 600;
+            font-size: 0.9em;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .testing-mode-toggle input[type="checkbox"] {
+            width: 50px;
+            height: 26px;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 13px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .testing-mode-toggle input[type="checkbox"]:checked {
+            background: #28a745;
+        }
+
+        .testing-mode-toggle input[type="checkbox"]::before {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: white;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.3s;
+        }
+
+        .testing-mode-toggle input[type="checkbox"]:checked::before {
+            transform: translateX(24px);
+        }
+
+        .testing-mode-status {
+            font-size: 0.85em;
+            opacity: 0.9;
+            margin-left: 5px;
         }
 
         .config-section {
@@ -333,12 +391,43 @@
                 border-left: none;
                 border-top: 2px solid #e9ecef;
             }
+
+            .testing-mode-toggle {
+                position: static;
+                margin: 0 auto 20px;
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                padding: 20px 15px;
+            }
+
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .testing-mode-toggle {
+                flex-direction: column;
+                gap: 8px;
+                padding: 12px 15px;
+            }
+
+            .testing-mode-toggle label {
+                font-size: 0.8em;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
+            <div class="testing-mode-toggle">
+                <label for="testingModeToggle">Testing Mode:</label>
+                <input type="checkbox" id="testingModeToggle" onchange="toggleTestingMode()">
+                <span class="testing-mode-status" id="testingModeStatus">Loading...</span>
+            </div>
             <h1>🧪 Settlement Testing Dashboard</h1>
             <p>Test settlement cases with compressed timeline (3 min week, 1 min grace)</p>
         </div>
@@ -611,7 +700,7 @@
             }
 
             const userId = document.getElementById('userId').value.trim();
-            if (!userId && command !== 'clear_data' && command !== 'trigger_settlement') {
+            if (!userId && command !== 'clear_data' && command !== 'trigger_settlement' && command !== 'delete_test_user') {
                 showResults('❌ Error: Please enter a User ID', 'error');
                 return;
             }
@@ -684,9 +773,104 @@
             });
         }
 
+        // Load testing mode status
+        async function loadTestingModeStatus() {
+            if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+                document.getElementById('testingModeStatus').textContent = 'Configure Supabase first';
+                return;
+            }
+
+            try {
+                const requestBody = {
+                    command: 'get_testing_mode',
+                    userId: undefined,
+                    params: {}
+                };
+
+                const response = await fetch(`${SUPABASE_URL}/functions/v1/testing-command-runner`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    const toggle = document.getElementById('testingModeToggle');
+                    const status = document.getElementById('testingModeStatus');
+                    toggle.checked = data.result.testing_mode;
+                    status.textContent = data.result.testing_mode ? 'ON' : 'OFF';
+                    status.style.color = data.result.testing_mode ? '#28a745' : '#dc3545';
+                } else {
+                    document.getElementById('testingModeStatus').textContent = 'Error loading';
+                }
+            } catch (error) {
+                document.getElementById('testingModeStatus').textContent = 'Error';
+                console.error('Failed to load testing mode status:', error);
+            }
+        }
+
+        // Toggle testing mode
+        async function toggleTestingMode() {
+            const toggle = document.getElementById('testingModeToggle');
+            const status = document.getElementById('testingModeStatus');
+            
+            // Disable toggle while processing
+            toggle.disabled = true;
+            status.textContent = 'Updating...';
+
+            if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+                showResults('❌ Error: Please configure Supabase URL and Anon Key first', 'error');
+                toggle.disabled = false;
+                loadTestingModeStatus(); // Reset to current state
+                return;
+            }
+
+            try {
+                const requestBody = {
+                    command: 'toggle_testing_mode',
+                    userId: undefined,
+                    params: {}
+                };
+
+                const response = await fetch(`${SUPABASE_URL}/functions/v1/testing-command-runner`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    toggle.checked = data.result.testing_mode;
+                    status.textContent = data.result.testing_mode ? 'ON' : 'OFF';
+                    status.style.color = data.result.testing_mode ? '#28a745' : '#dc3545';
+                    showResults(`✅ ${data.result.message}`, 'success');
+                } else {
+                    showResults(`❌ Error: ${JSON.stringify(data, null, 2)}`, 'error');
+                    loadTestingModeStatus(); // Reset to current state
+                }
+            } catch (error) {
+                showResults(`❌ Error: ${error.message}`, 'error');
+                loadTestingModeStatus(); // Reset to current state
+            } finally {
+                toggle.disabled = false;
+            }
+        }
+
         // Initialize on page load
         window.addEventListener('DOMContentLoaded', () => {
             loadConfig();
+            // Load testing mode status after a short delay to ensure config is loaded
+            setTimeout(() => {
+                loadTestingModeStatus();
+            }, 500);
         });
     </script>
 </body>

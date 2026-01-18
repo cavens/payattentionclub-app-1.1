@@ -34,11 +34,9 @@ struct ScreenTimeAccessView: View {
                     Task {
                         do {
                             try await authorizationCenter.requestAuthorization(for: .individual)
-                            await MainActor.run {
-                                if authorizationCenter.authorizationStatus == .approved {
-                                    // Use navigateAfterYield to let system UI fully dismiss
-                                    model.navigateAfterYield(.authorization)
-                                }
+                            if authorizationCenter.authorizationStatus == .approved {
+                                // Use navigateAfterYield to let system UI fully dismiss
+                                await model.navigateAfterYield(.authorization)
                             }
                         } catch {
                             print("Authorization error: \(error)")
@@ -72,7 +70,7 @@ struct ScreenTimeAccessView: View {
                         NSLog("MARKERS ScreenTimeAccessView: Already approved, skipping to authorization")
                         print("MARKERS ScreenTimeAccessView: Already approved, skipping to authorization")
                         fflush(stdout)
-                        model.navigateAfterYield(.authorization)
+                        await model.navigateAfterYield(.authorization)
                     }
                 }
             }

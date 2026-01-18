@@ -45,3 +45,4 @@ Called by pg_cron with different schedules based on mode:
 Function checks TESTING_MODE from app_config and only processes if it matches.
 Uses pg_net.http_post() to call quick-handler Edge Function.';
 
+

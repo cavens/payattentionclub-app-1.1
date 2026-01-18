@@ -63,6 +63,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Create Supabase client with user's JWT for authentication
     const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
       global: {
         headers: {
@@ -70,6 +71,10 @@ Deno.serve(async (req) => {
         }
       }
     });
+
+    // Create separate service role client (without user JWT) for admin operations
+    // This bypasses RLS policies when needed
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
@@ -84,25 +89,64 @@ Deno.serve(async (req) => {
     const userEmail = user.email ?? undefined;
 
     // 2) Fetch user row from public.users
-    const { data: dbUser, error: dbUserError } = await supabase
+    let { data: dbUser, error: dbUserError } = await supabase
       .from("users")
       .select("id, email, stripe_customer_id, has_active_payment_method")
       .eq("id", userId)
       .single();
 
+    // If user doesn't exist, create it automatically using admin client (bypasses RLS)
     if (dbUserError) {
-      console.error("Error fetching user row:", dbUserError);
-      return new Response(JSON.stringify({
-        error: "User row not found in public.users"
-      }), {
-        status: 400
-      });
+      // Check if error is "no rows found" (PGRST116 is PostgREST error code for no rows returned)
+      if (dbUserError.code === 'PGRST116' || dbUserError.message?.includes('No rows found') || dbUserError.message?.includes('not found')) {
+        console.log("billing-status: User not found in public.users, creating row automatically...");
+        console.log("billing-status: User ID:", userId);
+        console.log("billing-status: User email:", userEmail);
+        
+        // Create user row in public.users using admin client (bypasses RLS)
+        const { data: newUser, error: createError } = await supabaseAdmin
+          .from("users")
+          .insert({
+            id: userId,
+            email: userEmail,
+            stripe_customer_id: null,
+            has_active_payment_method: false
+          })
+          .select("id, email, stripe_customer_id, has_active_payment_method")
+          .single();
+        
+        if (createError) {
+          console.error("billing-status: Error creating user row:", createError);
+          return new Response(JSON.stringify({
+            error: "Failed to create user row",
+            details: createError.message
+          }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        
+        dbUser = newUser;
+        console.log("billing-status: ✅ User row created successfully:", dbUser.id);
+      } else {
+        // Other error (not "not found")
+        console.error("billing-status: Error fetching user row:", dbUserError);
+        return new Response(JSON.stringify({
+          error: "User row not found in public.users",
+          details: dbUserError.message
+        }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
     }
 
     let stripeCustomerId = dbUser.stripe_customer_id;
+    let customerJustCreated = false; // Track if customer was just created
 
     // 3) Create Stripe customer if missing
     if (!stripeCustomerId) {
+      console.log("billing-status: Creating new Stripe customer...");
       const customer = await stripe.customers.create({
         email: dbUser.email || userEmail,
         metadata: {
@@ -110,6 +154,8 @@ Deno.serve(async (req) => {
         }
       });
       stripeCustomerId = customer.id;
+      customerJustCreated = true; // Mark that customer was just created
+      console.log("billing-status: ✅ New Stripe customer created:", stripeCustomerId);
 
       const { error: updateCustomerError } = await supabase
         .from("users")
@@ -198,36 +244,46 @@ Deno.serve(async (req) => {
     }
 
     // 6) Database flag is false - check Stripe for payment methods
-    // Check if customer has any saved payment methods (from previous PaymentIntents with setup_future_usage)
-    const paymentMethods = await stripe.paymentMethods.list({
-      customer: stripeCustomerId,
-      limit: 10
-    });
+    // CRITICAL: Skip payment method check if customer was just created
+    // A newly created Stripe customer cannot have payment methods, so we should
+    // proceed directly to PaymentIntent creation to avoid false positives
+    if (customerJustCreated) {
+      console.log("billing-status: Customer was just created, skipping payment method check and proceeding to PaymentIntent creation");
+    } else {
+      // Check if customer has any saved payment methods (from previous PaymentIntents with setup_future_usage)
+      const paymentMethods = await stripe.paymentMethods.list({
+        customer: stripeCustomerId,
+        limit: 10
+      });
 
-    // If we have saved payment methods, update the database flag
-    if (paymentMethods.data.length > 0) {
-      const { error: updatePmFlagError } = await supabase
-        .from("users")
-        .update({
-          has_active_payment_method: true
-        })
-        .eq("id", userId);
+      // If we have saved payment methods, update the database flag
+      if (paymentMethods.data.length > 0) {
+        console.log("billing-status: Found existing payment methods, updating database flag");
+        const { error: updatePmFlagError } = await supabase
+          .from("users")
+          .update({
+            has_active_payment_method: true
+          })
+          .eq("id", userId);
 
-      if (updatePmFlagError) {
-        console.error("Error updating has_active_payment_method:", updatePmFlagError);
+        if (updatePmFlagError) {
+          console.error("Error updating has_active_payment_method:", updatePmFlagError);
+        } else {
+          // Return that payment is set up
+          return new Response(JSON.stringify({
+            has_payment_method: true,
+            needs_payment_intent: false,
+            payment_intent_client_secret: null,
+            stripe_customer_id: stripeCustomerId
+          }), {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          });
+        }
       } else {
-        // Return that payment is set up
-        return new Response(JSON.stringify({
-          has_payment_method: true,
-          needs_payment_intent: false,
-          payment_intent_client_secret: null,
-          stripe_customer_id: stripeCustomerId
-        }), {
-          headers: {
-            "Content-Type": "application/json"
-          },
-          status: 200
-        });
+        console.log("billing-status: No existing payment methods found, proceeding to PaymentIntent creation");
       }
     }
 

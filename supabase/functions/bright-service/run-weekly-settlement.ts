@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
-import { TESTING_MODE, getGraceDeadline } from "../_shared/timing.ts";
+import { TESTING_MODE as ENV_TESTING_MODE, getGraceDeadline } from "../_shared/timing.ts";
 
 /* ---------- Inline helper utilities ---------- */
 
@@ -59,18 +59,37 @@ function formatDate(date: Date): string {
   ).padStart(2, "0")}`;
 }
 
-function resolveWeekTarget(options?: { override?: string; now?: Date }): WeekTarget {
+function resolveWeekTarget(options?: { override?: string; now?: Date; isTestingMode?: boolean }): WeekTarget {
   const override = options?.override;
+  const isTestingMode = options?.isTestingMode;
+  
   if (override) {
     // If override is provided, parse it as Monday 12:00 ET
     const parsed = new Date(`${override}T12:00:00`);
     const mondayET = toDateInTimeZone(parsed, TIME_ZONE);
     mondayET.setHours(12, 0, 0, 0);
     // Use timing helper to get grace deadline (handles compressed vs normal mode)
-    const graceDeadline = getGraceDeadline(mondayET);
+    const graceDeadline = getGraceDeadline(mondayET, isTestingMode);
     return { weekEndDate: override, graceDeadlineIso: graceDeadline.toISOString() };
   }
 
+  // In testing mode, use today's date in UTC as the week_end_date
+  // This matches how commitments are created in testing mode (they use UTC date)
+  if (isTestingMode) {
+    const now = options?.now ?? new Date();
+    // In testing mode, commitments use today's date in UTC as week_end_date
+    // (because formatDeadlineDate uses toISOString() which is UTC-based)
+    // So we need to use UTC date here too
+    const todayUTC = new Date(now);
+    const weekEndDate = formatDate(todayUTC); // formatDate uses UTC year/month/day
+    // For grace deadline calculation, we need a Date object
+    // Use today at 12:00 UTC as the reference point (matches commitment creation logic)
+    todayUTC.setUTCHours(12, 0, 0, 0);
+    const graceDeadline = getGraceDeadline(todayUTC, isTestingMode);
+    return { weekEndDate, graceDeadlineIso: graceDeadline.toISOString() };
+  }
+
+  // Normal mode: Calculate previous Monday
   const reference = toDateInTimeZone(options?.now ?? new Date(), TIME_ZONE);
   const monday = new Date(reference);
   const dayOfWeek = reference.getDay(); // 0=Sun ... 6=Sat
@@ -80,7 +99,7 @@ function resolveWeekTarget(options?: { override?: string; now?: Date }): WeekTar
 
   const weekEndDate = formatDate(monday);
   // Use timing helper to get grace deadline (handles compressed vs normal mode)
-  const graceDeadline = getGraceDeadline(monday);
+  const graceDeadline = getGraceDeadline(monday, isTestingMode);
 
   return { weekEndDate, graceDeadlineIso: graceDeadline.toISOString() };
 }
@@ -206,7 +225,7 @@ function hasSyncedUsage(candidate: SettlementCandidate): boolean {
   return candidate.reportedDays > 0;
 }
 
-function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date()): boolean {
+function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date(), isTestingMode?: boolean): boolean {
   // If explicit grace deadline is set, use it
   const explicit = candidate.commitment.week_grace_expires_at;
   if (explicit) {
@@ -220,7 +239,8 @@ function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = 
   mondayET.setHours(12, 0, 0, 0);
   
   // Use timing helper to get grace deadline (handles compressed vs normal mode)
-  const graceDeadline = getGraceDeadline(mondayET);
+  // Pass isTestingMode parameter to ensure correct calculation
+  const graceDeadline = getGraceDeadline(mondayET, isTestingMode);
   
   return graceDeadline.getTime() <= reference.getTime();
 }
@@ -425,9 +445,34 @@ Deno.serve(async (req) => {
   // Initialize Stripe client at runtime
   const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
 
+  // Check testing mode from both environment variable AND database config
+  // Database config (app_config) is the primary source of truth
+  let isTestingMode = ENV_TESTING_MODE; // Start with environment variable value
+
+  // Create a Supabase client with service role key for app_config access
+  const supabaseAdmin = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
+
+  if (!isTestingMode) {
+    // Check database app_config table for testing mode
+    try {
+      const { data: config, error: configError } = await supabaseAdmin
+        .from('app_config')
+        .select('value')
+        .eq('key', 'testing_mode')
+        .single();
+
+      if (!configError && config && config.value === 'true') {
+        isTestingMode = true;
+        console.log('run-weekly-settlement: Testing mode enabled via app_config table');
+      }
+    } catch (error) {
+      console.log('run-weekly-settlement: Could not check app_config, using environment variable only');
+    }
+  }
+
   // In testing mode, make function public (no auth required) but require manual trigger header
   // This allows automated testing scripts to call the function without authentication
-  if (TESTING_MODE) {
+  if (isTestingMode) {
     const isManualTrigger = req.headers.get("x-manual-trigger") === "true";
     if (!isManualTrigger) {
       console.log("run-weekly-settlement: Skipped - testing mode active (use x-manual-trigger header)");
@@ -452,8 +497,8 @@ Deno.serve(async (req) => {
     payload = undefined;
   }
 
-  const target = resolveWeekTarget({ override: payload?.targetWeek });
-  console.log("run-weekly-settlement: target week", target.weekEndDate);
+  const target = resolveWeekTarget({ override: payload?.targetWeek, isTestingMode });
+  console.log("run-weekly-settlement: target week", target.weekEndDate, `(testing mode: ${isTestingMode})`);
 
   try {
     const candidates = await buildSettlementCandidates(supabase, target.weekEndDate);
@@ -482,9 +527,12 @@ Deno.serve(async (req) => {
         summary.alreadySettled += 1;
         continue;
       }
-      if (!hasUsage && !isGracePeriodExpired(candidate)) {
+      // CRITICAL: Always wait for grace period to expire before settling
+      // This gives users time to sync their data, regardless of whether usage exists
+      // Pass isTestingMode to ensure correct grace period calculation
+      if (!isGracePeriodExpired(candidate, new Date(), isTestingMode)) {
         summary.graceNotExpired += 1;
-        continue;
+        continue;  // Skip settlement - wait for grace period to expire
       }
 
       const chargeType: ChargeType = hasUsage ? "actual" : "worst_case";

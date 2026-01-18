@@ -9,7 +9,7 @@
 --   - Stricter limits → exponentially higher authorization (capped at 10x multiplier)
 --   - Higher penalty → direct multiplier
 --   - More apps → moderate increase (2% per app above 1)
---   - Minimum: $15.00 (1500 cents)
+--   - Minimum: $5.00 (500 cents)
 --   - Maximum: $1000.00 (100000 cents)
 --
 -- Key improvements:
@@ -46,7 +46,7 @@ BEGIN
     
     -- If no time remaining, return minimum
     IF v_minutes_remaining <= 0 THEN
-        RETURN 1500; -- $15 minimum
+        RETURN 500; -- $5 minimum
     END IF;
     
     -- Calculate days remaining (for scaling)
@@ -97,8 +97,8 @@ BEGIN
     -- It's a worst-case scenario, so we dampen it to a more realistic authorization
     v_base_amount_cents := v_base_amount_cents * 0.026;
     
-    -- Apply bounds: minimum $15 (1500 cents), maximum $1000 (100000 cents)
-    v_result_cents := GREATEST(1500, LEAST(100000, FLOOR(v_base_amount_cents)::integer));
+    -- Apply bounds: minimum $5 (500 cents), maximum $1000 (100000 cents)
+    v_result_cents := GREATEST(500, LEAST(100000, FLOOR(v_base_amount_cents)::integer));
     
     RETURN v_result_cents;
 END;
@@ -109,7 +109,7 @@ COMMENT ON FUNCTION public.calculate_max_charge_cents(timestamptz, integer, inte
 'Calculates the maximum charge (authorization amount) in cents for a commitment.
 This is THE single source of truth - used by both preview and commitment creation.
 Baseline: 21h @ $0.10, 4 apps = ~$20.
-Returns value between 1500 ($15) and 100000 ($1000) cents.
+Returns value between 500 ($5) and 100000 ($1000) cents.
 Uses aggressive strictness scaling: stricter limits result in exponentially higher authorization.
 Strictness multiplier is capped at 10x to prevent extreme values for very strict limits (e.g., 1-minute limit).';
 

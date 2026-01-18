@@ -771,46 +771,81 @@ All Steps
 
 ## Next Steps
 
-**CURRENT STATUS (2026-01-11):**
-- ✅ **Auto-Settlement Infrastructure** - `auto-settlement-checker` Edge Function and `pg_cron` job deployed and working
-- ✅ **Automatic Reconciliation Queue** - Queue-based system implemented and working
-- ✅ **Function Signature Fixes** - Fixed `net.http_post` signature in `process_reconciliation_queue` and `call_weekly_close`
-- ✅ **End-to-End Test Success** - Automatic settlement and reconciliation working correctly
+**CURRENT STATUS (2026-01-17 - End of Day):**
 
-**Recent Test Results (2026-01-11):**
-- ✅ Commitment created successfully
-- ✅ Automatic settlement triggered after grace period expired (worst-case charge: 1500 cents)
-- ✅ Automatic reconciliation triggered when app synced usage (refund: 1468 cents)
-- ✅ Complete flow verified: Grace period → Settlement → Usage sync → Reconciliation
+### ✅ Completed Today:
+1. **Usage Tracking Fix** - Restored baseline tracking functions from working version (commit 0552a75)
+   - Fixed issue where only first threshold (`t_60s`) was firing
+   - Now correctly tracks multiple thresholds (`t_60s`, `t_120s`, etc.)
+   - Usage tracking verified working: 2 minutes recorded correctly
 
-**Completed Work:**
-1. ✅ Fixed `net.http_post` function signature (5 parameters: url, body, params, headers, timeout)
-2. ✅ Implemented reconciliation queue system (`reconciliation_queue` table + `process_reconciliation_queue` function)
-3. ✅ Set up dual cron jobs (testing: 1-minute, normal: 10-minute schedules)
-4. ✅ Verified production cron job configuration
-5. ✅ Fixed environment isolation (functions read from `app_config`)
+2. **Settlement Flow Testing** - Tested end-to-end settlement in testing mode:
+   - Settlement correctly charges worst-case ($5.00) when no usage synced
+   - Usage sync correctly updates `actual_amount_cents` after deadline
+   - Reconciliation queue entry correctly created when `needs_reconciliation: true`
 
-**Next Session Tasks (2026-01-12):**
-1. **Phase 7: Complete Testing & Validation** - Run all remaining test cases with all different possibilities
-   - Test Case 1: Usage synced within grace period ✅ (Completed)
-   - Test Case 2: Late sync reconciliation ✅ (Completed)
-   - Test Case 3A: Zero usage, synced during grace period
-   - Test Case 3B: Below-minimum penalty handling
-   - Test Case 3C: Multiple reconciliation scenarios
-   - Test all edge cases and different combinations of scenarios
-2. **Phase 8: Documentation** - Update documentation (Steps 8.1-8.2)
-   - Update testing script document with new reconciliation flow
-   - Create quick start guide for automatic reconciliation testing
-3. **Production Deployment** - Deploy to production after testing complete
-   - Apply migrations to production
-   - Set up production cron jobs
-   - Configure `app_config` for production
-   - Verify production cron jobs are working
+3. **Reconciliation Queue Function Update** - Updated `process_reconciliation_queue.sql`:
+   - Changed from marking entries as `completed` immediately after `net.http_post`
+   - Now keeps entries as `processing` and verifies refund was issued before marking complete
+   - Added retry logic for stale `processing` entries (> 5 minutes)
+   - Added verification step that checks penalty record for refund amount
+
+### ⚠️ Current Issue - Reconciliation Not Processing:
+**Problem**: Queue entry is marked as `completed` but `quick-handler` Edge Function is never called (no logs)
+
+**Root Cause Analysis**:
+- `net.http_post` is asynchronous - returns request_id immediately but HTTP request may not execute
+- Queue entry was marked `completed` by old function version before updated version was deployed
+- `quick-handler` Edge Function may not be receiving requests due to:
+  - Authentication issues (using `Authorization: Bearer` header vs custom secret like `bright-service`)
+  - Function visibility (may need to be public or have different auth)
+  - `net.http_post` request not actually executing
+
+**Evidence**:
+- Queue entry: `status: completed`, `processed_at: 2026-01-17 22:41:00`
+- Penalty record: `refund_amount_cents: 0`, `needs_reconciliation: true`
+- `quick-handler` logs: No entries in past hour
+- HTTP request table: `net.http_request` table doesn't exist in this Supabase setup
+
+**Next Steps for Tomorrow**:
+1. **Apply Updated Function**: Deploy the updated `process_reconciliation_queue.sql` to database
+   - File: `supabase/remote_rpcs/process_reconciliation_queue.sql`
+   - Changes: Verifies refund before marking complete, retries stale entries
+
+2. **Reset Queue Entry**: Reset the completed entry back to `pending` for retry:
+   ```sql
+   UPDATE reconciliation_queue
+   SET status = 'pending', processed_at = NULL
+   WHERE id = '5f6bc284-c57d-4c5e-9204-1d42c8ff694e';
+   ```
+
+3. **Verify `quick-handler` Configuration**:
+   - Check if function is public or private
+   - Verify authentication method (may need custom secret header like `bright-service`)
+   - Test calling `quick-handler` manually to verify it works
+
+4. **Check Cron Job Status**:
+   - Verify `process_reconciliation_queue` cron job is running
+   - Check cron job logs for errors
+   - Verify `app_config` has correct `service_role_key` and `supabase_url`
+
+5. **Alternative Approach** (if `net.http_post` continues to fail):
+   - Consider having `quick-handler` poll the queue itself
+   - Or use a different mechanism to trigger `quick-handler` (webhook, direct database trigger)
+   - Or make `quick-handler` public with secret header authentication (like `bright-service`)
+
+**Files Modified Today**:
+- `payattentionclub-app-1.1/DeviceActivityMonitorExtension/DeviceActivityMonitorExtension.swift` - Restored baseline tracking
+- `supabase/remote_rpcs/process_reconciliation_queue.sql` - Added refund verification logic
+- `scripts/check_penalty_record.ts` - Added refund checking functionality
 
 **Remaining Implementation:**
-1. Phase 7: Complete remaining test cases (3A, 3B, 3C)
-2. Phase 8: Documentation updates
-3. Production deployment and verification
+1. Fix reconciliation queue processing (current priority)
+2. Complete settlement logic debugging (if still needed)
+3. Phase 4: Command Runner (Step 4.1) - ✅ Mostly complete
+4. Phase 5: Web Interface (Steps 5.1-5.4) - ✅ Mostly complete
+5. Phase 7: Testing & Validation (Steps 7.1-7.3)
+6. Phase 8: Documentation (Steps 8.1-8.2)
 
 ---
 

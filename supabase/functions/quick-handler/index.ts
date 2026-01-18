@@ -1,14 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
 
-// Environment variables are read at runtime in the handler
-// Don't read them at module level to avoid issues with Edge Function runtime
-const STRIPE_SECRET_KEY =
-  Deno.env.get("STRIPE_SECRET_KEY_TEST") ?? Deno.env.get("STRIPE_SECRET_KEY");
-
-const stripe = STRIPE_SECRET_KEY
-  ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" })
-  : null;
+// Note: Environment variables are read at runtime in the handler (matching bright-service pattern)
+// This allows for environment-specific configuration (staging vs production)
 
 const CURRENCY = "usd";
 const DEFAULT_LIMIT = 25;
@@ -205,7 +199,7 @@ async function recordPayment(
     relatedPaymentIntentId: string | null;
   }
 ) {
-  await supabase.from("payments").insert({
+  const { data, error } = await supabase.from("payments").insert({
     user_id: params.userId,
     week_start_date: params.weekStartDate,
     amount_cents: params.amountCents,
@@ -215,7 +209,15 @@ async function recordPayment(
     status: params.status,
     payment_type: params.paymentType,
     related_payment_intent_id: params.relatedPaymentIntentId
-  });
+  }).select();
+
+  if (error) {
+    throw new Error(`Failed to record payment: ${error.message}`);
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error(`Payment record was not created (no data returned)`);
+  }
 }
 
 async function resolveWithRefund(
@@ -230,7 +232,8 @@ async function resolveWithRefund(
   const newRefundTotal = (penalty.refund_amount_cents ?? 0) + amountCents;
   const finalStatus = newCharged === 0 ? "refunded" : "refunded_partial";
 
-  await supabase
+  // Update penalty record with error handling
+  const { data: updatedPenalty, error: updateError } = await supabase
     .from("user_week_penalties")
     .update({
       charged_amount_cents: newCharged,
@@ -244,8 +247,26 @@ async function resolveWithRefund(
       last_updated: new Date().toISOString()
     })
     .eq("user_id", penalty.user_id)
-    .eq("week_start_date", penalty.week_start_date);
+    .eq("week_start_date", penalty.week_start_date)
+    .select();
 
+  if (updateError) {
+    throw new Error(
+      `Failed to update penalty record after refund: ${updateError.message} (user_id: ${penalty.user_id}, week_start_date: ${penalty.week_start_date})`
+    );
+  }
+
+  if (!updatedPenalty || updatedPenalty.length === 0) {
+    throw new Error(
+      `No penalty record updated - check user_id and week_start_date match (user_id: ${penalty.user_id}, week_start_date: ${penalty.week_start_date})`
+    );
+  }
+
+  console.log(
+    `✅ Updated penalty record after refund: user_id=${penalty.user_id}, week_start_date=${penalty.week_start_date}, refund_amount_cents=${newRefundTotal}, settlement_status=${finalStatus}`
+  );
+
+  // Record payment with error handling
   await recordPayment(supabase, {
     userId: penalty.user_id,
     weekStartDate: penalty.week_start_date,
@@ -272,7 +293,8 @@ async function resolveWithCharge(
       ? "charged_actual_adjusted"
       : "charged_actual";
 
-  await supabase
+  // Update penalty record with error handling
+  const { data: updatedPenalty, error: updateError } = await supabase
     .from("user_week_penalties")
     .update({
       charged_amount_cents: newCharged,
@@ -285,8 +307,26 @@ async function resolveWithCharge(
       last_updated: new Date().toISOString()
     })
     .eq("user_id", penalty.user_id)
-    .eq("week_start_date", penalty.week_start_date);
+    .eq("week_start_date", penalty.week_start_date)
+    .select();
 
+  if (updateError) {
+    throw new Error(
+      `Failed to update penalty record after charge: ${updateError.message} (user_id: ${penalty.user_id}, week_start_date: ${penalty.week_start_date})`
+    );
+  }
+
+  if (!updatedPenalty || updatedPenalty.length === 0) {
+    throw new Error(
+      `No penalty record updated - check user_id and week_start_date match (user_id: ${penalty.user_id}, week_start_date: ${penalty.week_start_date})`
+    );
+  }
+
+  console.log(
+    `✅ Updated penalty record after charge: user_id=${penalty.user_id}, week_start_date=${penalty.week_start_date}, charged_amount_cents=${newCharged}, settlement_status=${finalStatus}`
+  );
+
+  // Record payment with error handling
   await recordPayment(supabase, {
     userId: penalty.user_id,
     weekStartDate: penalty.week_start_date,
@@ -301,6 +341,7 @@ async function resolveWithCharge(
 
 async function processCandidate(
   supabase: ReturnType<typeof createClient>,
+  stripe: Stripe | null,
   candidate: Candidate,
   dryRun: boolean
 ): Promise<
@@ -404,20 +445,56 @@ Deno.serve(async (req) => {
     return new Response("Use POST", { status: 405 });
   }
 
-  // Read environment variables at runtime (same pattern as bright-service)
+  // Read environment variables at request time (matching bright-service pattern)
+  // Match the pattern used in other working functions (bright-service, rapid-service)
+  // Also check SUPABASE_SERVICE_ROLE_KEY as fallback (legacy name, same value as SUPABASE_SECRET_KEY)
   const SUPABASE_URL_RUNTIME = Deno.env.get("SUPABASE_URL");
-  const SUPABASE_SECRET_KEY_RUNTIME = 
-    Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || 
-    Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") ||
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"); // Fallback for legacy name
+  const SUPABASE_SECRET_KEY_RUNTIME = Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
+  const RECONCILIATION_SECRET = Deno.env.get("RECONCILIATION_SECRET"); // Secret for public function access
 
   if (!SUPABASE_URL_RUNTIME || !SUPABASE_SECRET_KEY_RUNTIME) {
-    return new Response("Supabase credentials missing", { status: 500 });
-  }
-  if (!stripe) {
-    return new Response("Stripe credentials missing", { status: 500 });
+    console.error("quick-handler: Missing Supabase credentials at runtime");
+    console.error(`  SUPABASE_URL: ${SUPABASE_URL_RUNTIME ? 'SET' : 'MISSING'}`);
+    console.error(`  STAGING_SUPABASE_SECRET_KEY: ${Deno.env.get("STAGING_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
+    console.error(`  PRODUCTION_SUPABASE_SECRET_KEY: ${Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
+    console.error(`  SUPABASE_SERVICE_ROLE_KEY: ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ? 'SET' : 'MISSING'}`);
+    return new Response(JSON.stringify({
+      error: "Supabase credentials missing",
+      details: "SUPABASE_URL and either STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets."
+    }), { 
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
   }
 
+  if (!STRIPE_SECRET_KEY) {
+    return new Response(JSON.stringify({
+      error: "Stripe credentials missing",
+      details: "STRIPE_SECRET_KEY must be set in Edge Function secrets."
+    }), { 
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // Security: If function is public, require secret header (works in both testing and production)
+  // This allows the function to be public for testing while maintaining security
+  // Similar pattern to bright-service
+  if (RECONCILIATION_SECRET) {
+    const providedSecret = req.headers.get("x-reconciliation-secret");
+    if (providedSecret !== RECONCILIATION_SECRET) {
+      console.log("quick-handler: Unauthorized - invalid or missing reconciliation secret");
+      return new Response(
+        JSON.stringify({ error: "Unauthorized", message: "Invalid or missing reconciliation secret" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    console.log("quick-handler: Authorized via reconciliation secret");
+  }
+
+  // Initialize Stripe client at runtime
+  const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
   const supabase = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
 
   let payload: RequestPayload | undefined;
@@ -468,7 +545,7 @@ Deno.serve(async (req) => {
 
     for (const candidate of candidates) {
       try {
-        const result = await processCandidate(supabase, candidate, dryRun);
+        const result = await processCandidate(supabase, stripe, candidate, dryRun);
         if (!result) continue;
 
         if (result.skipped === "zero_delta") {

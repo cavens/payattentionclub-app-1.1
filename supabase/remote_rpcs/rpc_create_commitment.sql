@@ -11,7 +11,8 @@ CREATE OR REPLACE FUNCTION public.rpc_create_commitment(
   p_penalty_per_minute_cents integer,
   p_app_count integer,  -- Explicit app count parameter (single source of truth)
   p_apps_to_limit jsonb,  -- Keep for storage in commitments table
-  p_saved_payment_method_id text DEFAULT NULL
+  p_saved_payment_method_id text DEFAULT NULL,
+  p_deadline_timestamp timestamptz DEFAULT NULL  -- Optional: precise timestamp for testing mode
 )
 RETURNS json
 LANGUAGE plpgsql
@@ -42,7 +43,15 @@ BEGIN
 
   -- 3) Set dates
   v_commitment_start_date := current_date;
-  v_deadline_ts := (p_deadline_date::timestamp AT TIME ZONE 'America/New_York') + INTERVAL '12 hours';
+  
+  -- If precise timestamp is provided (testing mode), use it; otherwise calculate from date (normal mode)
+  IF p_deadline_timestamp IS NOT NULL THEN
+    -- Testing mode: Use provided precise timestamp
+    v_deadline_ts := p_deadline_timestamp;
+  ELSE
+    -- Normal mode: Calculate deadline from date at noon ET
+    v_deadline_ts := (p_deadline_date::timestamp AT TIME ZONE 'America/New_York') + INTERVAL '12 hours';
+  END IF;
 
   -- 4) Use explicit p_app_count parameter (single source of truth from client)
   -- No longer extracting from JSONB arrays to avoid discrepancies
@@ -77,6 +86,7 @@ BEGIN
     user_id,
     week_start_date,
     week_end_date,
+    week_end_timestamp,
     limit_minutes,
     penalty_per_minute_cents,
     apps_to_limit,
@@ -92,6 +102,7 @@ BEGIN
     v_user_id,
     v_commitment_start_date,
     p_deadline_date,
+    p_deadline_timestamp,  -- Store precise timestamp if provided (testing mode), NULL otherwise
     p_limit_minutes,
     p_penalty_per_minute_cents,
     p_apps_to_limit,
@@ -115,10 +126,11 @@ END;
 $$;
 
 -- Add comment
-COMMENT ON FUNCTION public.rpc_create_commitment(date, integer, integer, integer, jsonb, text) IS 
+COMMENT ON FUNCTION public.rpc_create_commitment(date, integer, integer, integer, jsonb, text, timestamptz) IS 
 'Creates a new commitment for the authenticated user.
 Uses explicit p_app_count parameter (single source of truth from client).
 Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
+Accepts optional p_deadline_timestamp for precise deadline storage in testing mode.
 This ensures preview and commitment creation use the exact same formula and app count.';
 
 

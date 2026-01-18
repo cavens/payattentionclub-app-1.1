@@ -46,20 +46,6 @@ class UsageTracker {
         return userDefaults.double(forKey: "consumedMinutes")
     }
     
-    /// Reset consumed minutes to 0
-    /// This should be called when creating a new commitment to clear any leftover data
-    /// Also clears the interval baseline so the extension can track a fresh baseline from the first threshold event
-    func resetConsumedMinutes() {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return
-        }
-        userDefaults.set(0.0, forKey: "consumedMinutes")
-        // Also clear interval baseline (in seconds) so extension can track fresh baseline from first threshold event
-        userDefaults.removeObject(forKey: "intervalBaselineSeconds")
-        userDefaults.synchronize()
-        NSLog("RESET UsageTracker: ✅ Reset consumedMinutes to 0.0 and cleared interval baseline")
-    }
-    
     /// Get current time spent from the last threshold event
     /// Uses smart threshold distribution: 1-min early, 5-min regular, 1-min final
     /// Max undercount: ≤5 minutes globally, ≤1 minute in early/final windows

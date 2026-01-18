@@ -140,6 +140,73 @@ Documented guardrails are acceptable for now, but we should revisit once we have
 
 ---
 
+### DST Transition Issue in Grace Period Calculation
+
+**Status**: Known Issue – Timing Bug  
+**Severity**: High (Financial/Compliance)  
+**Date Identified**: 2026-01-15  
+**Phase**: Settlement Process
+
+#### Description
+
+The `getGraceDeadline()` function in `supabase/functions/_shared/timing.ts` uses `setUTCDate()` which adds 1 day in UTC, not accounting for Daylight Saving Time (DST) transitions. This causes the grace period to be incorrect (23 or 25 hours instead of 24 hours) when a week spans a DST transition.
+
+**Problem**: If a commitment week spans a DST transition (spring forward in March or fall back in November), the grace period calculation will be off by 1 hour:
+- **Spring forward**: Grace period = 23 hours (too short) - users charged too early
+- **Fall back**: Grace period = 25 hours (too long) - users charged too late
+
+#### Impact
+
+**Financial**: ⚠️ High – Users could be charged incorrectly during DST transition weeks  
+**Compliance**: ⚠️ High – Grace period not matching promised 24 hours  
+**User Experience**: ⚠️ Medium – Confusion if charged at wrong time  
+**Data Integrity**: ⚠️ Low – Settlement still works, just at wrong time
+
+#### Root Cause
+
+**File**: `supabase/functions/_shared/timing.ts:122-137`
+
+```typescript
+// ❌ Current code (WRONG):
+const grace = new Date(weekEndDate);
+grace.setUTCDate(grace.getUTCDate() + 1); // Adds 1 day in UTC, not ET
+```
+
+This adds exactly 24 hours in UTC, but we need exactly 24 hours in ET timezone. When DST changes, the offset between UTC and ET changes, causing the grace period to be incorrect.
+
+#### When to Fix
+
+**Priority**: High  
+**Timeline**: Before production launch (affects users during DST transition weeks)  
+**Affected Dates**: 
+- Spring forward: Weeks ending March 8-15 (approximately)
+- Fall back: Weeks ending November 1-8 (approximately)
+
+#### Proposed Fix
+
+See detailed fix proposal in: `docs/DST_FIX_PROPOSAL.md`
+
+**Summary**: Replace `setUTCDate()` with timezone-aware calculation using Intl API:
+1. Convert Monday 12:00 ET to date components
+2. Add 1 day to date components (not time)
+3. Set to 12:00 ET
+4. Convert back to UTC Date, accounting for DST offset change
+
+#### Testing
+
+**Can test immediately** using mock dates (no need to wait for March/November):
+- Spring forward test: March 8, 2026 (EST) → March 10, 2026 (EDT)
+- Fall back test: November 1, 2026 (EDT) → November 3, 2026 (EST)
+- Normal week test: January 12, 2026 (EST) → January 13, 2026 (EST)
+
+Test file template provided in `docs/DST_FIX_PROPOSAL.md`.
+
+**Related Documentation**:
+- `docs/NORMAL_MODE_RISKS_ANALYSIS.md` - Full analysis of normal mode risks
+- `docs/DST_FIX_PROPOSAL.md` - Detailed fix proposal and test cases
+
+---
+
 ### Security: service_role key embedded in `call_weekly_close`
 
 **Status**: Known Issue – Security Hygiene  
@@ -1198,6 +1265,271 @@ Verify that the 10-minute reconciliation cron job in production is correctly con
 
 **Priority**: High  
 **Timeline**: Before production deployment (critical for settlement process)
+
+---
+
+### 22. Comprehensive Test Review After Backend Deadline Calculation Changes
+
+**Status**: TODO  
+**Severity**: High (Test Coverage)  
+**Date Identified**: 2026-01-15  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+After implementing the backend deadline calculation simplification (making backend the single source of truth), we need to review and update all existing tests to ensure they reflect the new architecture. Significant changes were made to both frontend and backend:
+
+**Backend Changes:**
+- New `preview-service` Edge Function (calculates deadline internally)
+- Updated `super-service` Edge Function (calculates deadline internally, no longer accepts `weekStartDate`)
+- Updated `rpc_create_commitment` RPC function (accepts optional `p_deadline_timestamp` for testing mode)
+- Added `week_end_timestamp` column to `commitments` table (for testing mode precision)
+- Updated `bright-service` (settlement) to use `week_end_timestamp` when available
+
+**Frontend Changes:**
+- Removed `deadlineDate` parameter from `previewMaxCharge()` calls
+- Removed `weekStartDate` parameter from `createCommitment()` calls
+- Removed client-side deadline calculations from `fetchAuthorizationAmount()` and `lockInAndStartMonitoring()`
+- iOS app now uses backend-calculated deadlines from responses
+
+#### Impact
+
+**Test Coverage**: ⚠️ High - Existing tests may be outdated and fail or test wrong behavior  
+**Quality Assurance**: ⚠️ High - Need to ensure all tests reflect new architecture  
+**Regression Risk**: ⚠️ Medium - Outdated tests could miss bugs or false positives
+
+#### Required Test Review Areas
+
+1. **Backend Tests**
+   - Edge Function tests (`preview-service`, `super-service`)
+   - RPC function tests (`rpc_preview_max_charge`, `rpc_create_commitment`)
+   - Settlement tests (`bright-service`)
+   - Deadline calculation tests (normal mode vs testing mode)
+   - Database migration tests (`week_end_timestamp` column)
+
+2. **Frontend Tests**
+   - `BackendClient` tests (preview and commitment creation)
+   - `AppModel` tests (authorization amount fetching)
+   - `AuthorizationView` tests (commitment creation flow)
+   - Deadline parsing tests (ISO 8601 vs date-only formats)
+   - Testing mode vs normal mode behavior tests
+
+3. **Integration Tests**
+   - End-to-end commitment creation flow
+   - Preview → Commitment deadline consistency
+   - Testing mode compressed timeline tests
+   - Normal mode Monday noon deadline tests
+   - Settlement process with new deadline structure
+
+4. **Test Data & Fixtures**
+   - Update test fixtures to match new request/response formats
+   - Remove deadline parameters from test calls
+   - Update expected responses to include backend-calculated deadlines
+   - Add test cases for `week_end_timestamp` in testing mode
+
+#### Proposed Review Steps
+
+1. **Inventory All Tests**
+   - List all test files (backend and frontend)
+   - Identify tests that reference deadline calculations
+   - Identify tests that call `previewMaxCharge()` or `createCommitment()`
+   - Identify tests that check deadline values
+
+2. **Update Test Cases**
+   - Remove deadline parameters from test calls
+   - Update assertions to check backend-calculated deadlines
+   - Add test cases for testing mode vs normal mode
+   - Update test fixtures to match new API signatures
+
+3. **Verify Test Coverage**
+   - Ensure all new functionality is tested
+   - Verify edge cases are covered (testing mode, normal mode, DST transitions)
+   - Check that deadline calculation logic is tested
+   - Verify backward compatibility (if applicable)
+
+4. **Run Test Suite**
+   - Execute all tests and fix failures
+   - Verify tests pass in both testing and normal modes
+   - Check for any false positives or negatives
+   - Ensure test performance is acceptable
+
+5. **Documentation**
+   - Update test documentation to reflect new architecture
+   - Document testing mode vs normal mode test procedures
+   - Update test setup instructions if needed
+
+#### Code Locations
+
+**Backend Tests:**
+- Edge Function tests (if any)
+- RPC function tests (if any)
+- Integration test scripts
+- Test fixtures and mock data
+
+**Frontend Tests:**
+- iOS unit tests (if any)
+- Integration tests
+- Test fixtures
+
+**Test Documentation:**
+- Test guides and procedures
+- Test setup instructions
+- Test data requirements
+
+#### Testing
+
+1. Run existing test suite and identify failures
+2. Update failing tests to match new architecture
+3. Add new tests for new functionality
+4. Verify all tests pass in both testing and normal modes
+5. Check test coverage metrics
+6. Review test documentation for accuracy
+
+**Priority**: High  
+**Timeline**: Before production deployment (critical for quality assurance)
+
+**Related Documentation:**
+- `docs/BACKEND_CALCULATES_DEADLINE_TESTING_GUIDE.md` - Testing guide for new architecture
+- `docs/TEST_6_VERIFICATION_REPORT.md` - Verification that deadline calculations removed from iOS app
+- `docs/BACKEND_ALWAYS_CALCULATES_DEADLINE_ANALYSIS.md` - Analysis of changes
+
+---
+
+### 23. Usage Sync Security: Prevent Usage Decrease Manipulation
+
+**Status**: TODO  
+**Severity**: High (Security/Financial)  
+**Date Identified**: 2026-01-17  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+The current usage sync implementation allows users to potentially reduce their penalties by sending lower usage values. The backend accepts any value sent by the app without validation that usage can only increase.
+
+**Current Behavior**:
+- Usage entries are synced throughout the week (good - creates audit trail)
+- Entries are only marked as "synced" in app after deadline (good - allows re-sync as usage increases)
+- Backend uses `ON CONFLICT ... DO UPDATE SET used_minutes = EXCLUDED.used_minutes` (⚠️ **VULNERABILITY** - accepts any value)
+
+**Security Risk**:
+- User could modify App Group data to show lower usage
+- User syncs manipulated data before deadline
+- Backend accepts lower value (no validation)
+- Penalty is incorrectly reduced
+
+#### Impact
+
+**Financial**: ⚠️ High - Users could reduce penalties by manipulating usage data  
+**Security**: ⚠️ High - No validation prevents data manipulation  
+**Data Integrity**: ⚠️ Medium - Incorrect usage values affect settlement accuracy
+
+#### Proposed Fix
+
+**Add Backend Validation** in `rpc_sync_daily_usage.sql`:
+
+```sql
+ON CONFLICT (user_id, date, commitment_id)
+DO UPDATE SET
+  -- Only update if new value is greater than existing value
+  used_minutes = GREATEST(
+    public.daily_usage.used_minutes,  -- Keep existing if higher
+    EXCLUDED.used_minutes             -- Use new if higher
+  ),
+  ...
+```
+
+**Additional Enhancements** (Recommended):
+1. Add suspicious activity logging when usage decreases (even if rejected)
+2. Add usage progression validation (flag extreme increases)
+3. Keep current approach (sync throughout week) - it's more secure than only syncing after deadline
+
+#### Code Locations
+
+- `supabase/remote_rpcs/rpc_sync_daily_usage.sql` - Add validation in `ON CONFLICT` clause
+- Consider adding `suspicious_activity_log` table for tracking
+
+#### Testing
+
+1. Test usage decrease prevention:
+   - Sync usage: 60 minutes
+   - Try to sync lower value: 30 minutes
+   - Verify backend keeps 60 minutes (doesn't decrease)
+
+2. Test normal usage increase:
+   - Sync usage: 60 minutes
+   - Sync higher value: 120 minutes
+   - Verify backend accepts 120 minutes
+
+3. Test edge cases:
+   - What happens on first sync (no existing value)?
+   - What happens if usage stays the same?
+   - What happens if user clears app data?
+
+#### Related Documentation
+
+- `docs/USAGE_SYNC_SECURITY_ANALYSIS.md` - Comprehensive security analysis
+- `supabase/remote_rpcs/rpc_sync_daily_usage.sql` - Current implementation
+
+**Priority**: High  
+**Timeline**: Before production deployment (critical for security)
+
+---
+
+### 24. Production Secrets Setup for quick-handler Edge Function
+
+**Status**: TODO  
+**Severity**: High (Production Readiness)  
+**Date Identified**: 2026-01-17  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Set all production secrets for the `quick-handler` Edge Function. Currently, only staging secrets are configured. Production needs the same secrets set before deployment.
+
+#### Required Production Secrets
+
+Set the following secrets for `quick-handler` Edge Function in **PRODUCTION**:
+
+1. **PRODUCTION_SUPABASE_SECRET_KEY** - Production Supabase secret key
+2. **STRIPE_SECRET_KEY** - Production Stripe secret key (or `STRIPE_SECRET_KEY_PROD` if using separate test/prod)
+3. **RECONCILIATION_SECRET** - Should already be set (same for staging and production)
+4. **SUPABASE_URL** - Automatically available (reserved, cannot be set manually)
+
+**Note**: Currently only staging secrets are set. Production secrets need to be configured before deploying to production.
+
+**Reference**: Match the secrets pattern used by `bright-service` Edge Function.
+
+#### Current Status
+
+**Staging**: ✅ Complete
+- `STAGING_SUPABASE_SECRET_KEY` ✅ Set
+- `STAGING_STRIPE_SECRET_KEY` ✅ Set
+- `RECONCILIATION_SECRET` ✅ Set
+
+**Production**: ⏳ Pending
+- `PRODUCTION_SUPABASE_SECRET_KEY` ⏳ Needs to be set
+- `STRIPE_SECRET_KEY` ⏳ Needs to be set
+- `RECONCILIATION_SECRET` ⏳ Verify if set
+
+#### Impact
+
+**Production Readiness**: ⚠️ High - `quick-handler` will fail without production secrets  
+**Functionality**: ⚠️ High - Reconciliation process will not work in production  
+**Financial**: ⚠️ High - Reconciliation is critical for accurate charges/refunds
+
+#### How to Set
+
+Use Supabase CLI:
+```bash
+supabase secrets set PRODUCTION_SUPABASE_SECRET_KEY="<value>" --project-ref <production-ref>
+supabase secrets set STRIPE_SECRET_KEY="<value>" --project-ref <production-ref>
+supabase secrets set RECONCILIATION_SECRET="<value>" --project-ref <production-ref>
+```
+
+Or via Supabase Dashboard → Edge Functions → quick-handler → Secrets
+
+**Priority**: High  
+**Timeline**: Before production deployment (critical for reconciliation process)
 
 ---
 

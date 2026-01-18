@@ -30,10 +30,28 @@ export const WEEK_DURATION_MS = TESTING_MODE
  * Grace period duration in milliseconds
  * - Testing mode: 1 minute
  * - Normal mode: 24 hours
+ * 
+ * Note: This constant is calculated at module load time.
+ * For dynamic testing mode, use getGraceDeadline() with isTestingMode parameter.
  */
 export const GRACE_PERIOD_MS = TESTING_MODE
   ? 1 * 60 * 1000                    // 1 minute
   : 24 * 60 * 60 * 1000;            // 24 hours
+
+/**
+ * Get grace period duration in milliseconds
+ * - Testing mode: 1 minute
+ * - Normal mode: 24 hours
+ * 
+ * @param isTestingMode Optional: Override testing mode check. If not provided, uses TESTING_MODE constant
+ * @returns Grace period duration in milliseconds
+ */
+export function getGracePeriodMs(isTestingMode?: boolean): number {
+  const useTestingMode = isTestingMode ?? TESTING_MODE;
+  return useTestingMode
+    ? 1 * 60 * 1000                    // 1 minute
+    : 24 * 60 * 60 * 1000;            // 24 hours
+}
 
 /**
  * Convert a date to a specific timezone
@@ -117,12 +135,18 @@ export function getNextDeadline(now: Date = new Date()): Date {
  * - Normal mode: Returns Tuesday 12:00 ET (1 day after Monday deadline)
  * 
  * @param weekEndDate The week end date (Monday deadline) - should be in ET timezone
+ * @param isTestingMode Optional: Override testing mode check. If not provided, uses TESTING_MODE constant (backward compatible)
  * @returns Date object representing when grace period expires
  */
-export function getGraceDeadline(weekEndDate: Date): Date {
-  if (TESTING_MODE) {
+export function getGraceDeadline(weekEndDate: Date, isTestingMode?: boolean): Date {
+  // Use provided isTestingMode parameter, or fall back to TESTING_MODE constant for backward compatibility
+  const useTestingMode = isTestingMode ?? TESTING_MODE;
+  
+  if (useTestingMode) {
     // Compressed timeline: 1 minute after deadline
-    return new Date(weekEndDate.getTime() + GRACE_PERIOD_MS);
+    // Use dynamic function to get correct grace period duration
+    const gracePeriodMs = getGracePeriodMs(useTestingMode);
+    return new Date(weekEndDate.getTime() + gracePeriodMs);
   }
   
   // Normal timeline: Tuesday 12:00 ET (1 day after Monday)

@@ -49,6 +49,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_queue_unique_pending
 ALTER TABLE public.reconciliation_queue ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policy: Users can only see their own queue entries
+-- Drop policy if it exists (for idempotency)
+DROP POLICY IF EXISTS "Users can view own reconciliation queue entries" ON public.reconciliation_queue;
+
 CREATE POLICY "Users can view own reconciliation queue entries"
   ON public.reconciliation_queue
   FOR SELECT

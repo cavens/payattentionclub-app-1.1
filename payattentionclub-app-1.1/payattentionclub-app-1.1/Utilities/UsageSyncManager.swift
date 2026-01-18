@@ -72,6 +72,8 @@ class UsageSyncManager {
     /// Read all unsynced daily usage entries from App Group
     /// Returns entries sorted by date (oldest first)
     func getUnsyncedUsage() -> [DailyUsageEntry] {
+        NSLog("SYNC UsageSyncManager: 🔍 getUnsyncedUsage() called - scanning App Group for usage entries...")
+        
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             SyncLogger.error("SYNC UsageSyncManager: ❌ Failed to access App Group '\(appGroupIdentifier)'")
             return []
@@ -82,18 +84,22 @@ class UsageSyncManager {
         // NOTE: dictionaryRepresentation() includes standard UserDefaults keys too
         // Filter out system keys and only look for App Group keys
         let allKeys = userDefaults.dictionaryRepresentation().keys
+        NSLog("SYNC UsageSyncManager: 📋 Found \(allKeys.count) total keys in App Group")
         
         // Filter to exclude system keys (these shouldn't be in App Group)
         let systemKeyPrefixes = ["Apple", "NS", "AK", "PK", "IN", "MSV", "Car", "TV", "Adding", "Hyphenates"]
         let appGroupKeys = allKeys.filter { key in
             !systemKeyPrefixes.contains { key.hasPrefix($0) }
         }
+        NSLog("SYNC UsageSyncManager: 📋 After filtering system keys: \(appGroupKeys.count) app group keys")
         
         // Scan App Group keys for daily_usage_* pattern
         let dailyUsageKeys = appGroupKeys.filter { $0.hasPrefix("daily_usage_") }
+        NSLog("SYNC UsageSyncManager: 📋 Found \(dailyUsageKeys.count) daily_usage_* keys")
         
         var totalEntries = 0
         var syncedEntries = 0
+        var failedEntries = 0
         
         for key in dailyUsageKeys.sorted() {
             if let data = userDefaults.data(forKey: key) {
@@ -102,10 +108,13 @@ class UsageSyncManager {
                     totalEntries += 1
                     if !entry.synced {
                         unsyncedEntries.append(entry)
+                        NSLog("SYNC UsageSyncManager: 📝 Found UNSYNCED entry: date=\(entry.date), usedMinutes=\(max(0, Int(entry.totalMinutes - entry.baselineMinutes))), weekStartDate=\(entry.weekStartDate)")
                     } else {
                         syncedEntries += 1
+                        NSLog("SYNC UsageSyncManager: ✅ Found SYNCED entry: date=\(entry.date), usedMinutes=\(max(0, Int(entry.totalMinutes - entry.baselineMinutes)))")
                     }
                 } catch {
+                    failedEntries += 1
                     // Log only errors
                     SyncLogger.error("SYNC UsageSyncManager: ❌ Failed to decode entry for key \(key): \(error)")
                     if let jsonString = String(data: data, encoding: .utf8) {
@@ -115,8 +124,14 @@ class UsageSyncManager {
             }
         }
         
+        NSLog("SYNC UsageSyncManager: 📊 Summary - Total: \(totalEntries), Synced: \(syncedEntries), Unsynced: \(unsyncedEntries.count), Failed: \(failedEntries)")
+        
         // Sort by date (oldest first) to sync in chronological order
         unsyncedEntries.sort { $0.date < $1.date }
+        
+        if !unsyncedEntries.isEmpty {
+            NSLog("SYNC UsageSyncManager: 📅 Unsynced entries date range: \(unsyncedEntries.first!.date) to \(unsyncedEntries.last!.date)")
+        }
         
         return unsyncedEntries
     }
@@ -128,45 +143,80 @@ class UsageSyncManager {
     /// Prevents concurrent syncs and throttles sync frequency
     /// Uses serial queue for atomic check-and-set (async-safe)
     func syncToBackend() async throws {
+        NSLog("SYNC UsageSyncManager: 🔄 syncToBackend() called at \(Date())")
+        
         // Use coordinator to atomically check and set sync flag (async-safe)
         // CRITICAL: This must be the FIRST thing we do - no other work before this
         let canStart = await SyncCoordinator.shared.tryStartSync()
         
         guard canStart else {
+            NSLog("SYNC UsageSyncManager: ⏭️ Sync skipped - already in progress or too soon since last sync")
             return
         }
+        
+        NSLog("SYNC UsageSyncManager: ✅ Sync coordinator approved - proceeding with sync")
         
         // Always clear syncing flag when done (use async defer pattern)
         defer {
             Task { @MainActor in
                 await SyncCoordinator.shared.endSync()
+                NSLog("SYNC UsageSyncManager: 🏁 Sync coordinator released")
             }
         }
         
         // Check for unsynced entries
+        NSLog("SYNC UsageSyncManager: 🔍 Checking for unsynced entries...")
         let unsyncedEntries = getUnsyncedUsage()
         
-        guard !unsyncedEntries.isEmpty else {
+        NSLog("SYNC UsageSyncManager: 📊 Found \(unsyncedEntries.count) unsynced entry/entries")
+        
+        if unsyncedEntries.isEmpty {
+            NSLog("SYNC UsageSyncManager: ℹ️ No unsynced entries to sync - exiting")
             return
         }
         
+        // Log details of entries to be synced
+        for (index, entry) in unsyncedEntries.enumerated() {
+            NSLog("SYNC UsageSyncManager: 📝 Entry \(index + 1)/\(unsyncedEntries.count): date=\(entry.date), totalMinutes=\(entry.totalMinutes), baselineMinutes=\(entry.baselineMinutes), usedMinutes=\(max(0, Int(entry.totalMinutes - entry.baselineMinutes))), weekStartDate=\(entry.weekStartDate), synced=\(entry.synced)")
+        }
+        
+        // Check authentication before attempting sync
+        let isAuthenticated = await backendClient.isAuthenticated
+        NSLog("SYNC UsageSyncManager: 🔐 Authentication status: \(isAuthenticated ? "✅ Authenticated" : "❌ Not authenticated")")
+        
+        guard isAuthenticated else {
+            NSLog("SYNC UsageSyncManager: ❌ Cannot sync - user not authenticated")
+            throw NSError(domain: "UsageSyncManager", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+        
         do {
+            NSLog("SYNC UsageSyncManager: 🚀 Starting sync of \(unsyncedEntries.count) entries to backend...")
             // Sync all entries at once using batch method
             let syncedDates = try await backendClient.syncDailyUsage(unsyncedEntries)
             
+            NSLog("SYNC UsageSyncManager: 📤 Backend sync completed - \(syncedDates.count) date(s) synced successfully")
+            NSLog("SYNC UsageSyncManager: ✅ Synced dates: \(syncedDates.joined(separator: ", "))")
+            
             // Only mark as synced if we have successfully synced dates
             guard !syncedDates.isEmpty else {
-                #if DEBUG
-                NSLog("SYNC UsageSyncManager: ⚠️ No dates were synced, skipping markAsSynced()")
-                #endif
+                NSLog("SYNC UsageSyncManager: ⚠️ No dates were synced by backend, skipping markAsSynced()")
                 return
             }
             
+            NSLog("SYNC UsageSyncManager: 🏷️ Marking \(syncedDates.count) entries as synced in App Group...")
             // Mark entries as synced after successful upload
             markAsSynced(dates: syncedDates)
+            NSLog("SYNC UsageSyncManager: ✅ Successfully marked \(syncedDates.count) entries as synced")
         } catch {
-            // Log only errors
+            // Log detailed error information
             NSLog("SYNC UsageSyncManager: ❌ Failed to sync entries: \(error)")
+            if let nsError = error as NSError? {
+                NSLog("SYNC UsageSyncManager: ❌ Error domain: \(nsError.domain), code: \(nsError.code)")
+                NSLog("SYNC UsageSyncManager: ❌ Error description: \(nsError.localizedDescription)")
+                if let userInfo = nsError.userInfo as? [String: Any] {
+                    NSLog("SYNC UsageSyncManager: ❌ Error userInfo: \(userInfo)")
+                }
+            }
             throw error
         }
     }
@@ -175,6 +225,10 @@ class UsageSyncManager {
     
     /// Mark daily usage entries as synced in App Group
     /// Updates the `synced` flag to true for the specified dates
+    /// CRITICAL: Only marks as synced if deadline has passed (usage is finalized)
+    /// Before deadline: entries remain unsynced so they can be re-synced as usage increases
+    /// After deadline: usage is finalized, safe to mark as synced
+    /// Works for both normal mode (7-day week) and testing mode (3-minute week)
     /// Idempotent: skips entries that are already synced
     func markAsSynced(dates: [String]) {
         guard !dates.isEmpty else {
@@ -183,6 +237,20 @@ class UsageSyncManager {
         }
         
         NSLog("SYNC UsageSyncManager: 📝 markAsSynced() called for \(dates.count) dates: \(dates.joined(separator: ", "))")
+        
+        // CRITICAL FIX: Check if deadline has passed before marking as synced
+        // Before deadline: usage is still accumulating, so keep entries unsynced
+        // After deadline: usage is finalized, safe to mark as synced
+        // This works for both normal mode (7-day week) and testing mode (3-minute week)
+        let deadlinePassed = UsageTracker.shared.isCommitmentDeadlinePassed()
+        
+        if !deadlinePassed {
+            NSLog("SYNC UsageSyncManager: ⏰ Deadline has not passed yet - keeping entries unsynced so they can be re-synced as usage increases")
+            NSLog("SYNC UsageSyncManager: ℹ️ Entries will be marked as synced after deadline passes")
+            return
+        }
+        
+        NSLog("SYNC UsageSyncManager: ✅ Deadline has passed - marking entries as synced (usage is finalized)")
         
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             NSLog("SYNC UsageSyncManager: ❌ Failed to access App Group")
@@ -210,7 +278,7 @@ class UsageSyncManager {
                     continue
                 }
                 
-                // Mark as synced
+                // Mark as synced (only reached if deadline has passed)
                 let updatedEntry = entry.markingAsSynced()
                 
                 // Store updated entry
@@ -275,6 +343,25 @@ class UsageSyncManager {
             // Deadline hasn't passed yet - use current value
             consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
             
+            // DIAGNOSTIC: Log what the extension stored
+            let lastThresholdEvent = userDefaults.string(forKey: "lastThresholdEvent") ?? "none"
+            let lastThresholdTimestamp = userDefaults.double(forKey: "lastThresholdTimestamp")
+            let baselineThresholdSeconds = userDefaults.integer(forKey: "baselineThresholdSeconds")
+            let consumedMinutesTimestamp = userDefaults.double(forKey: "consumedMinutesTimestamp")
+            
+            NSLog("SYNC UsageSyncManager: 🔍 DIAGNOSTIC - consumedMinutes: %.1f min, lastThresholdEvent: %@, baselineThresholdSeconds: %d", 
+                  consumedMinutes, lastThresholdEvent, baselineThresholdSeconds)
+            if lastThresholdTimestamp > 0 {
+                let lastThresholdDate = Date(timeIntervalSince1970: lastThresholdTimestamp)
+                NSLog("SYNC UsageSyncManager: 🔍 DIAGNOSTIC - lastThresholdTimestamp: %.0f (%@)", 
+                      lastThresholdTimestamp, lastThresholdDate.description)
+            }
+            if consumedMinutesTimestamp > 0 {
+                let consumedMinutesDate = Date(timeIntervalSince1970: consumedMinutesTimestamp)
+                NSLog("SYNC UsageSyncManager: 🔍 DIAGNOSTIC - consumedMinutesTimestamp: %.0f (%@)", 
+                      consumedMinutesTimestamp, consumedMinutesDate.description)
+            }
+            
             // Check if we're very close to the deadline (within 1 second) and store the value
             // This ensures we capture the value right before the deadline
             let timeUntilDeadline = deadline.timeIntervalSince(now)
@@ -320,12 +407,20 @@ class UsageSyncManager {
                         return
                     } else {
                         // Deadline hasn't passed yet - safe to update with current usage
-                        // Update total minutes (use max to handle case where consumedMinutes might decrease)
+                        // CRITICAL: Always use max to ensure we capture the highest usage value
+                        // This handles cases where extension thresholds might not fire in sequence
+                        let previousTotal = entry.totalMinutes
                         let updatedEntry = entry.updating(totalMinutes: max(entry.totalMinutes, consumedMinutes))
                         
                         let encoded = try JSONEncoder().encode(updatedEntry)
                         userDefaults.set(encoded, forKey: key)
-                        NSLog("SYNC UsageSyncManager: ✅ Updated daily usage for \(todayString): \(consumedMinutes) min")
+                        
+                        if consumedMinutes > previousTotal {
+                            NSLog("SYNC UsageSyncManager: ✅ Updated daily usage for \(todayString): \(previousTotal) → \(consumedMinutes) min (increased by %.1f min)", 
+                                  consumedMinutes - previousTotal)
+                        } else {
+                            NSLog("SYNC UsageSyncManager: ℹ️ Daily usage for \(todayString): \(consumedMinutes) min (no change from \(previousTotal))")
+                        }
                     }
                 } else {
                     NSLog("SYNC UsageSyncManager: ⚠️ Entry exists for different commitment, skipping update")
@@ -367,15 +462,23 @@ class UsageSyncManager {
     /// Update daily usage and sync to backend
     /// This should be called on app foreground, after commitment creation, etc.
     func updateAndSync() async {
+        NSLog("SYNC UsageSyncManager: 🔄 updateAndSync() called at \(Date())")
+        
         // First, update daily usage entries from consumedMinutes
+        NSLog("SYNC UsageSyncManager: 📝 Step 1: Updating daily usage entries from consumedMinutes...")
         updateDailyUsageFromConsumedMinutes()
+        NSLog("SYNC UsageSyncManager: ✅ Step 1 complete: Daily usage entries updated")
         
         // Then, sync to backend
+        NSLog("SYNC UsageSyncManager: 📤 Step 2: Syncing to backend...")
         do {
             try await syncToBackend()
             NSLog("SYNC UsageSyncManager: ✅ Update and sync completed successfully")
         } catch {
             NSLog("SYNC UsageSyncManager: ❌ Update and sync failed: \(error)")
+            if let nsError = error as NSError? {
+                NSLog("SYNC UsageSyncManager: ❌ Error details - domain: \(nsError.domain), code: \(nsError.code), description: \(nsError.localizedDescription)")
+            }
         }
     }
     

@@ -30,17 +30,24 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     override func intervalDidStart(for activity: DeviceActivityName) {
         super.intervalDidStart(for: activity)
         
-        NSLog("MARKERS MonitorExtension: 🟢 intervalDidStart for %@", activity.rawValue)
+        let timestamp = Date().timeIntervalSince1970
+        NSLog("MARKERS MonitorExtension: 🟢🟢🟢 INTERVAL STARTED! Activity: %@, Time: %.0f", activity.rawValue, timestamp)
         fflush(stdout)
         
         // Reset sequence tracking when interval starts
         resetSequenceTracking()
+        NSLog("MARKERS MonitorExtension: ✅ Reset sequence tracking")
+        fflush(stdout)
         
         // Clear threshold history when interval starts (new commitment period)
         clearThresholdHistory()
+        NSLog("MARKERS MonitorExtension: ✅ Cleared threshold history")
+        fflush(stdout)
         
         // Store interval start time in App Group
         storeIntervalStart(activity: activity)
+        NSLog("MARKERS MonitorExtension: ✅ Stored interval start time")
+        fflush(stdout)
         
         // CRITICAL: Clear baseline when interval starts
         // The baseline will be set from the FIRST threshold event's absolute seconds
@@ -51,16 +58,24 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         
         // Reset consumed minutes when interval starts
         storeConsumedMinutes(0.0)
+        NSLog("MARKERS MonitorExtension: ✅ Reset consumedMinutes to 0.0")
+        fflush(stdout)
+        
+        NSLog("MARKERS MonitorExtension: ✅✅✅ INTERVAL START COMPLETE - All state reset for new commitment")
+        fflush(stdout)
     }
     
     override func intervalDidEnd(for activity: DeviceActivityName) {
         super.intervalDidEnd(for: activity)
         
-        NSLog("MARKERS MonitorExtension: 🔴 intervalDidEnd for %@", activity.rawValue)
+        let timestamp = Date().timeIntervalSince1970
+        NSLog("MARKERS MonitorExtension: 🔴🔴🔴 INTERVAL ENDED! Activity: %@, Time: %.0f", activity.rawValue, timestamp)
         fflush(stdout)
         
         // Store interval end time
         storeIntervalEnd(activity: activity)
+        NSLog("MARKERS MonitorExtension: ✅ Stored interval end time")
+        fflush(stdout)
     }
     
     override func eventDidReachThreshold(_ event: DeviceActivityEvent.Name, activity: DeviceActivityName) {
@@ -95,6 +110,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             relativeConsumedMinutes = absoluteConsumedMinutes
             NSLog("MARKERS MonitorExtension: 🎯 FIRST THRESHOLD - Setting baseline to %d sec (%.1f min), relative usage: %d sec (%.1f min)", 
                   absoluteSeconds, absoluteConsumedMinutes, relativeSeconds, relativeConsumedMinutes)
+            fflush(stdout)
         } else {
             // Subsequent threshold event - the threshold value (absoluteSeconds from event name)
             // represents total usage since commitment start, not the difference from baseline.
@@ -104,6 +120,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             relativeConsumedMinutes = absoluteConsumedMinutes
             NSLog("MARKERS MonitorExtension: 📊 SUBSEQUENT THRESHOLD - Baseline: %d sec, threshold value: %d sec (%.1f min), relative usage: %d sec (%.1f min)", 
                   baselineSeconds, absoluteSeconds, absoluteConsumedMinutes, relativeSeconds, relativeConsumedMinutes)
+            fflush(stdout)
         }
         
         // Get last threshold seconds to detect gaps
@@ -116,6 +133,10 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             if gapSeconds > 300 {
                 NSLog("MARKERS MonitorExtension: ⚠️⚠️⚠️ LARGE GAP DETECTED! Last threshold: %d sec, current: %d sec. Gap: %d seconds (%.1f minutes)", 
                       lastSeconds, relativeSeconds, gapSeconds, Double(gapSeconds) / 60.0)
+                fflush(stdout)
+            } else {
+                NSLog("MARKERS MonitorExtension: ✅ Normal gap: %d seconds (%.1f minutes) - within expected range", 
+                      gapSeconds, Double(gapSeconds) / 60.0)
                 fflush(stdout)
             }
         }
@@ -131,6 +152,10 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         storeLastThresholdEvent(event.rawValue)
         storeLastThresholdTimestamp(timestamp)
         storeLastThresholdSeconds(relativeSeconds)
+        
+        NSLog("MARKERS MonitorExtension: 💾 Storing in App Group: consumedMinutes=%.1f (relative), lastThresholdEvent=%@, timestamp=%.0f", 
+              relativeConsumedMinutes, event.rawValue, timestamp)
+        fflush(stdout)
         
         // Store threshold in history for deadline lookup (use relative values)
         storeThresholdInHistory(timestamp: timestamp, consumedMinutes: relativeConsumedMinutes, seconds: relativeSeconds)
@@ -208,15 +233,17 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         userDefaults.synchronize()
     }
     
-    // MARK: - Interval Baseline Tracking
+    // MARK: - Baseline Tracking
     
     /// Store baseline seconds from first threshold event (to calculate relative usage)
     /// The baseline is the absolute Screen Time seconds from the first threshold event
+    /// NOTE: Also stores as "baselineThresholdSeconds" for compatibility with UsageSyncManager diagnostic logs
     private func storeIntervalBaselineSeconds(_ baselineSeconds: Int) {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return
         }
         userDefaults.set(baselineSeconds, forKey: "intervalBaselineSeconds")
+        userDefaults.set(baselineSeconds, forKey: "baselineThresholdSeconds") // Also store with old key name for compatibility
         userDefaults.synchronize()
     }
     
@@ -226,7 +253,12 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return 0
         }
-        return userDefaults.integer(forKey: "intervalBaselineSeconds")
+        // Try new key first, fallback to old key for compatibility
+        let baseline = userDefaults.integer(forKey: "intervalBaselineSeconds")
+        if baseline > 0 {
+            return baseline
+        }
+        return userDefaults.integer(forKey: "baselineThresholdSeconds")
     }
     
     /// Clear baseline when interval starts (will be set from first threshold event)
@@ -235,6 +267,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             return
         }
         userDefaults.removeObject(forKey: "intervalBaselineSeconds")
+        userDefaults.removeObject(forKey: "baselineThresholdSeconds") // Also clear old key
         userDefaults.synchronize()
     }
     

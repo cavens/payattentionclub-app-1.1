@@ -68,19 +68,16 @@ struct CreateCommitmentParams: Encodable, Sendable {
 }
 
 struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
-    /// The deadline date (next Monday before noon) - when the commitment ends
-    /// Note: The commitment actually starts when the user commits (current_date in backend)
-    let weekStartDate: String  // Kept as weekStartDate to match Edge Function API
+    // Note: weekStartDate removed - backend now calculates deadline internally (single source of truth)
     let limitMinutes: Int
     let penaltyPerMinuteCents: Int
-    let appCount: Int  // NEW: Explicit app count parameter (single source of truth)
+    let appCount: Int  // Explicit app count parameter (single source of truth)
     let appsToLimit: AppsToLimit
     let savedPaymentMethodId: String?
     
     // Explicitly implement encoding to ensure nonisolated conformance
     nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(weekStartDate, forKey: .weekStartDate)
         try container.encode(limitMinutes, forKey: .limitMinutes)
         try container.encode(penaltyPerMinuteCents, forKey: .penaltyPerMinuteCents)
         try container.encode(appCount, forKey: .appCount)
@@ -89,7 +86,6 @@ struct CreateCommitmentEdgeFunctionBody: Encodable, Sendable {
     }
     
     enum CodingKeys: String, CodingKey {
-        case weekStartDate
         case limitMinutes
         case penaltyPerMinuteCents
         case appCount
@@ -123,13 +119,28 @@ struct SyncDailyUsageParams: Encodable, Sendable {
     }
 }
 
+// ProcessedWeek represents a week that was processed during sync, including reconciliation metadata
+struct ProcessedWeek: Codable, Sendable {
+    let weekEndDate: String
+    let totalPenaltyCents: Int?
+    let needsReconciliation: Bool?
+    let reconciliationDeltaCents: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case weekEndDate = "week_end_date"
+        case totalPenaltyCents = "total_penalty_cents"
+        case needsReconciliation = "needs_reconciliation"
+        case reconciliationDeltaCents = "reconciliation_delta_cents"
+    }
+}
+
 struct SyncDailyUsageResponse: Codable, Sendable {
     let syncedCount: Int?
     let failedCount: Int?
     let syncedDates: [String]?
     let failedDates: [String]?
     let errors: [String]?
-    let processedWeeks: [String]?
+    let processedWeeks: [ProcessedWeek]?  // Changed from [String]? to match RPC response structure
     
     enum CodingKeys: String, CodingKey {
         case syncedCount = "synced_count"
@@ -148,7 +159,7 @@ struct SyncDailyUsageResponse: Codable, Sendable {
         syncedDates = try container.decodeIfPresent([String].self, forKey: .syncedDates)
         failedDates = try container.decodeIfPresent([String].self, forKey: .failedDates)
         errors = try container.decodeIfPresent([String].self, forKey: .errors)
-        processedWeeks = try container.decodeIfPresent([String].self, forKey: .processedWeeks)
+        processedWeeks = try container.decodeIfPresent([ProcessedWeek].self, forKey: .processedWeeks)
     }
 }
 
@@ -616,16 +627,14 @@ class BackendClient {
     /// 2. Create a commitment
     /// Calls: Edge Function which calls rpc_create_commitment RPC function
     /// - Parameters:
-    ///   - weekStartDate: The deadline date (next Monday before noon) when the commitment ends
-    ///                    Note: The commitment actually starts NOW (when user commits), not on this date
     ///   - limitMinutes: Daily time limit in minutes
     ///   - penaltyPerMinuteCents: Penalty per minute in cents (e.g., 10 = $0.10)
     ///   - selectedApps: FamilyActivitySelection containing apps and categories to limit
     ///   - savedPaymentMethodId: The saved payment method ID from PaymentIntent confirmation (optional)
     /// - Returns: CommitmentResponse with commitment details
     /// - Throws: BackendError.notAuthenticated if user is not signed in
+    /// Note: Deadline is calculated by backend (single source of truth)
     nonisolated func createCommitment(
-        weekStartDate: Date,  // Actually the deadline, not the start date
         limitMinutes: Int,
         penaltyPerMinuteCents: Int,
         selectedApps: FamilyActivitySelection,
@@ -636,15 +645,10 @@ class BackendClient {
             throw BackendError.notAuthenticated
         }
         
-        // Format date as ISO string (YYYY-MM-DD)
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        dateFormatter.timeZone = TimeZone(identifier: "America/New_York") // EST
-        let weekStartDateString = dateFormatter.string(from: weekStartDate)
-        
         // Call Edge Function instead of RPC to avoid Supabase SDK auto-decoding issues
         // The Edge Function calls the RPC function and returns JSON properly
-        let task = Task.detached(priority: .userInitiated) { [supabase, weekStartDateString, limitMinutes, penaltyPerMinuteCents, savedPaymentMethodId, selectedApps] in
+        // Backend calculates deadline internally (single source of truth)
+        let task = Task.detached(priority: .userInitiated) { [supabase, limitMinutes, penaltyPerMinuteCents, savedPaymentMethodId, selectedApps] in
             // Extract app and category counts from FamilyActivitySelection
             // Note: We can't extract actual bundle IDs from opaque FamilyActivitySelection tokens,
             // but we can count them. The backend now uses explicit app_count parameter.
@@ -665,8 +669,8 @@ class BackendClient {
             )
             
             // Create request body for Edge Function
+            // Note: weekStartDate removed - backend calculates deadline internally
             let requestBody = CreateCommitmentEdgeFunctionBody(
-                weekStartDate: weekStartDateString,
                 limitMinutes: limitMinutes,
                 penaltyPerMinuteCents: penaltyPerMinuteCents,
                 appCount: totalAppCount,  // Pass explicit count (single source of truth)
@@ -890,71 +894,21 @@ class BackendClient {
         }
     }
     
-    /// 6. Trigger reconciliation for late syncs
-    /// Calls: Edge Function quick-handler
-    /// - Parameter userId: Optional user ID to reconcile (defaults to current user)
-    /// - Returns: ReconciliationResponse with processing summary
-    /// - Throws: BackendError if reconciliation fails
-    nonisolated func triggerReconciliation(userId: String? = nil) async throws -> ReconciliationResponse {
-        guard await isAuthenticated else {
-            throw BackendError.notAuthenticated
-        }
-        
-        // Get current user ID if not provided
-        let targetUserId: String
-        if let userId = userId {
-            targetUserId = userId
-        } else {
-            guard let currentUserId = try? await supabase.auth.session.user.id else {
-                throw BackendError.notAuthenticated
-            }
-            targetUserId = currentUserId.uuidString
-        }
-        
-        struct ReconciliationRequest: Encodable, Sendable {
-            let userId: String
-        }
-        
-        do {
-            // Call quick-handler Edge Function to trigger reconciliation
-            let request = ReconciliationRequest(userId: targetUserId)
-            let response: ReconciliationResponse = try await supabase.functions.invoke(
-                "quick-handler",
-                options: FunctionInvokeOptions(
-                    method: .post,
-                    body: request
-                )
-            )
-            NSLog("RECONCILE BackendClient: ✅ Reconciliation triggered successfully for user \(targetUserId)")
-            return response
-        } catch {
-            NSLog("RECONCILE BackendClient: ❌ Failed to trigger reconciliation: \(error)")
-            throw BackendError.serverError("Failed to trigger reconciliation: \(error.localizedDescription)")
-        }
-    }
-    
     /// 5. Preview the max charge amount before creating a commitment
-    /// Calls: RPC function rpc_preview_max_charge
+    /// Calls: preview-service Edge Function (backend calculates deadline internally)
     /// - Parameters:
-    ///   - deadlineDate: The deadline date (next Monday)
     ///   - limitMinutes: User's time limit in minutes
     ///   - penaltyPerMinuteCents: Penalty per minute in cents
     ///   - selectedApps: FamilyActivitySelection containing apps and categories
     /// - Returns: MaxChargePreviewResponse with the calculated amount
+    /// Note: Deadline is calculated by backend (single source of truth)
     nonisolated func previewMaxCharge(
-        deadlineDate: Date,
         limitMinutes: Int,
         penaltyPerMinuteCents: Int,
         selectedApps: FamilyActivitySelection
     ) async throws -> MaxChargePreviewResponse {
         // Note: This doesn't require authentication - preview is allowed before committing
         // But the actual commitment will require auth
-        
-        // Format date as ISO string (YYYY-MM-DD)
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
-        let deadlineDateString = dateFormatter.string(from: deadlineDate)
         
         // Extract app and category counts from FamilyActivitySelection
         // Note: We can't extract actual bundle IDs from opaque tokens, but we can count them
@@ -975,28 +929,34 @@ class BackendClient {
         )
         
         struct PreviewParams: Encodable, Sendable {
-            let p_deadline_date: String
-            let p_limit_minutes: Int
-            let p_penalty_per_minute_cents: Int
-            let p_app_count: Int  // NEW: Explicit app count parameter (single source of truth)
-            let p_apps_to_limit: AppsToLimit
+            let limitMinutes: Int
+            let penaltyPerMinuteCents: Int
+            let appCount: Int
+            let appsToLimit: AppsToLimit
         }
         
         let params = PreviewParams(
-            p_deadline_date: deadlineDateString,
-            p_limit_minutes: limitMinutes,
-            p_penalty_per_minute_cents: penaltyPerMinuteCents,
-            p_app_count: appCount + categoryCount,  // Pass explicit count (single source of truth)
-            p_apps_to_limit: appsToLimit
+            limitMinutes: limitMinutes,
+            penaltyPerMinuteCents: penaltyPerMinuteCents,
+            appCount: appCount + categoryCount,
+            appsToLimit: appsToLimit
         )
         
-        NSLog("PREVIEW BackendClient: Calling rpc_preview_max_charge with params: deadline=\(deadlineDateString), limit=\(limitMinutes)min, penalty=\(penaltyPerMinuteCents)cents, apps=\(appCount), categories=\(categoryCount)")
+        NSLog("PREVIEW BackendClient: Calling preview-service Edge Function with params: limit=\(limitMinutes)min, penalty=\(penaltyPerMinuteCents)cents, apps=\(appCount), categories=\(categoryCount)")
         
         do {
-            let builder = try supabase.rpc("rpc_preview_max_charge", params: params)
-            let response: PostgrestResponse<MaxChargePreviewResponse> = try await builder.execute()
-            NSLog("PREVIEW BackendClient: ✅ Got max charge preview: \(response.value.maxChargeCents) cents ($\(response.value.maxChargeDollars))")
-            return response.value
+            // Call Edge Function instead of RPC directly
+            // Backend calculates deadline internally (single source of truth)
+            let response: MaxChargePreviewResponse = try await supabase.functions.invoke(
+                "preview-service",
+                options: FunctionInvokeOptions(
+                    body: params
+                )
+            )
+            
+            NSLog("PREVIEW BackendClient: ✅ Got max charge preview: \(response.maxChargeCents) cents ($\(response.maxChargeDollars))")
+            NSLog("PREVIEW BackendClient: Deadline from backend: \(response.deadlineDate)")
+            return response
         } catch {
             NSLog("PREVIEW BackendClient: ❌ Failed to preview max charge: \(error)")
             NSLog("PREVIEW BackendClient: Error details: \(error.localizedDescription)")
@@ -1243,58 +1203,4 @@ struct AdminCloseWeekResponse: Codable, Sendable {
         try container.encode(message, forKey: .message)
         try container.encodeIfPresent(triggeredBy, forKey: .triggeredBy)
     }
-}
-
-// MARK: - Reconciliation Response
-
-struct ReconciliationResponse: Codable, Sendable {
-    let dryRun: Bool
-    let requestedLimit: Int
-    let totalCandidates: Int
-    let processed: Int
-    let refundsIssued: Int
-    let chargesIssued: Int
-    let skipped: SkippedCounts
-    let failures: [ReconciliationFailure]
-    let details: [ReconciliationDetail]
-    
-    enum CodingKeys: String, CodingKey {
-        case dryRun
-        case requestedLimit
-        case totalCandidates
-        case processed
-        case refundsIssued
-        case chargesIssued
-        case skipped
-        case failures
-        case details
-    }
-}
-
-struct SkippedCounts: Codable, Sendable {
-    let zeroDelta: Int
-    let missingStripeCustomer: Int
-    let missingPaymentMethod: Int
-    let missingPaymentIntent: Int
-    
-    enum CodingKeys: String, CodingKey {
-        case zeroDelta
-        case missingStripeCustomer
-        case missingPaymentMethod
-        case missingPaymentIntent
-    }
-}
-
-struct ReconciliationFailure: Codable, Sendable {
-    let userId: String
-    let weekStartDate: String
-    let reason: String
-}
-
-struct ReconciliationDetail: Codable, Sendable {
-    let userId: String
-    let weekStartDate: String
-    let action: String
-    let amountCents: Int
-    let dryRun: Bool
 }

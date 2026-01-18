@@ -11,6 +11,8 @@ struct AuthorizationView: View {
     @State private var isLockingIn = false
     @State private var lockInError: String?
     @State private var isPresentingPaymentSheet = false
+    @State private var isLoadingAuthorization = false
+    @State private var previewDeadlineDate: String? = nil // Store preview deadline for Test 5
     // Pink color constant: #E2CCCD
     private let pinkColor = Color(red: 226/255, green: 204/255, blue: 205/255)
     
@@ -34,9 +36,15 @@ struct AuthorizationView: View {
                                         .font(.headline)
                                         .foregroundColor(pinkColor)
                                     
-                                    Text("$\(animatedAmount, specifier: "%.2f")")
-                                        .font(.system(size: 56, weight: .bold))
-                                        .foregroundColor(pinkColor)
+                                    if isLoadingAuthorization {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: pinkColor))
+                                            .scaleEffect(1.5)
+                                    } else {
+                                        Text("$\(animatedAmount, specifier: "%.2f")")
+                                            .font(.system(size: 56, weight: .bold))
+                                            .foregroundColor(pinkColor)
+                                    }
                                 }
                             }
                             .frame(maxWidth: .infinity)
@@ -142,9 +150,25 @@ struct AuthorizationView: View {
             .scrollContentBackground(.hidden)
             .ignoresSafeArea()
             .task {
-                calculatedAmount = await model.fetchAuthorizationAmount()
+                isLoadingAuthorization = true
+                // Fetch authorization amount and capture preview deadline for Test 5
+                let previewResponse = try? await BackendClient.shared.previewMaxCharge(
+                    limitMinutes: Int(model.limitMinutes),
+                    penaltyPerMinuteCents: Int(model.penaltyPerMinute * 100),
+                    selectedApps: model.selectedApps
+                )
+                if let preview = previewResponse {
+                    previewDeadlineDate = preview.deadlineDate
+                    calculatedAmount = preview.maxChargeDollars
+                    NSLog("🧪 TEST 5 - PREVIEW: iOS app captured deadline: \(preview.deadlineDate) at \(Date().ISO8601Format())")
+                } else {
+                    // Fallback to model method if direct call fails
+                    calculatedAmount = await model.fetchAuthorizationAmount()
+                }
                 model.authorizationAmount = calculatedAmount
                 model.savePersistedValues() // Save authorization amount
+                
+                isLoadingAuthorization = false
                 
                 // Animate from 0 to calculated amount over 1 second
                 animateAmount(from: 0.0, to: calculatedAmount, duration: 1.0)
@@ -225,17 +249,16 @@ struct AuthorizationView: View {
             
             // Step 2: Create commitment in backend
             NSLog("LOCKIN AuthorizationView: Step 2 - Preparing commitment parameters...")
-            let weekStartDate = await MainActor.run { model.getNextMondayNoonEST() }
+            // Note: Deadline is calculated by backend (single source of truth)
             let limitMinutes = Int(await MainActor.run { model.limitMinutes })
             let penaltyPerMinuteCents = Int(await MainActor.run { model.penaltyPerMinute * 100 })
             let selectedApps = await MainActor.run { model.selectedApps }
             
-            NSLog("LOCKIN AuthorizationView: Step 2 - Parameters ready - weekStartDate: \(weekStartDate), limitMinutes: \(limitMinutes), penaltyPerMinuteCents: \(penaltyPerMinuteCents)")
+            NSLog("LOCKIN AuthorizationView: Step 2 - Parameters ready - limitMinutes: \(limitMinutes), penaltyPerMinuteCents: \(penaltyPerMinuteCents)")
             NSLog("LOCKIN AuthorizationView: Step 2 - Saved payment method ID: \(savedPaymentMethodId ?? "nil")")
-            NSLog("LOCKIN AuthorizationView: Step 2 - Calling createCommitment()...")
+            NSLog("LOCKIN AuthorizationView: Step 2 - Calling createCommitment()... (backend will calculate deadline)")
             
             let commitmentResponse = try await BackendClient.shared.createCommitment(
-                weekStartDate: weekStartDate,
                 limitMinutes: limitMinutes,
                 penaltyPerMinuteCents: penaltyPerMinuteCents,
                 selectedApps: selectedApps,
@@ -251,6 +274,22 @@ struct AuthorizationView: View {
             NSLog("LOCKIN AuthorizationView: maxChargeCents: \(commitmentResponse.maxChargeCents)")
             NSLog("LOCKIN AuthorizationView: deadlineDate from backend: \(commitmentResponse.deadlineDate)")
             
+            // Test 5: Compare preview and commitment deadlines
+            NSLog("🧪 TEST 5 - COMMITMENT: iOS app received deadline from backend: \(commitmentResponse.deadlineDate) at \(Date().ISO8601Format())")
+            if let previewDeadline = previewDeadlineDate {
+                NSLog("🧪 TEST 5 - COMPARISON:")
+                NSLog("   Preview deadline: \(previewDeadline)")
+                NSLog("   Commitment deadline: \(commitmentResponse.deadlineDate)")
+                if previewDeadline == commitmentResponse.deadlineDate {
+                    NSLog("   ✅ PASS: Both deadlines match (same calculation)")
+                } else {
+                    NSLog("   ⚠️  DIFFERENT: Deadlines differ (expected if time passed between preview and commitment)")
+                    NSLog("   This is OK - backend recalculates deadline at commitment time")
+                }
+            } else {
+                NSLog("🧪 TEST 5 - ⚠️  No preview deadline stored for comparison")
+            }
+            
             // Step 3: Store baseline time (0 when "Lock in" is pressed)
         await MainActor.run {
             model.baselineUsageSeconds = 0
@@ -262,10 +301,16 @@ struct AuthorizationView: View {
         // Store baseline in App Group
         UsageTracker.shared.storeBaselineTime(0.0)
         
-        // CRITICAL: Reset consumedMinutes when creating a new commitment
-        // This clears any leftover data from previous tests or earlier in the day
-        // Without this, consumedMinutes might have a value from before the commitment was created
-        UsageTracker.shared.resetConsumedMinutes()
+        // Reset consumedMinutes to 0 when commitment is created
+        // This ensures old usage from previous commitments doesn't carry over
+        // The extension will also reset it in intervalDidStart, but we do it here too
+        // to prevent any race conditions where the app reads the old value before monitoring starts
+        if let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub2.0.app") {
+            userDefaults.set(0.0, forKey: "consumedMinutes")
+            userDefaults.set(Date().timeIntervalSince1970, forKey: "consumedMinutesTimestamp")
+            userDefaults.synchronize()
+            NSLog("LOCKIN AuthorizationView: ✅ Reset consumedMinutes to 0")
+        }
             
             // Store commitment deadline - use backend deadline (compressed in testing mode, normal in production)
             // Parse deadlineDate from backend response
@@ -352,7 +397,7 @@ struct AuthorizationView: View {
         if #available(iOS 16.0, *) {
             // Check if thresholds are ready, if not prepare them now
             if !MonitoringManager.shared.thresholdsAreReady(for: model.selectedApps) {
-                NSLog("MARKERS AuthorizationView: ⚠️ Thresholds not ready, preparing now...")
+                NSLog("LOCKIN AuthorizationView: ⚠️ Thresholds not ready, preparing now...")
                 fflush(stdout)
                 await MonitoringManager.shared.prepareThresholds(
                     selection: model.selectedApps,
@@ -361,10 +406,10 @@ struct AuthorizationView: View {
             }
         }
             
-            // Clear loading state
-            await MainActor.run {
-                isLockingIn = false
-            }
+        // Clear loading state
+        await MainActor.run {
+            isLockingIn = false
+        }
         
         // Set loading state before navigation
         await MainActor.run {
@@ -372,25 +417,38 @@ struct AuthorizationView: View {
         }
         
         // Navigate immediately (don't wait for monitoring to start)
-        await MainActor.run {
-            model.navigateAfterYield(.monitor)
-        }
+        // Now awaitable to ensure navigation completes
+        NSLog("LOCKIN AuthorizationView: Step 8 - About to navigate to monitor...")
+        await model.navigateAfterYield(.monitor)
+        NSLog("LOCKIN AuthorizationView: ✅ Step 8 complete - Navigation to monitor completed")
         
         // Small delay to let UI settle after navigation
         try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
         
         // Start monitoring in background (after navigation and delay)
         // Uses cached thresholds if available (prepared after "Commit" button or above)
+        NSLog("LOCKIN AuthorizationView: Step 9 - Starting monitoring in background...")
         if #available(iOS 16.0, *) {
             Task {
-                await MonitoringManager.shared.startMonitoring(
-                    selection: model.selectedApps,
-                    limitMinutes: Int(model.limitMinutes)
-                )
-                
-                // Clear loading state after monitoring starts
-                await MainActor.run {
-                    model.isStartingMonitoring = false
+                do {
+                    await MonitoringManager.shared.startMonitoring(
+                        selection: model.selectedApps,
+                        limitMinutes: Int(model.limitMinutes)
+                    )
+                    
+                    NSLog("LOCKIN AuthorizationView: ✅ Step 9 complete - Monitoring started successfully")
+                    
+                    // Clear loading state after monitoring starts
+                    await MainActor.run {
+                        model.isStartingMonitoring = false
+                    }
+                } catch {
+                    NSLog("LOCKIN AuthorizationView: ⚠️ Step 9 failed - Monitoring start error: \(error.localizedDescription)")
+                    NSLog("LOCKIN AuthorizationView: Error type: \(type(of: error))")
+                    // Don't prevent navigation if monitoring fails - user is already on monitor screen
+                    await MainActor.run {
+                        model.isStartingMonitoring = false
+                    }
                 }
             }
         }

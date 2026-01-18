@@ -11,8 +11,8 @@ const corsHeaders = {
  * Format a Date object as YYYY-MM-DD string (normal mode)
  * or ISO 8601 string (testing mode for precise timing)
  */
-function formatDeadlineDate(date: Date): string {
-  if (TESTING_MODE) {
+function formatDeadlineDate(date: Date, isTestingMode: boolean): string {
+  if (isTestingMode) {
     // In testing mode, return full ISO timestamp for precise timing
     // Format: YYYY-MM-DDTHH:mm:ss.sssZ
     return date.toISOString();
@@ -74,15 +74,45 @@ serve(async (req) => {
       )
     }
 
+    // Check testing mode from both environment variable AND database config
+    // This allows testing mode to work even if only database config is set
+    // Database config (app_config) is the primary source of truth
+    let isTestingMode = TESTING_MODE;
+    
+    if (!isTestingMode) {
+      // Check database app_config table for testing mode
+      // Use service role key to bypass RLS (if enabled)
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, supabaseSecretKey);
+        const { data: config, error: configError } = await supabaseAdmin
+          .from('app_config')
+          .select('value')
+          .eq('key', 'testing_mode')
+          .single();
+        
+        if (!configError && config && config.value === 'true') {
+          isTestingMode = true;
+          console.log('super-service: Testing mode enabled via app_config table');
+        } else if (configError) {
+          console.log(`super-service: Could not read app_config: ${configError.message}`);
+        }
+      } catch (error) {
+        // If app_config table doesn't exist or query fails, continue with env var check
+        console.log(`super-service: Could not check app_config: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      console.log('super-service: Testing mode enabled via environment variable');
+    }
+
     // Parse request body
     const body = await req.json()
-    // Note: weekStartDate from the app is actually the deadline (next Monday before noon)
-    const { weekStartDate, limitMinutes, penaltyPerMinuteCents, appCount, appsToLimit, savedPaymentMethodId } = body
+    // Note: weekStartDate parameter removed - backend now calculates deadline internally
+    const { limitMinutes, penaltyPerMinuteCents, appCount, appsToLimit, savedPaymentMethodId } = body
 
     // Validate required fields
-    if (!weekStartDate || !limitMinutes || penaltyPerMinuteCents === undefined || appCount === undefined || !appsToLimit) {
+    if (!limitMinutes || penaltyPerMinuteCents === undefined || appCount === undefined || !appsToLimit) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: weekStartDate, limitMinutes, penaltyPerMinuteCents, appCount, appsToLimit' }),
+        JSON.stringify({ error: 'Missing required fields: limitMinutes, penaltyPerMinuteCents, appCount, appsToLimit' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -95,36 +125,36 @@ serve(async (req) => {
       )
     }
 
-    // Determine deadline date for RPC call (always date format, RPC accepts 'date' type)
-    // In testing mode, calculate compressed deadline but extract just the date part for RPC
-    // In normal mode, use client's deadline (next Monday) as date only
-    let deadlineDateForRPC: string;
-    let compressedDeadlineISO: string | null = null; // Store full ISO timestamp for response transformation
+    // Calculate deadline internally (single source of truth)
+    // Testing mode: 3 minutes from now
+    // Normal mode: Next Monday 12:00 ET
+    // Note: We use isTestingMode (from database or env var) instead of TESTING_MODE constant
+    // because getNextDeadline() uses the constant which is evaluated at module load time
+    const now = new Date();
+    const deadline = isTestingMode 
+      ? new Date(now.getTime() + (3 * 60 * 1000)) // 3 minutes from now
+      : getNextDeadline(now); // Normal mode: next Monday 12:00 ET
     
-    if (TESTING_MODE) {
-      // Override client's deadline with compressed deadline
-      const compressedDeadline = getNextDeadline();
-      // Extract date part for RPC (RPC accepts 'date' type, not timestamp)
-      deadlineDateForRPC = formatDeadlineDate(compressedDeadline).split('T')[0]; // Extract YYYY-MM-DD from ISO string
-      // Store full ISO timestamp for response transformation
-      compressedDeadlineISO = formatDeadlineDate(compressedDeadline);
-      console.log(`super-service: Testing mode - using compressed deadline date: ${deadlineDateForRPC} (for RPC), full ISO: ${compressedDeadlineISO}`);
-    } else {
-      // Use client's deadline (next Monday) as date only
-      deadlineDateForRPC = weekStartDate;
-      console.log(`super-service: Normal mode - using client deadline: ${deadlineDateForRPC}`);
-    }
+    const deadlineDateForRPC = formatDeadlineDate(deadline, isTestingMode).split('T')[0]; // Extract YYYY-MM-DD
+    const deadlineTimestampForRPC = isTestingMode ? formatDeadlineDate(deadline, isTestingMode) : null; // Precise timestamp for testing mode
+    const compressedDeadlineISO = isTestingMode ? formatDeadlineDate(deadline, isTestingMode) : null; // Store full ISO timestamp for response transformation
+    
+    console.log(`super-service: Calculated deadline date: ${deadlineDateForRPC} (testing mode: ${isTestingMode})`);
+    console.log(`🧪 TEST 5 - COMMITMENT: Backend calculated deadline at ${new Date().toISOString()}: ${compressedDeadlineISO || deadlineDateForRPC}`);
 
     // Call the RPC function
     // Note: deadlineDateForRPC is the deadline date (YYYY-MM-DD), not the start date
     // The commitment starts NOW (when user commits) and ends on the deadline
+    // Parameters must match the RPC function signature order:
+    // p_deadline_date, p_limit_minutes, p_penalty_per_minute_cents, p_app_count, p_apps_to_limit, p_saved_payment_method_id, p_deadline_timestamp
     const { data, error } = await supabase.rpc('rpc_create_commitment', {
       p_deadline_date: deadlineDateForRPC,  // Date format (YYYY-MM-DD) for RPC
       p_limit_minutes: limitMinutes,
       p_penalty_per_minute_cents: penaltyPerMinuteCents,
-      p_app_count: appCount,  // NEW: Explicit app count parameter (single source of truth)
+      p_app_count: appCount,  // Explicit app count parameter (single source of truth)
       p_apps_to_limit: appsToLimit,
-      p_saved_payment_method_id: savedPaymentMethodId || null
+      p_saved_payment_method_id: savedPaymentMethodId || null,
+      p_deadline_timestamp: deadlineTimestampForRPC  // Precise timestamp (testing mode) or NULL (normal mode)
     })
 
     if (error) {
@@ -137,7 +167,7 @@ serve(async (req) => {
 
     // In testing mode, transform the response to include full ISO timestamp for deadline
     // The RPC returns week_end_date as a date (YYYY-MM-DD), but we need the full timestamp
-    if (TESTING_MODE && data && compressedDeadlineISO) {
+    if (isTestingMode && data && compressedDeadlineISO) {
       // Replace week_end_date with full ISO timestamp
       data.week_end_date = compressedDeadlineISO;
       console.log(`super-service: Testing mode - transformed week_end_date to ISO timestamp: ${compressedDeadlineISO}`);

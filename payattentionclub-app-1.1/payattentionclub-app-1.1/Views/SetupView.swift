@@ -94,14 +94,14 @@ struct SetupView: View {
         model.selectedApps.applicationTokens.count == 0 && model.selectedApps.categoryTokens.count == 0
     }
     
-    // Convert slider position (0.0-1.0) to penalty value ($0.05-$5.00) with $0.10 in the middle
+    // Convert slider position (0.0-1.0) to penalty value ($0.01-$5.00) with $0.10 in the middle
     private func positionToPenalty(_ position: Double) -> Double {
-        let minPenalty = 0.05
+        let minPenalty = 0.01
         let midPenalty = 0.10
         let maxPenalty = 5.00
         
         if position <= 0.5 {
-            // First half: linear from $0.05 to $0.10
+            // First half: linear from $0.01 to $0.10
             return minPenalty + (midPenalty - minPenalty) * (position / 0.5)
         } else {
             // Second half: logarithmic from $0.10 to $5.00
@@ -111,14 +111,14 @@ struct SetupView: View {
         }
     }
     
-    // Convert penalty value ($0.05-$5.00) to slider position (0.0-1.0)
+    // Convert penalty value ($0.01-$5.00) to slider position (0.0-1.0)
     private func penaltyToPosition(_ penalty: Double) -> Double {
-        let minPenalty = 0.05
+        let minPenalty = 0.01
         let midPenalty = 0.10
         let maxPenalty = 5.00
         
         if penalty <= midPenalty {
-            // First half: linear from $0.05 to $0.10
+            // First half: linear from $0.01 to $0.10
             return 0.5 * (penalty - minPenalty) / (midPenalty - minPenalty)
         } else {
             // Second half: logarithmic from $0.10 to $5.00
@@ -215,7 +215,7 @@ struct SetupView: View {
                                 )
                                 
                                 HStack {
-                                    Text("$0.05")
+                                    Text("$0.01")
                                         .font(.caption)
                                         .foregroundColor(grayColor)
                                     Spacer()

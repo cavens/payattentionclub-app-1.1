@@ -143,8 +143,16 @@ BEGIN
       v_prev_payment_intent_id := NULL;
       v_prev_needs_reconciliation := false;
       BEGIN
-        SELECT settlement_status, COALESCE(charged_amount_cents, 0), charge_payment_intent_id, COALESCE(needs_reconciliation, false)
-        INTO v_prev_settlement_status, v_prev_charged_amount, v_prev_payment_intent_id, v_prev_needs_reconciliation
+        SELECT 
+          settlement_status, 
+          COALESCE(charged_amount_cents, 0), 
+          charge_payment_intent_id,
+          COALESCE(needs_reconciliation, false)
+        INTO 
+          v_prev_settlement_status, 
+          v_prev_charged_amount, 
+          v_prev_payment_intent_id,
+          v_prev_needs_reconciliation
         FROM public.user_week_penalties
         WHERE user_id = v_user_id
           AND week_start_date = v_week;
@@ -209,7 +217,7 @@ BEGIN
         v_user_week_total_cents,
         'pending',
         COALESCE(v_prev_settlement_status, 'pending'),
-        v_user_week_total_cents,
+        v_capped_actual_cents,  -- Use capped value to match settlement logic
         v_needs_reconciliation,
         CASE WHEN v_needs_reconciliation THEN v_reconciliation_delta ELSE 0 END,
         CASE WHEN v_needs_reconciliation THEN 'late_sync_delta' ELSE NULL END,
@@ -219,6 +227,9 @@ BEGIN
       ON CONFLICT (user_id, week_start_date)
       DO UPDATE SET
         total_penalty_cents = EXCLUDED.total_penalty_cents,
+        -- CRITICAL: Always update actual_amount_cents when usage is synced, even if already settled
+        -- This ensures settlement can see the actual usage for reconciliation
+        -- Use capped value to match settlement logic (capped at max_charge_cents)
         actual_amount_cents = EXCLUDED.actual_amount_cents,
         needs_reconciliation = EXCLUDED.needs_reconciliation,
         reconciliation_delta_cents = EXCLUDED.reconciliation_delta_cents,
@@ -233,12 +244,15 @@ BEGIN
             THEN COALESCE(public.user_week_penalties.reconciliation_detected_at, EXCLUDED.reconciliation_detected_at)
           ELSE NULL
         END,
-        settlement_status = COALESCE(public.user_week_penalties.settlement_status, EXCLUDED.settlement_status),
+        -- Preserve existing settlement_status if already settled, but allow updates if pending
+        settlement_status = CASE
+          WHEN public.user_week_penalties.settlement_status = ANY(V_SETTLED_STATUSES) 
+            THEN public.user_week_penalties.settlement_status  -- Keep existing settled status
+          ELSE COALESCE(public.user_week_penalties.settlement_status, EXCLUDED.settlement_status)  -- Allow update if pending
+        END,
+        -- Always update last_updated to track when usage was synced (critical for hasSyncedUsage check)
         last_updated = NOW();
 
-      -- Automatically queue reconciliation if it was just flagged
-      -- This happens when a late sync detects a difference between charged amount and actual amount
-      -- Only queue if reconciliation was just set (was false, now true) to avoid duplicate triggers
       -- The queue will be processed by a cron job that can use pg_net (which works in cron context)
       IF v_needs_reconciliation AND NOT v_prev_needs_reconciliation THEN
         BEGIN

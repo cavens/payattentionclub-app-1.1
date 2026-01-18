@@ -5,7 +5,10 @@
  * Only works when TESTING_MODE=true.
  * 
  * Commands:
+ * - toggle_testing_mode: Toggle testing mode on/off in app_config table
+ * - get_testing_mode: Get current testing mode status from app_config
  * - clear_data: Delete all test user data
+ * - delete_test_user: Delete a specific user by email (looks up user ID automatically)
  * - trigger_settlement: Trigger settlement with manual header
  * - trigger_reconciliation: Trigger reconciliation (if available)
  * - verify_results: Get complete verification for a user
@@ -22,6 +25,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Stripe from "https://esm.sh/stripe@12.8.0?target=deno";
 import { TESTING_MODE } from "../_shared/timing.ts";
 
 const corsHeaders = {
@@ -36,17 +40,29 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  // Check testing mode
-  if (!TESTING_MODE) {
+  // Parse request early to check command
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
     return new Response(
-      JSON.stringify({ error: 'Testing mode not enabled. Set TESTING_MODE=true in Supabase secrets.' }),
-      { status: 403, headers: corsHeaders }
+      JSON.stringify({ error: 'Invalid JSON in request body' }),
+      { status: 400, headers: corsHeaders }
     );
   }
 
-  // In testing mode, allow public access (no auth required)
-  // This allows the web interface and test scripts to call the function
-  console.log('testing-command-runner: Testing mode - public access allowed');
+  const { command, userId, params = {} } = body;
+
+  if (!command) {
+    return new Response(
+      JSON.stringify({ error: 'Missing command parameter' }),
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
+  // Allow these commands even without TESTING_MODE (they're legitimate admin operations)
+  const allowedWithoutTestingMode = ['delete_test_user', 'toggle_testing_mode', 'get_testing_mode'];
+  const requiresTestingMode = !allowedWithoutTestingMode.includes(command);
 
   try {
     // Get Supabase client with service role (for full database access)
@@ -64,15 +80,44 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseSecretKey);
 
-    // Parse request
-    const body = await req.json();
-    const { command, userId, params = {} } = body;
+    // Check testing mode from both environment variable AND database config
+    // This allows testing mode to work even if only database config is set
+    let isTestingMode = TESTING_MODE;
+    
+    if (!isTestingMode && requiresTestingMode) {
+      // Check database app_config table for testing mode
+      try {
+        const { data: config, error: configError } = await supabase
+          .from('app_config')
+          .select('value')
+          .eq('key', 'testing_mode')
+          .single();
+        
+        if (!configError && config && config.value === 'true') {
+          isTestingMode = true;
+          console.log('testing-command-runner: Testing mode enabled via app_config table');
+        }
+      } catch (error) {
+        // If app_config table doesn't exist or query fails, continue with env var check
+        console.log('testing-command-runner: Could not check app_config, using environment variable only');
+      }
+    }
 
-    if (!command) {
+    if (requiresTestingMode && !isTestingMode) {
       return new Response(
-        JSON.stringify({ error: 'Missing command parameter' }),
-        { status: 400, headers: corsHeaders }
+        JSON.stringify({ 
+          error: 'Testing mode not enabled. Set TESTING_MODE=true in Supabase secrets OR enable testing_mode in app_config table.' 
+        }),
+        { status: 403, headers: corsHeaders }
       );
+    }
+
+    // In testing mode, allow public access (no auth required)
+    // This allows the web interface and test scripts to call the function
+    if (isTestingMode) {
+      console.log('testing-command-runner: Testing mode - public access allowed');
+    } else if (!requiresTestingMode) {
+      console.log(`testing-command-runner: Command '${command}' allowed without testing mode`);
     }
 
     console.log(`TESTING_COMMAND: Executing command: ${command}, userId: ${userId || 'N/A'}`);
@@ -98,46 +143,7 @@ serve(async (req) => {
         break;
       }
 
-      case "delete_test_user": {
-        // Delete the test user (jef@cavens.io) completely
-        const testUserEmail = params.email || "jef@cavens.io";
-        
-        const { data, error } = await supabase.rpc('rpc_delete_user_completely', {
-          p_email: testUserEmail,
-        });
-
-        if (error) {
-          return new Response(
-            JSON.stringify({ error: 'Failed to delete test user', details: error.message }),
-            { status: 500, headers: corsHeaders }
-          );
-        }
-
-        result = {
-          success: true,
-          email: testUserEmail,
-          deleted: data
-        };
-        break;
-      }
-
       case "trigger_settlement": {
-        // If userId is provided, fetch commitment to get week_end_date
-        let targetWeek = params.options?.targetWeek;
-        if (userId && !targetWeek) {
-          const { data: commitments, error: commitError } = await supabase
-            .from('commitments')
-            .select('week_end_date')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-          
-          if (!commitError && commitments) {
-            targetWeek = commitments.week_end_date;
-          }
-        }
-
         // Trigger settlement with manual trigger header
         const settlementUrl = `${supabaseUrl}/functions/v1/bright-service`;
         const settlementResponse = await fetch(settlementUrl, {
@@ -145,12 +151,8 @@ serve(async (req) => {
           headers: {
             'Content-Type': 'application/json',
             'x-manual-trigger': 'true',
-            'Authorization': `Bearer ${supabaseSecretKey}`, // Required for gateway authentication
           },
-          body: JSON.stringify({ 
-            ...(params.options || {}),
-            ...(targetWeek ? { targetWeek } : {})
-          }),
+          body: JSON.stringify(params.options || {}),
         });
 
         if (!settlementResponse.ok) {
@@ -167,18 +169,14 @@ serve(async (req) => {
 
       case "trigger_reconciliation": {
         // Trigger reconciliation via quick-handler function
-        // If userId is provided, pass it to quick-handler
         const reconciliationUrl = `${supabaseUrl}/functions/v1/quick-handler`;
         const reconciliationResponse = await fetch(reconciliationUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${supabaseSecretKey}`, // Use service role key for auth
+            'Authorization': `Bearer ${supabaseSecretKey}`,
           },
-          body: JSON.stringify({
-            ...(params.options || {}),
-            ...(userId ? { userId } : {})
-          }),
+          body: JSON.stringify(params.options || {}),
         });
 
         if (!reconciliationResponse.ok) {
@@ -327,6 +325,185 @@ serve(async (req) => {
         result = {
           count: data?.length || 0,
           payments: data || [],
+        };
+        break;
+      }
+
+      case "toggle_testing_mode": {
+        // Toggle testing mode in app_config table
+        const { data: currentConfig, error: fetchError } = await supabase
+          .from('app_config')
+          .select('value')
+          .eq('key', 'testing_mode')
+          .single();
+
+        let newValue: string;
+        if (currentConfig) {
+          // Toggle: if true, set to false; if false, set to true
+          newValue = currentConfig.value === 'true' ? 'false' : 'true';
+        } else {
+          // If not exists, default to true (enable testing mode)
+          newValue = 'true';
+        }
+
+        const { data: updatedConfig, error: updateError } = await supabase
+          .from('app_config')
+          .upsert({
+            key: 'testing_mode',
+            value: newValue,
+            description: newValue === 'true' 
+              ? 'Enable compressed timeline testing (3 min week, 1 min grace)'
+              : 'Normal timeline (7 day week, 24 hour grace)',
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'key'
+          })
+          .select()
+          .single();
+
+        if (updateError) {
+          return new Response(
+            JSON.stringify({ error: 'Failed to toggle testing mode', details: updateError.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        result = {
+          success: true,
+          testing_mode: updatedConfig.value === 'true',
+          message: `Testing mode ${updatedConfig.value === 'true' ? 'enabled' : 'disabled'}`
+        };
+        break;
+      }
+
+      case "get_testing_mode": {
+        // Get current testing mode status from app_config
+        const { data: config, error: configError } = await supabase
+          .from('app_config')
+          .select('value, description, updated_at')
+          .eq('key', 'testing_mode')
+          .single();
+
+        if (configError && configError.code !== 'PGRST116') {
+          return new Response(
+            JSON.stringify({ error: 'Failed to get testing mode', details: configError.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        result = {
+          success: true,
+          testing_mode: config?.value === 'true' || false,
+          description: config?.description || null,
+          updated_at: config?.updated_at || null
+        };
+        break;
+      }
+
+      case "delete_test_user": {
+        // Delete a user by email address (looks up user ID automatically)
+        const email = params.email;
+        if (!email) {
+          return new Response(
+            JSON.stringify({ error: 'email parameter required for delete_test_user command' }),
+            { status: 400, headers: corsHeaders }
+          );
+        }
+
+        console.log(`delete_test_user: Deleting user with email: ${email}`);
+
+        // Step 1: Look up user by email to get userId and stripe_customer_id
+        const { data: users, error: lookupError } = await supabase
+          .from('users')
+          .select('id, stripe_customer_id')
+          .eq('email', email)
+          .limit(1);
+
+        if (lookupError) {
+          return new Response(
+            JSON.stringify({ error: 'Failed to lookup user', details: lookupError.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        if (!users || users.length === 0) {
+          return new Response(
+            JSON.stringify({ error: `User with email ${email} not found` }),
+            { status: 404, headers: corsHeaders }
+          );
+        }
+
+        const user = users[0];
+        const stripeCustomerId = user.stripe_customer_id;
+        console.log(`delete_test_user: Found user ID: ${user.id}, Stripe customer: ${stripeCustomerId || 'none'}`);
+
+        // Step 2: Delete Stripe customer and payment methods (if exists)
+        let stripeDeleted = false;
+        if (stripeCustomerId && !stripeCustomerId.startsWith('cus_test_')) {
+          try {
+            const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY_TEST') || Deno.env.get('STRIPE_SECRET_KEY');
+            if (STRIPE_SECRET_KEY) {
+              const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
+
+              // Delete payment methods
+              const paymentMethods = await stripe.paymentMethods.list({
+                customer: stripeCustomerId,
+                limit: 100,
+              });
+
+              let deletedPaymentMethods = 0;
+              for (const pm of paymentMethods.data) {
+                try {
+                  await stripe.paymentMethods.detach(pm.id);
+                  deletedPaymentMethods++;
+                } catch (error: any) {
+                  console.error(`Failed to detach payment method ${pm.id}: ${error.message}`);
+                }
+              }
+
+              // Delete customer
+              try {
+                await stripe.customers.del(stripeCustomerId);
+                stripeDeleted = true;
+                console.log(`delete_test_user: Deleted ${deletedPaymentMethods} payment method(s) and Stripe customer`);
+              } catch (error: any) {
+                if (error.code !== 'resource_missing') {
+                  throw error;
+                }
+                console.log(`delete_test_user: Stripe customer ${stripeCustomerId} not found (may already be deleted)`);
+              }
+            } else {
+              console.log('delete_test_user: Stripe key not configured - skipping Stripe deletion');
+            }
+          } catch (error: any) {
+            console.error(`delete_test_user: Warning - Failed to delete Stripe customer: ${error.message}`);
+            console.error('Continuing with database deletion...');
+          }
+        } else if (stripeCustomerId?.startsWith('cus_test_')) {
+          console.log('delete_test_user: Skipping fake test customer ID');
+        } else {
+          console.log('delete_test_user: No Stripe customer to delete');
+        }
+
+        // Step 3: Delete user from database using RPC
+        const { data: deleteResult, error: deleteError } = await supabase.rpc('rpc_delete_user_completely', {
+          p_email: email,
+        });
+
+        if (deleteError) {
+          return new Response(
+            JSON.stringify({ error: 'Failed to delete user from database', details: deleteError.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        result = {
+          success: true,
+          email: email,
+          userId: user.id,
+          stripeDeleted: stripeDeleted,
+          stripeCustomerId: stripeCustomerId || null,
+          databaseDeleted: deleteResult || {},
         };
         break;
       }

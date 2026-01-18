@@ -58,6 +58,8 @@ struct RootRouterView: View {
                 switch model.currentScreen {
                 case .loading:
                     LoadingView()
+                case .intro:
+                    IntroView()
                 case .setup:
                     SetupView()
                 case .screenTimeAccess:

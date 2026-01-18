@@ -38,9 +38,28 @@ final class AppModel: ObservableObject {
     // Flag to track if initialization is complete
     private var isInitialized = false
     
+    // Intro state
+    @Published var hasSeenIntro: Bool = false
+    
     init() {
         // Minimal initialization - just set defaults
         // Heavy work deferred to finishInitialization() which is called after UI renders
+        checkFirstLaunch()
+    }
+    
+    private func checkFirstLaunch() {
+        #if DEBUG
+        // Always show intro in debug for easier testing
+        hasSeenIntro = false
+        #else
+        hasSeenIntro = UserDefaults.standard.bool(forKey: "hasSeenIntro")
+        #endif
+    }
+    
+    func completeIntro() {
+        hasSeenIntro = true
+        UserDefaults.standard.set(true, forKey: "hasSeenIntro")
+        navigate(.setup)
     }
     
     /// Finish initialization after UI has rendered (called from LoadingView.onAppear)
@@ -61,10 +80,12 @@ final class AppModel: ObservableObject {
         // This ensures user sees the loading screen logo
         try? await Task.sleep(nanoseconds: 2_700_000_000) // 2.7 seconds (0.6s fade in + 1.5s stay + 0.6s fade out)
         
-        // Navigate to setup - use defaults (21 hours, $0.10, no apps)
-        // No UserDefaults reads during startup - that's what causes the hangs
-        // Monitoring check and sync removed - they read UserDefaults and cause CFPrefsPlistSource errors
-        navigate(.setup)
+        // Navigate based on intro status
+        if hasSeenIntro {
+            navigate(.setup)
+        } else {
+            navigate(.intro)
+        }
         
         // NOTE: Monitoring check and sync removed from startup to avoid UserDefaults reads
         // These will be handled lazily when needed:
@@ -123,9 +144,10 @@ final class AppModel: ObservableObject {
     }
     
     /// Navigate after yielding to let system UI settle
-    func navigateAfterYield(_ screen: AppScreen) {
-        Task { @MainActor in
-            await Task.yield() // Let the runloop present/dismiss system UI
+    /// Now async and awaitable to ensure navigation completes
+    func navigateAfterYield(_ screen: AppScreen) async {
+        await Task.yield() // Let the runloop present/dismiss system UI
+        await MainActor.run {
             navigate(screen)
         }
     }
@@ -158,15 +180,17 @@ final class AppModel: ObservableObject {
     
     /// Fetch authorization amount from backend (single source of truth)
     /// This calls the same calculation function that rpc_create_commitment uses.
+    /// Backend calculates deadline internally (single source of truth).
     func fetchAuthorizationAmount() async -> Double {
         do {
-            let deadline = getNextMondayNoonEST()
+            // Backend calculates deadline internally - no need to pass it
             let response = try await BackendClient.shared.previewMaxCharge(
-                deadlineDate: deadline,
                 limitMinutes: Int(limitMinutes),
                 penaltyPerMinuteCents: Int(penaltyPerMinute * 100),
                 selectedApps: selectedApps
             )
+            // Store preview deadline for Test 5 comparison
+            NSLog("🧪 TEST 5 - PREVIEW: iOS app received deadline from backend: \(response.deadlineDate) at \(Date().ISO8601Format())")
             return response.maxChargeDollars
         } catch {
             #if DEBUG
@@ -348,6 +372,7 @@ final class AppModel: ObservableObject {
 
 enum AppScreen {
     case loading
+    case intro
     case setup
     case screenTimeAccess
     case authorization
