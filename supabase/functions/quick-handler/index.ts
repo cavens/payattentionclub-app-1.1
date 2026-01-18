@@ -372,23 +372,40 @@ async function processCandidate(
       return { action: "refund", amountCents, skipped: undefined };
     }
 
-    const refund = await stripe.refunds.create({
-      payment_intent: candidate.penalty.charge_payment_intent_id,
-      amount: amountCents,
-      metadata: {
-        supabase_user_id: candidate.penalty.user_id,
-        week_start_date: candidate.penalty.week_start_date,
-        reconciliation: "late_sync"
-      }
-    });
+    // Wrap Stripe refund in try-catch to prevent uncaught exceptions
+    let refund;
+    try {
+      refund = await stripe.refunds.create({
+        payment_intent: candidate.penalty.charge_payment_intent_id,
+        amount: amountCents,
+        metadata: {
+          supabase_user_id: candidate.penalty.user_id,
+          week_start_date: candidate.penalty.week_start_date,
+          reconciliation: "late_sync"
+        }
+      });
+    } catch (stripeError) {
+      const errorMessage = stripeError instanceof Error ? stripeError.message : String(stripeError);
+      console.error(`Stripe refund failed for user ${candidate.penalty.user_id}, week ${candidate.penalty.week_start_date}:`, errorMessage);
+      throw new Error(`Stripe refund failed: ${errorMessage}`);
+    }
 
-    await resolveWithRefund(
-      supabase,
-      candidate.penalty,
-      amountCents,
-      refund.id,
-      refund.status
-    );
+    // Wrap database operations in try-catch
+    try {
+      await resolveWithRefund(
+        supabase,
+        candidate.penalty,
+        amountCents,
+        refund.id,
+        refund.status
+      );
+    } catch (dbError) {
+      const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+      console.error(`Database update failed after refund for user ${candidate.penalty.user_id}, week ${candidate.penalty.week_start_date}:`, errorMessage);
+      // Note: Refund was already issued in Stripe, so we should still return success
+      // The database update failure will be logged and can be retried
+      throw new Error(`Database update failed after refund: ${errorMessage}`);
+    }
 
     return { action: "refund", amountCents };
   }
@@ -413,230 +430,315 @@ async function processCandidate(
     return { action: "charge", amountCents: delta };
   }
 
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount: delta,
-    currency: CURRENCY,
-    customer: candidate.user.stripe_customer_id,
-    payment_method: candidate.commitment.saved_payment_method_id,
-    confirm: true,
-    off_session: true,
-    description: `PAC reconciliation ${candidate.penalty.week_start_date}`,
-    metadata: {
-      supabase_user_id: candidate.penalty.user_id,
-      week_start_date: candidate.penalty.week_start_date,
-      reconciliation: "late_sync_delta"
-    }
-  });
+  // Wrap Stripe charge in try-catch to prevent uncaught exceptions
+  let paymentIntent;
+  try {
+    paymentIntent = await stripe.paymentIntents.create({
+      amount: delta,
+      currency: CURRENCY,
+      customer: candidate.user.stripe_customer_id,
+      payment_method: candidate.commitment.saved_payment_method_id,
+      confirm: true,
+      off_session: true,
+      description: `PAC reconciliation ${candidate.penalty.week_start_date}`,
+      metadata: {
+        supabase_user_id: candidate.penalty.user_id,
+        week_start_date: candidate.penalty.week_start_date,
+        reconciliation: "late_sync_delta"
+      }
+    });
+  } catch (stripeError) {
+    const errorMessage = stripeError instanceof Error ? stripeError.message : String(stripeError);
+    console.error(`Stripe charge failed for user ${candidate.penalty.user_id}, week ${candidate.penalty.week_start_date}:`, errorMessage);
+    throw new Error(`Stripe charge failed: ${errorMessage}`);
+  }
 
-  await resolveWithCharge(
-    supabase,
-    candidate.penalty,
-    delta,
-    paymentIntent.id,
-    paymentIntent.charges?.data?.[0]?.id ?? null,
-    paymentIntent.status
-  );
+  // Wrap database operations in try-catch
+  try {
+    await resolveWithCharge(
+      supabase,
+      candidate.penalty,
+      delta,
+      paymentIntent.id,
+      paymentIntent.charges?.data?.[0]?.id ?? null,
+      paymentIntent.status
+    );
+  } catch (dbError) {
+    const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+    console.error(`Database update failed after charge for user ${candidate.penalty.user_id}, week ${candidate.penalty.week_start_date}:`, errorMessage);
+    // Note: Charge was already issued in Stripe, so we should still return success
+    // The database update failure will be logged and can be retried
+    throw new Error(`Database update failed after charge: ${errorMessage}`);
+  }
 
   return { action: "charge", amountCents: delta };
 }
 
+// Global error handler to catch unhandled promise rejections
+// This prevents uncaught exceptions from crashing the function
+if (typeof globalThis !== "undefined") {
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    console.error("Unhandled promise rejection in quick-handler:", event.reason);
+    // Prevent the default behavior (which would crash the function)
+    event.preventDefault();
+  });
+}
+
 Deno.serve(async (req) => {
-  if (req.method !== "POST") {
-    return new Response("Use POST", { status: 405 });
-  }
-
-  // Read environment variables at request time (matching bright-service pattern)
-  // Match the pattern used in other working functions (bright-service, rapid-service)
-  // Also check SUPABASE_SERVICE_ROLE_KEY as fallback (legacy name, same value as SUPABASE_SECRET_KEY)
-  const SUPABASE_URL_RUNTIME = Deno.env.get("SUPABASE_URL");
-  const SUPABASE_SECRET_KEY_RUNTIME = Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
-  const RECONCILIATION_SECRET = Deno.env.get("RECONCILIATION_SECRET"); // Secret for public function access
-
-  if (!SUPABASE_URL_RUNTIME || !SUPABASE_SECRET_KEY_RUNTIME) {
-    console.error("quick-handler: Missing Supabase credentials at runtime");
-    console.error(`  SUPABASE_URL: ${SUPABASE_URL_RUNTIME ? 'SET' : 'MISSING'}`);
-    console.error(`  STAGING_SUPABASE_SECRET_KEY: ${Deno.env.get("STAGING_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
-    console.error(`  PRODUCTION_SUPABASE_SECRET_KEY: ${Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
-    console.error(`  SUPABASE_SERVICE_ROLE_KEY: ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ? 'SET' : 'MISSING'}`);
-    return new Response(JSON.stringify({
-      error: "Supabase credentials missing",
-      details: "SUPABASE_URL and either STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets."
-    }), { 
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
-  if (!STRIPE_SECRET_KEY) {
-    return new Response(JSON.stringify({
-      error: "Stripe credentials missing",
-      details: "STRIPE_SECRET_KEY must be set in Edge Function secrets."
-    }), { 
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
-  // Security: If function is public, require secret header (works in both testing and production)
-  // This allows the function to be public for testing while maintaining security
-  // Similar pattern to bright-service
-  if (RECONCILIATION_SECRET) {
-    const providedSecret = req.headers.get("x-reconciliation-secret");
-    if (providedSecret !== RECONCILIATION_SECRET) {
-      console.log("quick-handler: Unauthorized - invalid or missing reconciliation secret");
-      return new Response(
-        JSON.stringify({ error: "Unauthorized", message: "Invalid or missing reconciliation secret" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
+  // Wrap entire handler in try-catch to catch any unexpected errors
+  try {
+    if (req.method !== "POST") {
+      return new Response("Use POST", { status: 405 });
     }
-    console.log("quick-handler: Authorized via reconciliation secret");
-  }
 
-  // Initialize Stripe client at runtime
-  const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" }) : null;
-  const supabase = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
+    // Read environment variables at request time (matching bright-service pattern)
+    // Match the pattern used in other working functions (bright-service, rapid-service)
+    // Also check SUPABASE_SERVICE_ROLE_KEY as fallback (legacy name, same value as SUPABASE_SECRET_KEY)
+    const SUPABASE_URL_RUNTIME = Deno.env.get("SUPABASE_URL");
+    const SUPABASE_SECRET_KEY_RUNTIME = Deno.env.get("STAGING_SUPABASE_SECRET_KEY") || Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
+    const RECONCILIATION_SECRET = Deno.env.get("RECONCILIATION_SECRET"); // Secret for public function access
 
-  let payload: RequestPayload | undefined;
-  try {
-    payload = await req.json();
-  } catch {
-    payload = undefined;
-  }
+    if (!SUPABASE_URL_RUNTIME || !SUPABASE_SECRET_KEY_RUNTIME) {
+      console.error("quick-handler: Missing Supabase credentials at runtime");
+      console.error(`  SUPABASE_URL: ${SUPABASE_URL_RUNTIME ? 'SET' : 'MISSING'}`);
+      console.error(`  STAGING_SUPABASE_SECRET_KEY: ${Deno.env.get("STAGING_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
+      console.error(`  PRODUCTION_SUPABASE_SECRET_KEY: ${Deno.env.get("PRODUCTION_SUPABASE_SECRET_KEY") ? 'SET' : 'MISSING'}`);
+      console.error(`  SUPABASE_SERVICE_ROLE_KEY: ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ? 'SET' : 'MISSING'}`);
+      return new Response(JSON.stringify({
+        error: "Supabase credentials missing",
+        details: "SUPABASE_URL and either STAGING_SUPABASE_SECRET_KEY or PRODUCTION_SUPABASE_SECRET_KEY must be set in Edge Function secrets."
+      }), { 
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
 
-  const limit = getLimit(payload?.limit);
-  const dryRun = Boolean(payload?.dryRun);
+    if (!STRIPE_SECRET_KEY) {
+      return new Response(JSON.stringify({
+        error: "Stripe credentials missing",
+        details: "STRIPE_SECRET_KEY must be set in Edge Function secrets."
+      }), { 
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
 
-  console.log(
-    "settlement-reconcile invoked",
-    JSON.stringify({
-      limit,
-      dryRun,
-      filters: {
-        week: payload?.week ?? null,
-        userId: payload?.userId ?? null
+    // Security: If function is public, require secret header (works in both testing and production)
+    // This allows the function to be public for testing while maintaining security
+    // Similar pattern to bright-service
+    if (RECONCILIATION_SECRET) {
+      const providedSecret = req.headers.get("x-reconciliation-secret");
+      if (providedSecret !== RECONCILIATION_SECRET) {
+        console.log("quick-handler: Unauthorized - invalid or missing reconciliation secret");
+        return new Response(
+          JSON.stringify({ error: "Unauthorized", message: "Invalid or missing reconciliation secret" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
       }
-    })
-  );
+      console.log("quick-handler: Authorized via reconciliation secret");
+    }
 
-  try {
-    const candidates = await fetchCandidates(supabase, {
-      limit,
-      userId: payload?.userId,
-      week: payload?.week
-    });
+    // Initialize Stripe client at runtime with error handling
+    let stripe: Stripe | null = null;
+    try {
+      if (STRIPE_SECRET_KEY) {
+        stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" });
+      }
+    } catch (stripeInitError) {
+      const errorMessage = stripeInitError instanceof Error ? stripeInitError.message : String(stripeInitError);
+      console.error("quick-handler: Failed to initialize Stripe client:", errorMessage);
+      return new Response(JSON.stringify({
+        error: "Stripe initialization failed",
+        details: errorMessage
+      }), { 
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
 
-    const summary: Summary = {
-      dryRun,
-      requestedLimit: limit,
-      totalCandidates: candidates.length,
-      processed: 0,
-      refundsIssued: 0,
-      chargesIssued: 0,
-      skipped: {
-        zeroDelta: 0,
-        missingStripeCustomer: 0,
-        missingPaymentMethod: 0,
-        missingPaymentIntent: 0
-      },
-      failures: [],
-      details: []
-    };
+    // Initialize Supabase client with error handling
+    let supabase;
+    try {
+      supabase = createClient(SUPABASE_URL_RUNTIME, SUPABASE_SECRET_KEY_RUNTIME);
+    } catch (supabaseInitError) {
+      const errorMessage = supabaseInitError instanceof Error ? supabaseInitError.message : String(supabaseInitError);
+      console.error("quick-handler: Failed to initialize Supabase client:", errorMessage);
+      return new Response(JSON.stringify({
+        error: "Supabase initialization failed",
+        details: errorMessage
+      }), { 
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
 
-    for (const candidate of candidates) {
-      try {
-        const result = await processCandidate(supabase, stripe, candidate, dryRun);
-        if (!result) continue;
+    let payload: RequestPayload | undefined;
+    try {
+      payload = await req.json();
+    } catch (jsonError) {
+      // JSON parsing errors are not fatal - continue with undefined payload
+      console.log("quick-handler: Could not parse request body as JSON, continuing with undefined payload");
+      payload = undefined;
+    }
 
-        if (result.skipped === "zero_delta") {
-          summary.skipped.zeroDelta += 1;
-          console.log(
-            "settlement-reconcile skip zero-delta",
-            candidate.penalty.user_id,
-            candidate.penalty.week_start_date
-          );
-          continue;
+    const limit = getLimit(payload?.limit);
+    const dryRun = Boolean(payload?.dryRun);
+
+    console.log(
+      "settlement-reconcile invoked",
+      JSON.stringify({
+        limit,
+        dryRun,
+        filters: {
+          week: payload?.week ?? null,
+          userId: payload?.userId ?? null
         }
-        if (result.skipped === "missing_stripe_customer") {
-          summary.skipped.missingStripeCustomer += 1;
-          console.warn(
-            "settlement-reconcile skip missing customer",
-            candidate.penalty.user_id,
-            candidate.penalty.week_start_date
-          );
-          continue;
-        }
-        if (result.skipped === "missing_payment_method") {
-          summary.skipped.missingPaymentMethod += 1;
-          console.warn(
-            "settlement-reconcile skip missing payment method",
-            candidate.penalty.user_id,
-            candidate.penalty.week_start_date
-          );
-          continue;
-        }
-        if (result.skipped === "missing_charge_payment_intent_id") {
-          summary.skipped.missingPaymentIntent += 1;
-          console.warn(
-            "settlement-reconcile skip missing payment intent",
-            candidate.penalty.user_id,
-            candidate.penalty.week_start_date
-          );
-          continue;
-        }
+      })
+    );
 
-        summary.processed += 1;
-        summary.details.push({
-          userId: candidate.penalty.user_id,
-          weekStartDate: candidate.penalty.week_start_date,
-          action: result.action,
-          amountCents: result.amountCents,
-          dryRun
-        });
+    // Main processing logic wrapped in try-catch
+    let summary: Summary;
+    try {
+      const candidates = await fetchCandidates(supabase, {
+        limit,
+        userId: payload?.userId,
+        week: payload?.week
+      });
 
-        if (result.action === "refund") {
-          summary.refundsIssued += 1;
-        } else {
-          summary.chargesIssued += 1;
-        }
+      summary = {
+        dryRun,
+        requestedLimit: limit,
+        totalCandidates: candidates.length,
+        processed: 0,
+        refundsIssued: 0,
+        chargesIssued: 0,
+        skipped: {
+          zeroDelta: 0,
+          missingStripeCustomer: 0,
+          missingPaymentMethod: 0,
+          missingPaymentIntent: 0
+        },
+        failures: [],
+        details: []
+      };
 
-        console.log(
-          "settlement-reconcile action",
-          JSON.stringify({
+      // Process each candidate with individual error handling
+      for (const candidate of candidates) {
+        try {
+          const result = await processCandidate(supabase, stripe, candidate, dryRun);
+          if (!result) continue;
+
+          if (result.skipped === "zero_delta") {
+            summary.skipped.zeroDelta += 1;
+            console.log(
+              "settlement-reconcile skip zero-delta",
+              candidate.penalty.user_id,
+              candidate.penalty.week_start_date
+            );
+            continue;
+          }
+          if (result.skipped === "missing_stripe_customer") {
+            summary.skipped.missingStripeCustomer += 1;
+            console.warn(
+              "settlement-reconcile skip missing customer",
+              candidate.penalty.user_id,
+              candidate.penalty.week_start_date
+            );
+            continue;
+          }
+          if (result.skipped === "missing_payment_method") {
+            summary.skipped.missingPaymentMethod += 1;
+            console.warn(
+              "settlement-reconcile skip missing payment method",
+              candidate.penalty.user_id,
+              candidate.penalty.week_start_date
+            );
+            continue;
+          }
+          if (result.skipped === "missing_charge_payment_intent_id") {
+            summary.skipped.missingPaymentIntent += 1;
+            console.warn(
+              "settlement-reconcile skip missing payment intent",
+              candidate.penalty.user_id,
+              candidate.penalty.week_start_date
+            );
+            continue;
+          }
+
+          summary.processed += 1;
+          summary.details.push({
             userId: candidate.penalty.user_id,
             weekStartDate: candidate.penalty.week_start_date,
             action: result.action,
             amountCents: result.amountCents,
             dryRun
-          })
-        );
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        summary.failures.push({
-          userId: candidate.penalty.user_id,
-          weekStartDate: candidate.penalty.week_start_date,
-          reason
-        });
-        console.error(
-          "settlement-reconcile failure",
-          candidate.penalty.user_id,
-          candidate.penalty.week_start_date,
-          reason
-        );
+          });
+
+          if (result.action === "refund") {
+            summary.refundsIssued += 1;
+          } else {
+            summary.chargesIssued += 1;
+          }
+
+          console.log(
+            "settlement-reconcile action",
+            JSON.stringify({
+              userId: candidate.penalty.user_id,
+              weekStartDate: candidate.penalty.week_start_date,
+              action: result.action,
+              amountCents: result.amountCents,
+              dryRun
+            })
+          );
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          const errorStack = err instanceof Error ? err.stack : undefined;
+          summary.failures.push({
+            userId: candidate.penalty.user_id,
+            weekStartDate: candidate.penalty.week_start_date,
+            reason
+          });
+          console.error(
+            "settlement-reconcile failure",
+            candidate.penalty.user_id,
+            candidate.penalty.week_start_date,
+            reason,
+            errorStack ? `\nStack: ${errorStack}` : ""
+          );
+        }
       }
+
+      console.log("settlement-reconcile summary", JSON.stringify(summary));
+
+      // Return response - ensure this happens before any cleanup
+      return new Response(JSON.stringify(summary), {
+        headers: { "Content-Type": "application/json" }
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorStack = err instanceof Error ? err.stack : undefined;
+      console.error("settlement-reconcile error", errorMessage, errorStack ? `\nStack: ${errorStack}` : "");
+      
+      // Return error response
+      return new Response(
+        JSON.stringify({
+          error: "Internal server error",
+          message: errorMessage
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
     }
-
-    console.log("settlement-reconcile summary", JSON.stringify(summary));
-
-    return new Response(JSON.stringify(summary), {
-      headers: { "Content-Type": "application/json" }
-    });
-  } catch (err) {
-    console.error("settlement-reconcile error", err);
+  } catch (outerError) {
+    // Catch any unexpected errors in the outer handler
+    const errorMessage = outerError instanceof Error ? outerError.message : String(outerError);
+    const errorStack = outerError instanceof Error ? outerError.stack : undefined;
+    console.error("quick-handler: Unexpected error in handler", errorMessage, errorStack ? `\nStack: ${errorStack}` : "");
+    
     return new Response(
       JSON.stringify({
         error: "Internal server error",
-        message: err instanceof Error ? err.message : String(err)
+        message: errorMessage
       }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
