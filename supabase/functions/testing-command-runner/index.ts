@@ -17,6 +17,7 @@
  * - get_penalty: Get penalty record for a user
  * - get_payments: Get payment records for a user
  * - sql_query: Execute safe SQL query (read-only, user-scoped)
+ * - run_test_suite: Run the full settlement test suite (24 cases × 2 modes = 48 tests)
  * 
  * Usage:
  *   POST /functions/v1/testing-command-runner
@@ -585,6 +586,80 @@ serve(async (req) => {
           }),
           { status: 501, headers: corsHeaders }
         );
+      }
+
+      case "run_test_suite": {
+        // Run the full settlement test suite (24 cases × 2 modes = 48 tests)
+        // Note: Edge Functions may not have direct access to test files
+        // This attempts to run the tests, but may need to be executed locally
+        try {
+          // Try to find the test file relative to the Edge Function
+          // Edge Functions are typically in /home/deno/functions/[function-name]
+          // Test files are in /home/deno/tests/ (if deployed) or need to be accessed differently
+          const testFile = "../tests/test_settlement_matrix_24_cases.ts";
+          
+          // Execute Deno test command
+          const command = new Deno.Command("deno", {
+            args: [
+              "test",
+              testFile,
+              "--allow-net",
+              "--allow-env",
+              "--allow-read",
+              "--no-check",
+            ],
+            cwd: "/home/deno",
+            stdout: "piped",
+            stderr: "piped",
+          });
+
+          const { code, stdout, stderr } = await command.output();
+          
+          const stdoutText = new TextDecoder().decode(stdout);
+          const stderrText = new TextDecoder().decode(stderr);
+
+          // Check if test file was found
+          if (code !== 0 && (stderrText.includes("No such file") || stderrText.includes("not found"))) {
+            // Test file not accessible from Edge Function
+            // Return instructions for local execution
+            result = {
+              success: false,
+              message: "Test files are not accessible from Edge Function. Please run tests locally.",
+              instructions: {
+                command: "deno test supabase/tests/test_settlement_matrix_24_cases.ts --allow-net --allow-env --allow-read --no-check",
+                description: "Run this command in your local terminal from the project root directory",
+                note: "The test suite runs 24 cases × 2 modes = 48 total test executions",
+              },
+              exitCode: code,
+              stdout: stdoutText,
+              stderr: stderrText,
+            };
+          } else {
+            // Tests executed (or attempted)
+            result = {
+              success: code === 0,
+              exitCode: code,
+              stdout: stdoutText,
+              stderr: stderrText,
+              message: code === 0 
+                ? "Test suite completed successfully!" 
+                : "Test suite execution completed with errors",
+            };
+          }
+        } catch (error) {
+          // If command execution fails, provide instructions
+          result = {
+            success: false,
+            message: "Unable to execute tests from Edge Function",
+            error: error instanceof Error ? error.message : String(error),
+            instructions: {
+              command: "deno test supabase/tests/test_settlement_matrix_24_cases.ts --allow-net --allow-env --allow-read --no-check",
+              description: "Run this command in your local terminal from the project root directory",
+              note: "The test suite runs 24 cases × 2 modes = 48 total test executions",
+            },
+          };
+        }
+        break;
       }
 
       default:

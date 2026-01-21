@@ -401,7 +401,7 @@ class BackendClient {
             updated_at: ISO8601DateFormatter().string(from: Date())
         )
         
-        let response = try await supabase
+        _ = try await supabase
             .from("users")
             .update(update)
             .eq("id", value: userId.uuidString)
@@ -1074,6 +1074,8 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
     let reconciliationDetectedAt: String?
     let weekGraceExpiresAt: String?
     let weekEndDate: String?
+    let limitMinutes: Int
+    let penaltyPerMinuteCents: Int
 
     enum CodingKeys: String, CodingKey {
         case userTotalPenaltyCents = "user_total_penalty_cents"
@@ -1093,6 +1095,8 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         case reconciliationDetectedAt = "reconciliation_detected_at"
         case weekGraceExpiresAt = "week_grace_expires_at"
         case weekEndDate = "week_end_date"
+        case limitMinutes = "limit_minutes"
+        case penaltyPerMinuteCents = "penalty_per_minute_cents"
     }
 
     nonisolated init(
@@ -1112,7 +1116,9 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         reconciliationReason: String?,
         reconciliationDetectedAt: String?,
         weekGraceExpiresAt: String?,
-        weekEndDate: String?
+        weekEndDate: String?,
+        limitMinutes: Int,
+        penaltyPerMinuteCents: Int
     ) {
         self.userTotalPenaltyCents = userTotalPenaltyCents
         self.userStatus = userStatus
@@ -1131,6 +1137,8 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         self.reconciliationDetectedAt = reconciliationDetectedAt
         self.weekGraceExpiresAt = weekGraceExpiresAt
         self.weekEndDate = weekEndDate
+        self.limitMinutes = limitMinutes
+        self.penaltyPerMinuteCents = penaltyPerMinuteCents
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -1152,6 +1160,8 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
         reconciliationDetectedAt = try container.decodeIfPresent(String.self, forKey: .reconciliationDetectedAt)
         weekGraceExpiresAt = try container.decodeIfPresent(String.self, forKey: .weekGraceExpiresAt)
         weekEndDate = try container.decodeIfPresent(String.self, forKey: .weekEndDate)
+        limitMinutes = try container.decodeIfPresent(Int.self, forKey: .limitMinutes) ?? 0
+        penaltyPerMinuteCents = try container.decodeIfPresent(Int.self, forKey: .penaltyPerMinuteCents) ?? 0
     }
     
     nonisolated static func == (lhs: WeekStatusResponse, rhs: WeekStatusResponse) -> Bool {
@@ -1171,7 +1181,9 @@ struct WeekStatusResponse: Codable, Sendable, Equatable {
                lhs.reconciliationReason == rhs.reconciliationReason &&
                lhs.reconciliationDetectedAt == rhs.reconciliationDetectedAt &&
                lhs.weekGraceExpiresAt == rhs.weekGraceExpiresAt &&
-               lhs.weekEndDate == rhs.weekEndDate
+               lhs.weekEndDate == rhs.weekEndDate &&
+               lhs.limitMinutes == rhs.limitMinutes &&
+               lhs.penaltyPerMinuteCents == rhs.penaltyPerMinuteCents
     }
 }
 

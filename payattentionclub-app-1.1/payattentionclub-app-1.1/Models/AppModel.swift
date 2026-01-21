@@ -80,11 +80,28 @@ final class AppModel: ObservableObject {
         // This ensures user sees the loading screen logo
         try? await Task.sleep(nanoseconds: 2_700_000_000) // 2.7 seconds (0.6s fade in + 1.5s stay + 0.6s fade out)
         
-        // Navigate based on intro status
-        if hasSeenIntro {
-            navigate(.setup)
+        // Check if user has an active commitment first
+        // This prevents showing intro/setup screens when commitment already exists
+        if let commitmentDeadline = UsageTracker.shared.getCommitmentDeadline() {
+            // Commitment exists - check if deadline has passed
+            let deadlinePassed = UsageTracker.shared.isCommitmentDeadlinePassed()
+            
+            if deadlinePassed {
+                // Deadline has passed - show bulletin with results
+                NSLog("APP AppModel: Active commitment found, deadline passed - navigating to bulletin")
+                navigate(.bulletin)
+            } else {
+                // Active commitment exists and deadline hasn't passed - go to monitor
+                NSLog("APP AppModel: Active commitment found, deadline not passed - navigating to monitor")
+                navigate(.monitor)
+            }
         } else {
-            navigate(.intro)
+            // No commitment exists - follow normal flow based on intro status
+            if hasSeenIntro {
+                navigate(.setup)
+            } else {
+                navigate(.intro)
+            }
         }
         
         // NOTE: Monitoring check and sync removed from startup to avoid UserDefaults reads
@@ -121,6 +138,20 @@ final class AppModel: ObservableObject {
                 )
                 weekStatus = response
                 weekStatusError = nil
+                
+                // Load commitment settings from backend (source of truth)
+                // This ensures limitMinutes and penaltyPerMinute match the actual commitment
+                if response.limitMinutes > 0 {
+                    limitMinutes = Double(response.limitMinutes)
+                    NSLog("APP AppModel: Loaded limitMinutes from backend: \(response.limitMinutes) minutes")
+                }
+                if response.penaltyPerMinuteCents > 0 {
+                    penaltyPerMinute = Double(response.penaltyPerMinuteCents) / 100.0
+                    NSLog("APP AppModel: Loaded penaltyPerMinute from backend: $\(penaltyPerMinute) per minute")
+                }
+                
+                // Save to UserDefaults for persistence
+                savePersistedValues()
             } catch let backendError as BackendError {
                 switch backendError {
                 case .notAuthenticated:

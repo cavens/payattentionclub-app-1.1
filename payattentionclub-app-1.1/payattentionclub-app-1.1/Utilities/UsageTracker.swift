@@ -49,14 +49,32 @@ class UsageTracker {
     /// Get current time spent from the last threshold event
     /// Uses smart threshold distribution: 1-min early, 5-min regular, 1-min final
     /// Max undercount: ≤5 minutes globally, ≤1 minute in early/final windows
+    /// CRITICAL: If deadline has passed, uses stored value or threshold history to exclude post-deadline usage
     /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
     nonisolated func getCurrentTimeSpent() -> TimeInterval {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return 0.0
         }
         
-        // Read consumed minutes from last threshold event (no synchronize() - not needed and can block)
-        let consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
+        // Read current consumed minutes (will use deadline-based logic if needed)
+        let consumedMinutes: Double
+        
+        // Check if deadline has passed - if so, use stored value or threshold history
+        if let deadline = getCommitmentDeadline(), Date() >= deadline {
+            // Deadline has passed - use stored value at deadline or threshold history
+            if let storedMinutes = getConsumedMinutesAtDeadline() {
+                consumedMinutes = storedMinutes
+            } else if let historyMinutes = getConsumedMinutesAtDeadlineFromHistory(deadline: deadline) {
+                consumedMinutes = historyMinutes
+            } else {
+                // Fallback: Use current value (may include post-deadline usage, but better than nothing)
+                // This handles cases where threshold history wasn't stored or is incomplete
+                consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
+            }
+        } else {
+            // Deadline hasn't passed yet - read consumed minutes from last threshold event (no synchronize() - not needed and can block)
+            consumedMinutes = userDefaults.double(forKey: "consumedMinutes")
+        }
         
         // Return consumed minutes directly (no simulation)
         // With smart threshold distribution: max undercount ≤5 min (≤1 min in early/final windows)
@@ -156,21 +174,30 @@ class UsageTracker {
     
     /// Find the last threshold that occurred before the deadline
     /// Returns the consumedMinutes value from that threshold
+    /// CRITICAL: Uses the HIGHEST consumedMinutes from pre-deadline thresholds, not just the last one
+    /// This ensures we capture the maximum usage even if thresholds fired out of order or with delays
     /// This allows us to get accurate usage even if the app was killed before deadline
     /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
     nonisolated func getConsumedMinutesAtDeadlineFromHistory(deadline: Date) -> Double? {
         let deadlineTimestamp = deadline.timeIntervalSince1970
         let history = getThresholdHistory()
         
-        // Find the last threshold where timestamp < deadline
+        // Find all thresholds where timestamp < deadline
         let preDeadlineThresholds = history.filter { $0.timestamp < deadlineTimestamp }
         
-        guard let lastThreshold = preDeadlineThresholds.last else {
+        guard !preDeadlineThresholds.isEmpty else {
             // No thresholds found before deadline
             return nil
         }
         
-        return lastThreshold.consumedMinutes
+        // CRITICAL: Use the HIGHEST consumedMinutes value, not just the last one
+        // This handles cases where:
+        // 1. Thresholds fired out of order
+        // 2. Multiple thresholds fired before deadline but we want the maximum usage
+        // 3. Some thresholds fired close to deadline and might be missed if we only take the last
+        let maxThreshold = preDeadlineThresholds.max(by: { $0.consumedMinutes < $1.consumedMinutes })
+        
+        return maxThreshold?.consumedMinutes
     }
     
     /// Clear expired monitoring state (called when deadline has passed)

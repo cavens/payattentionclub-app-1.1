@@ -444,25 +444,16 @@ struct AuthorizationView: View {
         NSLog("LOCKIN AuthorizationView: Step 9 - Starting monitoring in background...")
         if #available(iOS 16.0, *) {
             Task {
-                do {
-                    await MonitoringManager.shared.startMonitoring(
-                        selection: model.selectedApps,
-                        limitMinutes: Int(model.limitMinutes)
-                    )
-                    
-                    NSLog("LOCKIN AuthorizationView: ✅ Step 9 complete - Monitoring started successfully")
-                    
-                    // Clear loading state after monitoring starts
-                    await MainActor.run {
-                        model.isStartingMonitoring = false
-                    }
-                } catch {
-                    NSLog("LOCKIN AuthorizationView: ⚠️ Step 9 failed - Monitoring start error: \(error.localizedDescription)")
-                    NSLog("LOCKIN AuthorizationView: Error type: \(type(of: error))")
-                    // Don't prevent navigation if monitoring fails - user is already on monitor screen
-                    await MainActor.run {
-                        model.isStartingMonitoring = false
-                    }
+                await MonitoringManager.shared.startMonitoring(
+                    selection: model.selectedApps,
+                    limitMinutes: Int(model.limitMinutes)
+                )
+                
+                NSLog("LOCKIN AuthorizationView: ✅ Step 9 complete - Monitoring started successfully")
+                
+                // Clear loading state after monitoring starts
+                await MainActor.run {
+                    model.isStartingMonitoring = false
                 }
             }
         }

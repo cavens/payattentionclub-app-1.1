@@ -185,6 +185,19 @@ struct MonitorView: View {
                         model.authorizationAmount = maxChargeDollars
                         model.savePersistedValues()
                     }
+                    
+                    // Update limitMinutes and penaltyPerMinute from backend (source of truth)
+                    // This ensures the UI shows the correct values even after app restart
+                    if weekStatus.limitMinutes > 0 && model.limitMinutes != Double(weekStatus.limitMinutes) {
+                        model.limitMinutes = Double(weekStatus.limitMinutes)
+                        NSLog("MONITOR MonitorView: Updated limitMinutes from weekStatus: \(weekStatus.limitMinutes) minutes")
+                    }
+                    let penaltyFromBackend = Double(weekStatus.penaltyPerMinuteCents) / 100.0
+                    if weekStatus.penaltyPerMinuteCents > 0 && abs(model.penaltyPerMinute - penaltyFromBackend) > 0.001 {
+                        model.penaltyPerMinute = penaltyFromBackend
+                        NSLog("MONITOR MonitorView: Updated penaltyPerMinute from weekStatus: $\(penaltyFromBackend) per minute")
+                    }
+                    model.savePersistedValues()
                 }
             }
             .onDisappear {

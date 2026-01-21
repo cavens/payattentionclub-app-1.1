@@ -289,7 +289,9 @@ private struct SettlementSummary {
             reconciliationReason: nil,
             reconciliationDetectedAt: nil,
             weekGraceExpiresAt: "2025-12-02T17:00:00Z",
-            weekEndDate: "2025-12-01"
+            weekEndDate: "2025-12-01",
+            limitMinutes: 1260,
+            penaltyPerMinuteCents: 10
         ),
         isLoading: false,
         errorMessage: nil,

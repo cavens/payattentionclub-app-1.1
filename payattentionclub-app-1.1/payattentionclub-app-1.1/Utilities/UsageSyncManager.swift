@@ -401,10 +401,20 @@ class UsageSyncManager {
                 // Only update if this is for the same commitment
                 if entry.commitmentId == commitmentId {
                     if deadlinePassed {
-                        // Deadline has passed - don't update with post-deadline usage
-                        // The entry should already have the correct value from before the deadline
-                        NSLog("SYNC UsageSyncManager: ⏰ Deadline has passed, skipping update to preserve pre-deadline usage")
-                        return
+                        // Deadline has passed - only update if new value is HIGHER (from threshold history/stored value)
+                        // This ensures we capture the highest pre-deadline usage from threshold history
+                        // If new value is lower, skip to avoid post-deadline usage
+                        let previousTotal = entry.totalMinutes
+                        if consumedMinutes > previousTotal {
+                            // New value is higher - this is from threshold history (pre-deadline), safe to update
+                            let updatedEntry = entry.updating(totalMinutes: consumedMinutes)
+                            let encoded = try JSONEncoder().encode(updatedEntry)
+                            userDefaults.set(encoded, forKey: key)
+                            NSLog("SYNC UsageSyncManager: ✅ Updated daily usage AFTER deadline for \(todayString): \(previousTotal) → \(consumedMinutes) min (from threshold history, pre-deadline usage)")
+                        } else {
+                            // New value is lower or same - likely post-deadline usage, skip update
+                            NSLog("SYNC UsageSyncManager: ⏰ Deadline has passed, skipping update (new value \(consumedMinutes) ≤ existing \(previousTotal), preserving pre-deadline usage)")
+                        }
                     } else {
                         // Deadline hasn't passed yet - safe to update with current usage
                         // CRITICAL: Always use max to ensure we capture the highest usage value

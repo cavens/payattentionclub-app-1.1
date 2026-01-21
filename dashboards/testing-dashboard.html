@@ -470,6 +470,21 @@
                     </div>
                 </div>
 
+                <div class="section" style="border-left: 4px solid #6f42c1;">
+                    <div class="section-header">
+                        <span class="section-icon">🧪</span>
+                        <h2>Full Test Suite</h2>
+                    </div>
+                    <div class="test-description">
+                        Run all 24 settlement test cases in both testing and normal modes (48 total executions). This comprehensively tests all settlement scenarios.
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="executeCommand('run_test_suite', {})" style="font-size: 16px; padding: 15px 25px;">
+                            🚀 Run All 24 Tests (48 Executions)
+                        </button>
+                    </div>
+                </div>
+
                 <div class="section test-case-1">
                     <div class="section-header">
                         <span class="section-icon">✅</span>
@@ -700,7 +715,7 @@
             }
 
             const userId = document.getElementById('userId').value.trim();
-            if (!userId && command !== 'clear_data' && command !== 'trigger_settlement' && command !== 'delete_test_user') {
+            if (!userId && command !== 'clear_data' && command !== 'trigger_settlement' && command !== 'delete_test_user' && command !== 'run_test_suite') {
                 showResults('❌ Error: Please enter a User ID', 'error');
                 return;
             }
@@ -732,7 +747,12 @@
                     return;
                 }
 
-                showResults(`✅ Success!\n\n${formatJSON(data)}`, 'success');
+                // Special handling for test suite results
+                if (command === 'run_test_suite' && data.result) {
+                    showResults(data.result, data.result.success ? 'success' : 'error');
+                } else {
+                    showResults(`✅ Success!\n\n${formatJSON(data)}`, 'success');
+                }
 
             } catch (error) {
                 showResults(`❌ Error: ${error.message}\n\n${error.stack}`, 'error');
@@ -745,7 +765,25 @@
             const timestamp = new Date().toLocaleTimeString();
             const prefix = type === 'error' ? '❌' : type === 'loading' ? '🔄' : '✅';
             
-            resultsPanel.textContent = `[${timestamp}] ${prefix} ${message}\n\n${resultsPanel.textContent}`;
+            // For test suite results, format more nicely
+            if (typeof message === 'object' && message.instructions) {
+                let formattedMessage = `[${timestamp}] ${prefix} ${message.message || 'Test Suite Execution'}\n\n`;
+                if (message.instructions) {
+                    formattedMessage += `📋 Instructions:\n`;
+                    formattedMessage += `   Command: ${message.instructions.command}\n`;
+                    formattedMessage += `   ${message.instructions.description}\n`;
+                    formattedMessage += `   Note: ${message.instructions.note}\n\n`;
+                }
+                if (message.stdout) {
+                    formattedMessage += `📤 Output:\n${message.stdout}\n\n`;
+                }
+                if (message.stderr) {
+                    formattedMessage += `⚠️ Errors:\n${message.stderr}\n\n`;
+                }
+                resultsPanel.textContent = formattedMessage + resultsPanel.textContent;
+            } else {
+                resultsPanel.textContent = `[${timestamp}] ${prefix} ${message}\n\n${resultsPanel.textContent}`;
+            }
             resultsPanel.scrollTop = 0;
         }
 

@@ -222,8 +222,64 @@ async function buildSettlementCandidates(
   }));
 }
 
-function hasSyncedUsage(candidate: SettlementCandidate): boolean {
-  return candidate.reportedDays > 0;
+function hasSyncedUsage(candidate: SettlementCandidate, isTestingMode?: boolean): boolean {
+  // Method 1: Check if usage entries exist (primary indicator)
+  if (candidate.reportedDays > 0) {
+    // Verify usage was synced WITHIN grace period (after deadline, before grace expires)
+    const penalty = candidate.penalty;
+    if (penalty?.last_updated) {
+      // Get week deadline and grace deadline for timing check
+      const weekDeadline = getCommitmentWeekDeadline(candidate);
+      const graceDeadline = getCommitmentGraceDeadline(candidate, isTestingMode);
+      const lastUpdated = new Date(penalty.last_updated);
+      // Usage must be synced WITHIN grace (after deadline, before grace expires)
+      return lastUpdated.getTime() > weekDeadline.getTime() && 
+             lastUpdated.getTime() <= graceDeadline.getTime();
+    }
+    // If no last_updated timestamp, cannot verify timing - assume not synced within grace
+    return false;
+  }
+  
+  // Method 2: Fallback - Check if actual_amount_cents is set
+  // This catches cases where usage was synced but reportedDays wasn't counted correctly
+  const penalty = candidate.penalty;
+  if (penalty && (penalty.actual_amount_cents ?? 0) >= 0) {
+    // actual_amount_cents is set (even if 0), meaning usage was synced
+    // But we need to verify it was synced WITHIN grace period
+    if (penalty.last_updated) {
+      const weekDeadline = getCommitmentWeekDeadline(candidate);
+      const graceDeadline = getCommitmentGraceDeadline(candidate, isTestingMode);
+      const lastUpdated = new Date(penalty.last_updated);
+      // Usage must be synced WITHIN grace (after deadline, before grace expires)
+      return lastUpdated.getTime() > weekDeadline.getTime() && 
+             lastUpdated.getTime() <= graceDeadline.getTime();
+    }
+    // If no timestamp but actual_amount_cents is set, cannot verify timing
+    return false;
+  }
+  
+  return false;
+}
+
+function getCommitmentWeekDeadline(candidate: SettlementCandidate): Date {
+  // week_end_date is the Monday deadline (e.g., "2025-01-13")
+  const mondayDate = new Date(`${candidate.commitment.week_end_date}T12:00:00`);
+  const mondayET = toDateInTimeZone(mondayDate, TIME_ZONE);
+  mondayET.setHours(12, 0, 0, 0);
+  return mondayET;
+}
+
+function getCommitmentGraceDeadline(candidate: SettlementCandidate, isTestingMode?: boolean): Date {
+  // Use explicit grace deadline if available
+  if (candidate.commitment.week_grace_expires_at) {
+    return new Date(candidate.commitment.week_grace_expires_at);
+  }
+  
+  // Otherwise derive from week_end_date
+  const mondayET = getCommitmentWeekDeadline(candidate);
+  
+  // Use timing helper to get grace deadline
+  return getGraceDeadline(mondayET, isTestingMode ?? false);
 }
 
 function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date(), isTestingMode?: boolean): boolean {
@@ -501,7 +557,7 @@ Deno.serve(async (req) => {
     };
 
     for (const candidate of candidates) {
-      const hasUsage = hasSyncedUsage(candidate);
+      const hasUsage = hasSyncedUsage(candidate, isTestingMode);
       if (hasUsage) summary.candidatesWithUsage += 1;
       else summary.candidatesWithoutUsage += 1;
 

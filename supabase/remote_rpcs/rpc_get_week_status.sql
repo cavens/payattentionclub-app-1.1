@@ -1,3 +1,6 @@
+-- Drop existing function first (required when changing return type)
+DROP FUNCTION IF EXISTS public.rpc_get_week_status(date);
+
 CREATE OR REPLACE FUNCTION public.rpc_get_week_status(
   p_week_start_date date DEFAULT NULL
 )
@@ -18,7 +21,9 @@ RETURNS TABLE (
   reconciliation_reason text,
   reconciliation_detected_at timestamptz,
   week_grace_expires_at timestamptz,
-  week_end_date timestamptz
+  week_end_date timestamptz,
+  limit_minutes integer,
+  penalty_per_minute_cents integer
 )
 LANGUAGE plpgsql
 SECURITY DEFINER AS $$
@@ -89,6 +94,10 @@ begin
       v_commitment.week_grace_expires_at,
       week_end_date + interval '24 hours'
     );
+
+  -- Return commitment settings (limit_minutes and penalty_per_minute_cents)
+  limit_minutes := coalesce(v_commitment.limit_minutes, 0);
+  penalty_per_minute_cents := coalesce(v_commitment.penalty_per_minute_cents, 0);
 
   return next;
   return;
