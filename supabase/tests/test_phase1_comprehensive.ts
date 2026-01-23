@@ -19,18 +19,18 @@ console.log("=====================================\n");
 // Test 1: Timing Helper (Step 1.1)
 console.log("📊 Test 1: Timing Helper (Step 1.1)");
 try {
-  const { TESTING_MODE, WEEK_DURATION_MS, GRACE_PERIOD_MS, getNextDeadline, getGraceDeadline } = 
+  const { TESTING_MODE, TESTING_WEEK_DURATION_MS, TESTING_GRACE_PERIOD_MS, getNextDeadline, getGraceDeadline } = 
     await import("../functions/_shared/timing.ts");
   
   assertExists(TESTING_MODE, "TESTING_MODE should be exported");
-  assertExists(WEEK_DURATION_MS, "WEEK_DURATION_MS should be exported");
-  assertExists(GRACE_PERIOD_MS, "GRACE_PERIOD_MS should be exported");
+  assertExists(TESTING_WEEK_DURATION_MS, "TESTING_WEEK_DURATION_MS should be exported");
+  assertExists(TESTING_GRACE_PERIOD_MS, "TESTING_GRACE_PERIOD_MS should be exported");
   assertExists(getNextDeadline, "getNextDeadline should be exported");
   assertExists(getGraceDeadline, "getGraceDeadline should be exported");
   
   console.log(`   TESTING_MODE: ${TESTING_MODE}`);
-  console.log(`   WEEK_DURATION_MS: ${WEEK_DURATION_MS} (${WEEK_DURATION_MS / 1000 / 60} minutes)`);
-  console.log(`   GRACE_PERIOD_MS: ${GRACE_PERIOD_MS} (${GRACE_PERIOD_MS / 1000 / 60} minutes)`);
+  console.log(`   TESTING_WEEK_DURATION_MS: ${TESTING_WEEK_DURATION_MS} (${TESTING_WEEK_DURATION_MS / 1000 / 60} minutes)`);
+  console.log(`   TESTING_GRACE_PERIOD_MS: ${TESTING_GRACE_PERIOD_MS} (${TESTING_GRACE_PERIOD_MS / 1000 / 60} minutes)`);
   
   // Test functions work
   const now = new Date();
@@ -132,10 +132,13 @@ try {
 // Test 5: Compressed Timeline Logic
 console.log("\n📊 Test 5: Compressed Timeline Logic");
 try {
+  // Import constants for testing
+  const { TESTING_WEEK_DURATION_MS, TESTING_GRACE_PERIOD_MS } = await import("../functions/_shared/timing.ts");
+  
   // Simulate compressed timeline calculation
   const now = new Date();
-  const compressedWeek = 3 * 60 * 1000; // 3 minutes
-  const compressedGrace = 1 * 60 * 1000; // 1 minute
+  const compressedWeek = TESTING_WEEK_DURATION_MS;
+  const compressedGrace = TESTING_GRACE_PERIOD_MS;
   
   const deadline = new Date(now.getTime() + compressedWeek);
   const graceDeadline = new Date(deadline.getTime() + compressedGrace);
@@ -143,11 +146,11 @@ try {
   const weekDiff = deadline.getTime() - now.getTime();
   const graceDiff = graceDeadline.getTime() - deadline.getTime();
   
-  console.log(`   Week duration: ${weekDiff / 1000 / 60} minutes (expected: 3)`);
-  console.log(`   Grace duration: ${graceDiff / 1000 / 60} minutes (expected: 1)`);
+  console.log(`   Week duration: ${weekDiff / 1000 / 60} minutes (expected: ${TESTING_WEEK_DURATION_MS / 1000 / 60})`);
+  console.log(`   Grace duration: ${graceDiff / 1000 / 60} minutes (expected: ${TESTING_GRACE_PERIOD_MS / 1000 / 60})`);
   
-  assertEquals(Math.abs(weekDiff - compressedWeek) < 1000, true, "Week should be ~3 minutes");
-  assertEquals(Math.abs(graceDiff - compressedGrace) < 1000, true, "Grace should be ~1 minute");
+  assertEquals(Math.abs(weekDiff - compressedWeek) < 1000, true, `Week should be ~${TESTING_WEEK_DURATION_MS / 1000 / 60} minutes`);
+  assertEquals(Math.abs(graceDiff - compressedGrace) < 1000, true, `Grace should be ~${TESTING_GRACE_PERIOD_MS / 1000 / 60} minute`);
   
   console.log("✅ Test 5 PASS: Compressed timeline logic is correct");
 } catch (error) {

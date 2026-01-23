@@ -31,6 +31,8 @@ DECLARE
   v_reconciliation_delta integer;
   v_max_charge_cents integer;
   v_capped_actual_cents integer;
+  v_week_deadline_timestamp timestamptz;
+  v_week_grace_expires_at timestamptz;
   V_SETTLED_STATUSES CONSTANT text[] := ARRAY['charged_actual', 'charged_worst_case', 'refunded', 'refunded_partial'];
   V_STRIPE_MINIMUM_CENTS CONSTANT integer := 60; -- Stripe minimum charge (matches bright-service)
 BEGIN
@@ -164,9 +166,15 @@ BEGIN
           v_prev_needs_reconciliation := false;
       END;
 
-      -- Get max_charge_cents (authorization amount) from the commitment
-      SELECT max_charge_cents
-      INTO v_max_charge_cents
+      -- Get max_charge_cents (authorization amount) and timing info from the commitment
+      SELECT 
+        max_charge_cents,
+        week_end_timestamp,
+        week_grace_expires_at
+      INTO 
+        v_max_charge_cents,
+        v_week_deadline_timestamp,
+        v_week_grace_expires_at
       FROM public.commitments
       WHERE user_id = v_user_id
         AND week_end_date = v_week
@@ -250,8 +258,19 @@ BEGIN
             THEN public.user_week_penalties.settlement_status  -- Keep existing settled status
           ELSE COALESCE(public.user_week_penalties.settlement_status, EXCLUDED.settlement_status)  -- Allow update if pending
         END,
-        -- Always update last_updated to track when usage was synced (critical for hasSyncedUsage check)
-        last_updated = NOW();
+        -- Update last_updated if:
+        -- 1. It doesn't exist yet (first sync), OR
+        -- 2. Current sync is within grace period (capture grace period syncs)
+        -- This ensures we track the FIRST sync within grace, not just the first sync ever
+        last_updated = CASE
+          WHEN public.user_week_penalties.last_updated IS NULL THEN NOW()  -- First sync
+          WHEN v_week_deadline_timestamp IS NOT NULL 
+               AND v_week_grace_expires_at IS NOT NULL
+               AND NOW() > v_week_deadline_timestamp 
+               AND NOW() <= v_week_grace_expires_at
+            THEN NOW()  -- Current sync is within grace period - update it
+          ELSE public.user_week_penalties.last_updated  -- Preserve existing (sync was after grace or before deadline)
+        END;
 
       -- The queue will be processed by a cron job that can use pg_net (which works in cron context)
       IF v_needs_reconciliation AND NOT v_prev_needs_reconciliation THEN

@@ -10,8 +10,8 @@
 
 import { 
   TESTING_MODE, 
-  WEEK_DURATION_MS, 
-  GRACE_PERIOD_MS, 
+  TESTING_WEEK_DURATION_MS, 
+  TESTING_GRACE_PERIOD_MS, 
   getNextDeadline, 
   getGraceDeadline 
 } from "../functions/_shared/timing.ts";
@@ -20,8 +20,8 @@ console.log("📊 Timing Helper Test (Step 1.1)");
 console.log("================================\n");
 
 console.log(`TESTING_MODE: ${TESTING_MODE}`);
-console.log(`WEEK_DURATION_MS: ${WEEK_DURATION_MS} (${WEEK_DURATION_MS / 1000 / 60} minutes)`);
-console.log(`GRACE_PERIOD_MS: ${GRACE_PERIOD_MS} (${GRACE_PERIOD_MS / 1000 / 60} minutes)`);
+console.log(`TESTING_WEEK_DURATION_MS: ${TESTING_WEEK_DURATION_MS} (${TESTING_WEEK_DURATION_MS / 1000 / 60} minutes)`);
+console.log(`TESTING_GRACE_PERIOD_MS: ${TESTING_GRACE_PERIOD_MS} (${TESTING_GRACE_PERIOD_MS / 1000 / 60} minutes)`);
 console.log("");
 
 const now = new Date();
@@ -41,19 +41,21 @@ console.log(`Grace period is ${graceDiff.toFixed(2)} minutes after deadline`);
 console.log("");
 
 if (TESTING_MODE) {
-  console.log("✅ Testing Mode: Expected ~3 min deadline, ~1 min grace");
-  const deadlineOk = Math.abs(deadlineDiff - 3) < 0.1;
-  const graceOk = Math.abs(graceDiff - 1) < 0.1;
+  const expectedWeekMinutes = TESTING_WEEK_DURATION_MS / 1000 / 60;
+  const expectedGraceMinutes = TESTING_GRACE_PERIOD_MS / 1000 / 60;
+  console.log(`✅ Testing Mode: Expected ~${expectedWeekMinutes} min deadline, ~${expectedGraceMinutes} min grace`);
+  const deadlineOk = Math.abs(deadlineDiff - expectedWeekMinutes) < 0.1;
+  const graceOk = Math.abs(graceDiff - expectedGraceMinutes) < 0.1;
   
   if (deadlineOk && graceOk) {
     console.log("✅ PASS: Timings match expected compressed values");
   } else {
     console.log("❌ FAIL: Timings don't match expected values");
     if (!deadlineOk) {
-      console.log(`   Deadline: Expected ~3 min, got ${deadlineDiff.toFixed(2)} min`);
+      console.log(`   Deadline: Expected ~${expectedWeekMinutes} min, got ${deadlineDiff.toFixed(2)} min`);
     }
     if (!graceOk) {
-      console.log(`   Grace: Expected ~1 min, got ${graceDiff.toFixed(2)} min`);
+      console.log(`   Grace: Expected ~${expectedGraceMinutes} min, got ${graceDiff.toFixed(2)} min`);
     }
   }
 } else {

@@ -103,7 +103,7 @@ serve(async (req) => {
     }
 
     // Calculate deadline internally (single source of truth)
-    // Testing mode: 3 minutes from now
+    // Testing mode: 4 minutes from now
     // Normal mode: Next Monday 12:00 ET
     const now = new Date();
     const deadline = getNextDeadline(isTestingMode, now);

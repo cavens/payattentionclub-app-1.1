@@ -60,18 +60,21 @@ console.log("\n📊 Test 3: Deadline calculation (testing mode)");
 console.log("⚠️  Note: Requires TESTING_MODE=true at module load time");
 console.log("   Testing with manual calculation...");
 try {
+  // Import constant for testing
+  const { TESTING_WEEK_DURATION_MS } = await import("../functions/_shared/timing.ts");
+  
   // Simulate what happens in testing mode
   const now = new Date();
-  const compressedDeadline = new Date(now.getTime() + 3 * 60 * 1000); // 3 minutes
+  const compressedDeadline = new Date(now.getTime() + TESTING_WEEK_DURATION_MS);
   const diff = compressedDeadline.getTime() - now.getTime();
-  const expectedDiff = 3 * 60 * 1000; // 3 minutes
+  const expectedDiff = TESTING_WEEK_DURATION_MS;
   
   console.log(`   Now: ${now.toISOString()}`);
   console.log(`   Compressed deadline: ${compressedDeadline.toISOString()}`);
   console.log(`   Difference: ${(diff / 1000 / 60).toFixed(2)} minutes`);
   
   if (Math.abs(diff - expectedDiff) < 1000) {
-    console.log("✅ Test 3 PASS: Testing mode deadline is ~3 minutes from now");
+    console.log(`✅ Test 3 PASS: Testing mode deadline is ~${TESTING_WEEK_DURATION_MS / 1000 / 60} minutes from now`);
   } else {
     throw new Error(`Unexpected compressed deadline difference: ${diff}ms`);
   }

@@ -383,7 +383,7 @@ async function updateUserWeekPenalty(
     weekEndDate: string;
     amountCents: number;
     actualAmountCents: number;
-    paymentIntentId: string;
+    paymentIntentId: string | null; // Allow null for failed/skipped charges
     chargeType: ChargeType;
     status: "succeeded" | "requires_action" | "processing" | "failed";
   }
@@ -588,6 +588,46 @@ Deno.serve(async (req) => {
       }
       if (amountCents <= 0) {
         summary.zeroAmount += 1;
+        
+        // Update penalty record to reflect zero penalty (no charge)
+        await supabase
+          .from("user_week_penalties")
+          .update({
+            settlement_status: "no_charge",
+            charged_amount_cents: 0,
+            actual_amount_cents: getActualPenaltyCents(candidate),
+            charge_payment_intent_id: null,
+            last_updated: new Date().toISOString()
+          })
+          .eq("user_id", candidate.commitment.user_id)
+          .eq("week_start_date", target.weekEndDate);
+        
+        continue;
+      }
+
+      // Skip charges below Stripe minimum (62 cents USD)
+      const STRIPE_MINIMUM_CENTS = 62;
+      if (chargeType === "actual" && amountCents < STRIPE_MINIMUM_CENTS) {
+        // For actual penalties below minimum, skip charge and mark as below_stripe_minimum
+        // Worst case charges should always be attempted (they're typically above minimum)
+        console.log(
+          `run-weekly-settlement: skipping charge for ${candidate.commitment.user_id} - amount ${amountCents} cents below Stripe minimum ${STRIPE_MINIMUM_CENTS}`
+        );
+        summary.zeroAmount += 1; // Count as zero amount for summary
+        
+        // Update penalty record to reflect skipped charge (no charge attempted)
+        await supabase
+          .from("user_week_penalties")
+          .update({
+            settlement_status: "below_stripe_minimum",
+            charged_amount_cents: 0,
+            actual_amount_cents: getActualPenaltyCents(candidate),
+            charge_payment_intent_id: null,
+            last_updated: new Date().toISOString()
+          })
+          .eq("user_id", candidate.commitment.user_id)
+          .eq("week_start_date", target.weekEndDate);
+        
         continue;
       }
 
@@ -616,7 +656,7 @@ Deno.serve(async (req) => {
           weekEndDate: target.weekEndDate,
           amountCents: 0,
           actualAmountCents: getActualPenaltyCents(candidate),
-          paymentIntentId: "failed",
+          paymentIntentId: null, // Use null instead of "failed" string
           chargeType,
           status: "failed"
         });

@@ -1579,6 +1579,117 @@ Updated `rpc_create_commitment` to calculate and store `week_grace_expires_at` e
 
 ---
 
+### 27. Dynamic Exchange Rate for Stripe Minimum Charge
+
+**Status**: TODO  
+**Date Identified**: 2026-01-21
+
+At some point, we need to implement dynamic exchange rate calculation for the Stripe minimum charge. Currently using a static 62 cent minimum, but the Stripe account uses EUR settlement (50 EUR cent minimum), so we should dynamically convert 50 EUR cents to USD based on current exchange rates.
+
+**Priority**: Low  
+**Timeline**: Future enhancement
+
+---
+
+### 28. Hardcoded Configuration Values - Environment Dependency Issues
+
+**Status**: TODO  
+**Severity**: High (Production Readiness / Security)  
+**Date Identified**: 2026-01-21  
+**Phase**: V1.0 Finalization
+
+#### Description
+
+Multiple hardcoded configuration values throughout the codebase should be environment-dependent or use `app_config` table. This creates risks when deploying to production and makes configuration management difficult.
+
+#### Critical Issues Found
+
+1. **`call_weekly_close.sql` - Hardcoded Staging URL** (🔴 CRITICAL)
+   - **Location**: `supabase/remote_rpcs/call_weekly_close.sql` (line 17)
+   - **Issue**: Hardcoded staging URL `https://whdftvcrtrsnefhprebj.supabase.co/functions/v1/weekly-close`
+   - **Impact**: Will call staging URL in production, breaking weekly close functionality
+   - **Fix**: Use `app_config.supabase_url` (like `process_reconciliation_queue` does)
+   - **Also**: Currently uses `current_setting('app.settings.service_role_key')` - should use `app_config` for consistency
+
+2. **iOS `Config.swift` - Production Stripe Key Still Test Key** (🔴 CRITICAL)
+   - **Location**: `payattentionclub-app-1.1/payattentionclub-app-1.1/Utilities/Config.swift` (line 101)
+   - **Issue**: `livePublishableKey` is still a test key (`pk_test_...`) with TODO comment
+   - **Impact**: Production will use test Stripe keys instead of live keys
+   - **Fix**: Replace with real `pk_live_...` key before production launch
+
+3. **Hardcoded Timeout Values** (🟡 HIGH)
+   - **Location**: `call_weekly_close.sql` (line 23), `process_reconciliation_queue.sql`
+   - **Issue**: Hardcoded `30000` (30 seconds) timeout
+   - **Impact**: Cannot tune timeouts without code changes
+   - **Fix**: Move to `app_config` table (e.g., `http_timeout_ms`)
+
+4. **Hardcoded Retry Limits** (🟡 HIGH)
+   - **Location**: `process_reconciliation_queue.sql` (line 28)
+   - **Issue**: Hardcoded `max_retries integer := 3`
+   - **Impact**: Cannot tune retry behavior without code changes
+   - **Fix**: Move to `app_config` table (e.g., `max_reconciliation_retries`)
+
+5. **Hardcoded "Stuck Processing" Threshold** (🟢 MEDIUM)
+   - **Location**: Multiple SQL files
+   - **Issue**: Hardcoded `INTERVAL '5 minutes'` for stuck processing detection
+   - **Impact**: Cannot tune threshold without code changes
+   - **Fix**: Move to `app_config` table (e.g., `stuck_processing_threshold_minutes`)
+
+6. **iOS Config.swift - Hardcoded Supabase URLs** (🟢 MEDIUM)
+   - **Location**: `Config.swift` (lines 60-65)
+   - **Issue**: URLs and keys hardcoded (though environment-aware via build config)
+   - **Impact**: Less flexible, harder to manage secrets
+   - **Fix**: Consider build-time configuration or Info.plist approach
+
+#### Impact
+
+**Production Readiness**: ⚠️ High - `call_weekly_close` will break in production  
+**Security**: ⚠️ High - Production Stripe key is test key  
+**Maintainability**: ⚠️ Medium - Hardcoded values make configuration management difficult  
+**Operational**: ⚠️ Medium - Cannot tune timeouts/retries without code changes
+
+#### Proposed Fix Priority
+
+**Phase 1: Critical (Before Production)**
+1. Fix `call_weekly_close.sql` to use `app_config.supabase_url` and `app_config.service_role_key`
+2. Replace Stripe production key in `Config.swift` with real `pk_live_...` key
+
+**Phase 2: High (Soon)**
+3. Move timeout values to `app_config`
+4. Move retry limits to `app_config`
+5. Update all functions to use configurable values
+
+**Phase 3: Medium (Nice to Have)**
+6. Move stuck processing threshold to `app_config`
+7. Consider iOS build-time configuration improvements
+
+#### Migration Checklist
+
+Before deploying Fix 1:
+- [ ] Verify `app_config` table has `supabase_url` in staging
+- [ ] Verify `app_config` table has `supabase_url` in production
+- [ ] Verify `app_config` table has `service_role_key` in staging
+- [ ] Verify `app_config` table has `service_role_key` in production
+- [ ] Test `call_weekly_close()` function in staging after update
+- [ ] Test `call_weekly_close()` function in production after update
+
+#### Code Locations
+
+- `supabase/remote_rpcs/call_weekly_close.sql` - Main fix needed
+- `payattentionclub-app-1.1/payattentionclub-app-1.1/Utilities/Config.swift` - Stripe key fix
+- `supabase/remote_rpcs/process_reconciliation_queue.sql` - Retry/timeout config
+- Multiple SQL files - Stuck processing threshold
+
+#### Related Documentation
+
+- See comprehensive analysis in conversation history (2026-01-21)
+- Pattern to follow: `process_reconciliation_queue.sql` already uses `app_config` correctly
+
+**Priority**: High  
+**Timeline**: Fix Phase 1 before production deployment (critical), Phase 2 soon after
+
+---
+
 ## Notes
 
 - All issues documented here are **non-blocking** - development can continue

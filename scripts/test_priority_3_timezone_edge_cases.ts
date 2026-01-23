@@ -159,25 +159,25 @@ if (isTuesday && graceIsNoon) {
 
 console.log('');
 
-// Test testing mode (should be simple - 3 minutes from now)
+// Test testing mode (should be simple - 4 minutes from now)
 console.log('Step 3: Testing getNextDeadline() in Testing Mode\n');
 
 const now = new Date();
 const testingDeadline = timingModule.getNextDeadline(true, now);
 const timeDiff = testingDeadline.getTime() - now.getTime();
-const expectedDiff = 3 * 60 * 1000; // 3 minutes
+const expectedDiff = timingModule.TESTING_WEEK_DURATION_MS;
 const diffTolerance = 1000; // 1 second tolerance
 
 if (Math.abs(timeDiff - expectedDiff) < diffTolerance) {
   console.log(`   ✅ Testing mode deadline calculation`);
   console.log(`      Now: ${now.toISOString()}`);
   console.log(`      Deadline: ${testingDeadline.toISOString()}`);
-  console.log(`      Difference: ${timeDiff / 1000} seconds (expected: 180 seconds)`);
+  console.log(`      Difference: ${timeDiff / 1000} seconds (expected: ${timingModule.TESTING_WEEK_DURATION_MS / 1000} seconds)`);
 } else {
   console.log(`   ❌ Testing mode deadline calculation`);
   console.log(`      Now: ${now.toISOString()}`);
   console.log(`      Deadline: ${testingDeadline.toISOString()}`);
-  console.log(`      Difference: ${timeDiff / 1000} seconds (expected: 180 seconds)`);
+  console.log(`      Difference: ${timeDiff / 1000} seconds (expected: ${timingModule.TESTING_WEEK_DURATION_MS / 1000} seconds)`);
   allTestsPassed = false;
 }
 

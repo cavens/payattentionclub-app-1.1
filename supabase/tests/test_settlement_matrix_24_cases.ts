@@ -4,7 +4,7 @@
  * Tests all combinations of:
  * - 3 Main Cases (Case 1: sync within grace, Case 2: no sync, Case 3: late sync)
  * - 2 Sub-Conditions (A: sync before grace begins, B: no sync before grace)
- * - 4 Usage Patterns (A: 0 usage/0 penalty, B: >0 usage/<60¢ penalty, C: >0 usage/>60¢ penalty, D: >0 usage/0 penalty)
+ * - 4 Usage Patterns (A: 0 usage/0 penalty, B: >0 usage/<62¢ penalty, C: >0 usage/>=62¢ penalty, D: >0 usage/0 penalty)
  * 
  * Total: 3 × 2 × 4 = 24 test cases
  * 
@@ -82,43 +82,43 @@ const ALL_TEST_CASES: TestCase[] = [
       penaltyPerMinuteCents: 10,
     },
     expected: {
-      settlementStatus: "pending",
+      settlementStatus: "no_charge",
       chargedAmountCents: 0,
       actualAmountCents: 0,
       paymentCount: 0,
     },
   },
   
-  // Case 1_A_B: Sync before grace + within grace + >0 usage + <60 cent penalty
-  {
-    id: "1_A_B",
-    mainCase: 1,
-    subCondition: "A",
-    usagePattern: "B",
-    description: "Sync before grace + within grace + >0 usage + <60 cent penalty",
-    setup: {
-      syncBeforeGrace: true,
-      syncWithinGrace: true,
-      syncAfterGrace: false,
-      usageMinutes: 65, // 5 over limit = 50 cents
-      limitMinutes: 60,
-      penaltyPerMinuteCents: 10,
-    },
-    expected: {
-      settlementStatus: "pending", // Below Stripe minimum
+  // Case 1_A_B: Sync before grace + within grace + >0 usage + <62 cent penalty
+    {
+      id: "1_A_B",
+      mainCase: 1,
+      subCondition: "A",
+      usagePattern: "B",
+      description: "Sync before grace + within grace + >0 usage + <62 cent penalty",
+      setup: {
+        syncBeforeGrace: true,
+        syncWithinGrace: true,
+        syncAfterGrace: false,
+        usageMinutes: 64.9, // 4.9 over limit = 49 cents (below Stripe minimum)
+        limitMinutes: 60,
+        penaltyPerMinuteCents: 10,
+      },
+      expected: {
+        settlementStatus: "below_stripe_minimum", // Below Stripe minimum (62 cents)
       chargedAmountCents: 0,
-      actualAmountCents: 50,
+      actualAmountCents: 49,
       paymentCount: 0,
     },
   },
   
-  // Case 1_A_C: Sync before grace + within grace + >0 usage + >60 cent penalty
-  {
-    id: "1_A_C",
-    mainCase: 1,
-    subCondition: "A",
-    usagePattern: "C",
-    description: "Sync before grace + within grace + >0 usage + >60 cent penalty",
+  // Case 1_A_C: Sync before grace + within grace + >0 usage + >=62 cent penalty
+    {
+      id: "1_A_C",
+      mainCase: 1,
+      subCondition: "A",
+      usagePattern: "C",
+      description: "Sync before grace + within grace + >0 usage + >=62 cent penalty",
     setup: {
       syncBeforeGrace: true,
       syncWithinGrace: true,
@@ -182,36 +182,36 @@ const ALL_TEST_CASES: TestCase[] = [
     },
   },
   
-  // Case 1_B_B: No sync before grace + within grace + >0 usage + <60 cent penalty
-  {
-    id: "1_B_B",
-    mainCase: 1,
-    subCondition: "B",
-    usagePattern: "B",
-    description: "No sync before grace + within grace + >0 usage + <60 cent penalty",
-    setup: {
-      syncBeforeGrace: false,
-      syncWithinGrace: true,
-      syncAfterGrace: false,
-      usageMinutes: 65, // 5 over limit = 50 cents
-      limitMinutes: 60,
-      penaltyPerMinuteCents: 10,
-    },
-    expected: {
-      settlementStatus: "pending",
+  // Case 1_B_B: No sync before grace + within grace + >0 usage + <62 cent penalty
+    {
+      id: "1_B_B",
+      mainCase: 1,
+      subCondition: "B",
+      usagePattern: "B",
+      description: "No sync before grace + within grace + >0 usage + <62 cent penalty",
+      setup: {
+        syncBeforeGrace: false,
+        syncWithinGrace: true,
+        syncAfterGrace: false,
+        usageMinutes: 64.9, // 4.9 over limit = 49 cents (below Stripe minimum)
+        limitMinutes: 60,
+        penaltyPerMinuteCents: 10,
+      },
+      expected: {
+        settlementStatus: "below_stripe_minimum", // Below Stripe minimum (62 cents)
       chargedAmountCents: 0,
-      actualAmountCents: 50,
+      actualAmountCents: 49,
       paymentCount: 0,
     },
   },
   
-  // Case 1_B_C: No sync before grace + within grace + >0 usage + >60 cent penalty
-  {
-    id: "1_B_C",
-    mainCase: 1,
-    subCondition: "B",
-    usagePattern: "C",
-    description: "No sync before grace + within grace + >0 usage + >60 cent penalty",
+  // Case 1_B_C: No sync before grace + within grace + >0 usage + >=62 cent penalty
+    {
+      id: "1_B_C",
+      mainCase: 1,
+      subCondition: "B",
+      usagePattern: "C",
+      description: "No sync before grace + within grace + >0 usage + >=62 cent penalty",
     setup: {
       syncBeforeGrace: false,
       syncWithinGrace: true,
@@ -245,7 +245,7 @@ const ALL_TEST_CASES: TestCase[] = [
       penaltyPerMinuteCents: 10,
     },
     expected: {
-      settlementStatus: "pending",
+      settlementStatus: "no_charge",
       chargedAmountCents: 0,
       actualAmountCents: 0,
       paymentCount: 0,
@@ -279,18 +279,18 @@ const ALL_TEST_CASES: TestCase[] = [
     },
   },
   
-  // Case 2_A_B: Sync before grace + no sync within grace + >0 usage + <60 cent penalty
-  {
-    id: "2_A_B",
-    mainCase: 2,
-    subCondition: "A",
-    usagePattern: "B",
-    description: "Sync before grace + no sync within grace + >0 usage + <60 cent penalty",
-    setup: {
-      syncBeforeGrace: true,
-      syncWithinGrace: false,
-      syncAfterGrace: false,
-      usageMinutes: 65, // 5 over limit = 50 cents (but not synced within grace)
+  // Case 2_A_B: Sync before grace + no sync within grace + >0 usage + <62 cent penalty
+    {
+      id: "2_A_B",
+      mainCase: 2,
+      subCondition: "A",
+      usagePattern: "B",
+      description: "Sync before grace + no sync within grace + >0 usage + <62 cent penalty",
+      setup: {
+        syncBeforeGrace: true,
+        syncWithinGrace: false,
+        syncAfterGrace: false,
+        usageMinutes: 64.9, // 4.9 over limit = 49 cents (but not synced within grace)
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
@@ -304,13 +304,13 @@ const ALL_TEST_CASES: TestCase[] = [
     },
   },
   
-  // Case 2_A_C: Sync before grace + no sync within grace + >0 usage + >60 cent penalty
-  {
-    id: "2_A_C",
-    mainCase: 2,
-    subCondition: "A",
-    usagePattern: "C",
-    description: "Sync before grace + no sync within grace + >0 usage + >60 cent penalty",
+  // Case 2_A_C: Sync before grace + no sync within grace + >0 usage + >=62 cent penalty
+    {
+      id: "2_A_C",
+      mainCase: 2,
+      subCondition: "A",
+      usagePattern: "C",
+      description: "Sync before grace + no sync within grace + >0 usage + >=62 cent penalty",
     setup: {
       syncBeforeGrace: true,
       syncWithinGrace: false,
@@ -379,18 +379,18 @@ const ALL_TEST_CASES: TestCase[] = [
     },
   },
   
-  // Case 2_B_B: No sync before grace + no sync within grace + >0 usage + <60 cent penalty
-  {
-    id: "2_B_B",
-    mainCase: 2,
-    subCondition: "B",
-    usagePattern: "B",
-    description: "No sync before grace + no sync within grace + >0 usage + <60 cent penalty",
-    setup: {
-      syncBeforeGrace: false,
-      syncWithinGrace: false,
-      syncAfterGrace: false,
-      usageMinutes: 65, // 5 over limit = 50 cents
+  // Case 2_B_B: No sync before grace + no sync within grace + >0 usage + <62 cent penalty
+    {
+      id: "2_B_B",
+      mainCase: 2,
+      subCondition: "B",
+      usagePattern: "B",
+      description: "No sync before grace + no sync within grace + >0 usage + <62 cent penalty",
+      setup: {
+        syncBeforeGrace: false,
+        syncWithinGrace: false,
+        syncAfterGrace: false,
+        usageMinutes: 64.9, // 4.9 over limit = 49 cents
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
@@ -404,13 +404,13 @@ const ALL_TEST_CASES: TestCase[] = [
     },
   },
   
-  // Case 2_B_C: No sync before grace + no sync within grace + >0 usage + >60 cent penalty
-  {
-    id: "2_B_C",
-    mainCase: 2,
-    subCondition: "B",
-    usagePattern: "C",
-    description: "No sync before grace + no sync within grace + >0 usage + >60 cent penalty",
+  // Case 2_B_C: No sync before grace + no sync within grace + >0 usage + >=62 cent penalty
+    {
+      id: "2_B_C",
+      mainCase: 2,
+      subCondition: "B",
+      usagePattern: "C",
+      description: "No sync before grace + no sync within grace + >0 usage + >=62 cent penalty",
     setup: {
       syncBeforeGrace: false,
       syncWithinGrace: false,
@@ -483,38 +483,38 @@ const ALL_TEST_CASES: TestCase[] = [
     },
   },
   
-  // Case 3_A_B: Sync before grace + late sync + >0 usage + <60 cent penalty
-  {
-    id: "3_A_B",
-    mainCase: 3,
-    subCondition: "A",
-    usagePattern: "B",
-    description: "Sync before grace + late sync + >0 usage + <60 cent penalty",
-    setup: {
-      syncBeforeGrace: true,
-      syncWithinGrace: false,
-      syncAfterGrace: true,
-      usageMinutes: 65, // 5 over limit = 50 cents
+  // Case 3_A_B: Sync before grace + late sync + >0 usage + <62 cent penalty
+    {
+      id: "3_A_B",
+      mainCase: 3,
+      subCondition: "A",
+      usagePattern: "B",
+      description: "Sync before grace + late sync + >0 usage + <62 cent penalty",
+      setup: {
+        syncBeforeGrace: true,
+        syncWithinGrace: false,
+        syncAfterGrace: true,
+        usageMinutes: 64.9, // 4.9 over limit = 49 cents
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
     expected: {
       settlementStatus: ["refunded", "refunded_partial"],
-      chargedAmountCents: 50, // After refund (was 4200, refunded 4150)
-      actualAmountCents: 50,
+      chargedAmountCents: 49, // After refund (was 4200, refunded 4151)
+      actualAmountCents: 49,
       paymentCount: 2, // Initial charge + refund
       needsReconciliation: false,
       reconciliationDeltaCents: 0,
     },
   },
   
-  // Case 3_A_C: Sync before grace + late sync + >0 usage + >60 cent penalty
-  {
-    id: "3_A_C",
-    mainCase: 3,
-    subCondition: "A",
-    usagePattern: "C",
-    description: "Sync before grace + late sync + >0 usage + >60 cent penalty",
+  // Case 3_A_C: Sync before grace + late sync + >0 usage + >=62 cent penalty
+    {
+      id: "3_A_C",
+      mainCase: 3,
+      subCondition: "A",
+      usagePattern: "C",
+      description: "Sync before grace + late sync + >0 usage + >=62 cent penalty",
     setup: {
       syncBeforeGrace: true,
       syncWithinGrace: false,
@@ -583,38 +583,38 @@ const ALL_TEST_CASES: TestCase[] = [
     },
   },
   
-  // Case 3_B_B: No sync before grace + late sync + >0 usage + <60 cent penalty
-  {
-    id: "3_B_B",
-    mainCase: 3,
-    subCondition: "B",
-    usagePattern: "B",
-    description: "No sync before grace + late sync + >0 usage + <60 cent penalty",
-    setup: {
-      syncBeforeGrace: false,
-      syncWithinGrace: false,
-      syncAfterGrace: true,
-      usageMinutes: 65, // 5 over limit = 50 cents
+  // Case 3_B_B: No sync before grace + late sync + >0 usage + <62 cent penalty
+    {
+      id: "3_B_B",
+      mainCase: 3,
+      subCondition: "B",
+      usagePattern: "B",
+      description: "No sync before grace + late sync + >0 usage + <62 cent penalty",
+      setup: {
+        syncBeforeGrace: false,
+        syncWithinGrace: false,
+        syncAfterGrace: true,
+        usageMinutes: 64.9, // 4.9 over limit = 49 cents
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
     expected: {
       settlementStatus: ["refunded", "refunded_partial"],
-      chargedAmountCents: 50,
-      actualAmountCents: 50,
+      chargedAmountCents: 49, // After refund (was 4200, refunded 4151)
+      actualAmountCents: 49,
       paymentCount: 2,
       needsReconciliation: false,
       reconciliationDeltaCents: 0,
     },
   },
   
-  // Case 3_B_C: No sync before grace + late sync + >0 usage + >60 cent penalty
-  {
-    id: "3_B_C",
-    mainCase: 3,
-    subCondition: "B",
-    usagePattern: "C",
-    description: "No sync before grace + late sync + >0 usage + >60 cent penalty",
+  // Case 3_B_C: No sync before grace + late sync + >0 usage + >=62 cent penalty
+    {
+      id: "3_B_C",
+      mainCase: 3,
+      subCondition: "B",
+      usagePattern: "C",
+      description: "No sync before grace + late sync + >0 usage + >=62 cent penalty",
     setup: {
       syncBeforeGrace: false,
       syncWithinGrace: false,
@@ -1116,14 +1116,38 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
     amountCents = commitment.max_charge_cents || 0;
   }
 
-  // Skip if zero amount or below Stripe minimum (50-60 cents)
-  const STRIPE_MINIMUM_CENTS = 60; // Stripe minimum charge threshold
+  // Skip if zero amount or below Stripe minimum (62 cents USD)
+  const STRIPE_MINIMUM_CENTS = 62; // Stripe minimum charge threshold
   if (amountCents <= 0) {
     // Only skip if it's actually zero (not a calculation error)
     if (chargeType === "worst_case" && (commitment.max_charge_cents || 0) === 0) {
+      // Update penalty record to reflect zero penalty (no charge)
+      await supabase
+        .from("user_week_penalties")
+        .update({
+          settlement_status: "no_charge",
+          charged_amount_cents: 0,
+          actual_amount_cents: penalty?.total_penalty_cents || 0,
+          charge_payment_intent_id: null,
+          last_updated: new Date().toISOString()
+        })
+        .eq("user_id", userId)
+        .eq("week_start_date", weekEndDate);
       return; // Worst case is 0, skip
     }
     if (chargeType === "actual" && (penalty?.total_penalty_cents || 0) === 0) {
+      // Update penalty record to reflect zero penalty (no charge)
+      await supabase
+        .from("user_week_penalties")
+        .update({
+          settlement_status: "no_charge",
+          charged_amount_cents: 0,
+          actual_amount_cents: penalty?.total_penalty_cents || 0,
+          charge_payment_intent_id: null,
+          last_updated: new Date().toISOString()
+        })
+        .eq("user_id", userId)
+        .eq("week_start_date", weekEndDate);
       return; // Actual is 0, skip
     }
     // Otherwise, there might be an issue - but for now, skip to avoid errors
@@ -1132,6 +1156,19 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
   
   // Skip if below Stripe minimum (for actual penalties only)
   if (chargeType === "actual" && amountCents < STRIPE_MINIMUM_CENTS) {
+    // Update penalty record to reflect skipped charge (matching production behavior)
+    await supabase
+      .from("user_week_penalties")
+      .update({
+        settlement_status: "below_stripe_minimum",
+        charged_amount_cents: 0,
+        actual_amount_cents: penalty?.total_penalty_cents || 0,
+        charge_payment_intent_id: null,
+        last_updated: new Date().toISOString()
+      })
+      .eq("user_id", userId)
+      .eq("week_start_date", weekEndDate);
+    
     return; // Below Stripe minimum, skip charge
   }
 

@@ -249,28 +249,42 @@ function getCommitmentDeadline(candidate: SettlementCandidate, isTestingMode: bo
 }
 
 function hasSyncedUsage(candidate: SettlementCandidate, isTestingMode: boolean): boolean {
-  // Check if actual_amount_cents exists AND was updated after the deadline
-  // This ensures we only count usage synced AFTER the deadline, not before
   const penalty = candidate.penalty;
-  if (!penalty || (penalty.actual_amount_cents ?? 0) <= 0) {
-    return false; // No actual amount set
+  
+  // Log for debugging
+  console.log(`hasSyncedUsage: penalty=${penalty ? 'exists' : 'null'}, actual_amount_cents=${penalty?.actual_amount_cents ?? 'null'}, last_updated=${penalty?.last_updated ?? 'null'}`);
+  
+  // Check if penalty record exists
+  if (!penalty) {
+    console.log(`hasSyncedUsage: No penalty record - returning false`);
+    return false;
   }
   
-  // Calculate the deadline for this commitment
+  // CRITICAL FIX: Check if actual_amount_cents is null/undefined (not set), not if it's 0
+  // actual_amount_cents = 0 means "usage was synced, penalty is zero"
+  // actual_amount_cents = null means "usage was not synced"
+  if (penalty.actual_amount_cents == null) {
+    console.log(`hasSyncedUsage: actual_amount_cents is null/undefined (not synced) - returning false`);
+    return false;
+  }
+  
+  // actual_amount_cents is set (even if 0), so usage was synced
+  // Now verify timing (within grace period)
   const deadline = getCommitmentDeadline(candidate, isTestingMode);
+  const graceDeadline = getGraceDeadline(deadline, isTestingMode);
   
-  // If last_updated is not available, fall back to checking actual_amount_cents
-  // (for backward compatibility with existing records)
   if (!penalty.last_updated) {
-    // Legacy behavior: if actual_amount_cents is set but no last_updated,
-    // we can't determine when it was synced, so assume it was synced after deadline
-    // This is conservative - it may charge actual when it should charge worst case
-    return true;
+    console.log(`hasSyncedUsage: actual_amount_cents=${penalty.actual_amount_cents} but no last_updated - using legacy behavior (returning true)`);
+    return true; // Legacy: assume synced if actual_amount_cents is set
   }
   
-  // Check if last_updated is after the deadline
   const lastUpdated = new Date(penalty.last_updated);
-  return lastUpdated.getTime() > deadline.getTime();
+  const syncedWithinGrace = lastUpdated.getTime() > deadline.getTime() && 
+                            lastUpdated.getTime() <= graceDeadline.getTime();
+  
+  console.log(`hasSyncedUsage: actual_amount_cents=${penalty.actual_amount_cents}, deadline=${deadline.toISOString()}, graceDeadline=${graceDeadline.toISOString()}, lastUpdated=${lastUpdated.toISOString()}, syncedWithinGrace=${syncedWithinGrace}`);
+  
+  return syncedWithinGrace;
 }
 
 function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date(), isTestingMode?: boolean): boolean {
@@ -379,7 +393,7 @@ async function updateUserWeekPenalty(
     weekEndDate: string;
     amountCents: number;
     actualAmountCents: number;
-    paymentIntentId: string;
+    paymentIntentId: string | null; // Allow null for failed/skipped charges
     chargeType: ChargeType;
     status: "succeeded" | "requires_action" | "processing" | "failed";
   }
@@ -392,8 +406,9 @@ async function updateUserWeekPenalty(
     charged_amount_cents: params.amountCents,
     actual_amount_cents: params.actualAmountCents,
     charge_payment_intent_id: params.paymentIntentId,
-    charged_at: params.status === "failed" ? null : new Date().toISOString(),
-    last_updated: new Date().toISOString()
+    charged_at: params.status === "failed" ? null : new Date().toISOString()
+    // CRITICAL: Don't update last_updated - preserve the original sync timestamp
+    // for hasSyncedUsage() check (which happens before this update)
   };
 
   if (params.status === "failed") updates["charged_amount_cents"] = 0;
@@ -603,6 +618,50 @@ Deno.serve(async (req) => {
       }
       if (amountCents <= 0) {
         summary.zeroAmount += 1;
+        
+        // Update penalty record to reflect zero penalty (no charge)
+        // CRITICAL: Don't update last_updated - preserve the original sync timestamp
+        // for hasSyncedUsage() check (which happens before this update)
+        await supabase
+          .from("user_week_penalties")
+          .update({
+            settlement_status: "no_charge",
+            charged_amount_cents: 0,
+            actual_amount_cents: getActualPenaltyCents(candidate),
+            charge_payment_intent_id: null
+            // last_updated is NOT updated - preserve original sync timestamp
+          })
+          .eq("user_id", candidate.commitment.user_id)
+          .eq("week_start_date", target.weekEndDate);
+        
+        continue;
+      }
+
+      // Skip charges below Stripe minimum (62 cents USD)
+      const STRIPE_MINIMUM_CENTS = 62;
+      if (chargeType === "actual" && amountCents < STRIPE_MINIMUM_CENTS) {
+        // For actual penalties below minimum, skip charge and mark as below_stripe_minimum
+        // Worst case charges should always be attempted (they're typically above minimum)
+        console.log(
+          `run-weekly-settlement: skipping charge for ${candidate.commitment.user_id} - amount ${amountCents} cents below Stripe minimum ${STRIPE_MINIMUM_CENTS}`
+        );
+        summary.zeroAmount += 1; // Count as zero amount for summary
+        
+        // Update penalty record to reflect skipped charge (no charge attempted)
+        // CRITICAL: Don't update last_updated - preserve the original sync timestamp
+        // for hasSyncedUsage() check (which happens before this update)
+        await supabase
+          .from("user_week_penalties")
+          .update({
+            settlement_status: "below_stripe_minimum",
+            charged_amount_cents: 0,
+            actual_amount_cents: getActualPenaltyCents(candidate),
+            charge_payment_intent_id: null
+            // last_updated is NOT updated - preserve original sync timestamp
+          })
+          .eq("user_id", candidate.commitment.user_id)
+          .eq("week_start_date", target.weekEndDate);
+        
         continue;
       }
 
@@ -631,7 +690,7 @@ Deno.serve(async (req) => {
           weekEndDate: target.weekEndDate,
           amountCents: 0,
           actualAmountCents: getActualPenaltyCents(candidate),
-          paymentIntentId: "failed",
+          paymentIntentId: null, // Use null instead of "failed" string
           chargeType,
           status: "failed"
         });

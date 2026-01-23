@@ -272,19 +272,9 @@ struct MonitorView: View {
             }
             
             // Update UI on main thread
-            await MainActor.run {
+            let (updatedUsageSeconds, updatedBaseline, updatedLimitMinutes, updatedPenaltyPerMinute) = await MainActor.run {
                 model.currentUsageSeconds = usageSeconds
                 model.updateCurrentPenalty()
-                
-                // Check and send notifications if limits are exceeded
-                Task {
-                    await NotificationManager.shared.checkAndNotifyIfNeeded(
-                        currentUsageSeconds: model.currentUsageSeconds,
-                        baselineUsageSeconds: model.baselineUsageSeconds,
-                        limitMinutes: model.limitMinutes,
-                        penaltyPerMinute: model.penaltyPerMinute
-                    )
-                }
                 
                 // If deadline has passed, navigate to bulletin
                 if deadlinePassed {
@@ -293,7 +283,17 @@ struct MonitorView: View {
                     model.refreshWeekStatus()
                     model.navigate(.bulletin)
                 }
+                
+                return (model.currentUsageSeconds, model.baselineUsageSeconds, model.limitMinutes, model.penaltyPerMinute)
             }
+            
+            // Check and send notifications if limits are exceeded (on MainActor)
+            await NotificationManager.shared.checkAndNotifyIfNeeded(
+                currentUsageSeconds: updatedUsageSeconds,
+                baselineUsageSeconds: updatedBaseline,
+                limitMinutes: updatedLimitMinutes,
+                penaltyPerMinute: updatedPenaltyPerMinute
+            )
         }
     }
     

@@ -2,7 +2,7 @@
  * Shared Timing Helper for Testing Mode
  * 
  * Provides compressed timeline for testing:
- * - Week duration: 3 minutes (instead of 7 days)
+ * - Week duration: 4 minutes (instead of 7 days)
  * - Grace period: 1 minute (instead of 24 hours)
  * 
  * In normal mode, uses standard timeline:
@@ -21,8 +21,22 @@ const TIME_ZONE = "America/New_York";
 export const TESTING_MODE = Deno.env.get("TESTING_MODE") === "true";
 
 /**
+ * Testing mode duration constants (in minutes)
+ * These can be easily adjusted for testing purposes
+ */
+export const TESTING_WEEK_DURATION_MINUTES = 4;
+export const TESTING_GRACE_PERIOD_MINUTES = 1;
+
+/**
+ * Testing mode duration constants (in milliseconds)
+ * Derived from minute constants for convenience
+ */
+export const TESTING_WEEK_DURATION_MS = TESTING_WEEK_DURATION_MINUTES * 60 * 1000;
+export const TESTING_GRACE_PERIOD_MS = TESTING_GRACE_PERIOD_MINUTES * 60 * 1000;
+
+/**
  * Get week duration in milliseconds
- * - Testing mode: 3 minutes
+ * - Testing mode: 4 minutes
  * - Normal mode: 7 days
  * 
  * @param isTestingMode Required: Testing mode flag (must be provided, no default)
@@ -30,7 +44,7 @@ export const TESTING_MODE = Deno.env.get("TESTING_MODE") === "true";
  */
 export function getWeekDurationMs(isTestingMode: boolean): number {
   return isTestingMode
-    ? 3 * 60 * 1000                    // 3 minutes
+    ? TESTING_WEEK_DURATION_MS
     : 7 * 24 * 60 * 60 * 1000;        // 7 days
 }
 
@@ -44,7 +58,7 @@ export function getWeekDurationMs(isTestingMode: boolean): number {
  */
 export function getGracePeriodMs(isTestingMode: boolean): number {
   return isTestingMode
-    ? 1 * 60 * 1000                    // 1 minute
+    ? TESTING_GRACE_PERIOD_MS
     : 24 * 60 * 60 * 1000;            // 24 hours
 }
 
@@ -164,7 +178,7 @@ function calculateNextMondayNoonET(now: Date = new Date()): Date {
 /**
  * Get the next deadline date
  * 
- * - Testing mode: Returns date 3 minutes from now
+ * - Testing mode: Returns date 4 minutes from now
  * - Normal mode: Returns next Monday 12:00 ET
  * 
  * @param isTestingMode Required: Testing mode flag (must be provided, no default)
@@ -173,7 +187,7 @@ function calculateNextMondayNoonET(now: Date = new Date()): Date {
  */
 export function getNextDeadline(isTestingMode: boolean, now: Date = new Date()): Date {
   if (isTestingMode) {
-    // Compressed timeline: 3 minutes from now
+    // Compressed timeline: 4 minutes from now
     const weekDurationMs = getWeekDurationMs(isTestingMode);
     return new Date(now.getTime() + weekDurationMs);
   }
