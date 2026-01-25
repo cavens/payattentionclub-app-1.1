@@ -51,9 +51,15 @@ Deno.serve(async (req)=>{
     const deadlineStr = toDateString(deadlineDate);
     console.log("Closing week with deadline:", deadlineStr);
     // 2) Insert estimated rows for commitments with revoked monitoring
-    // FIXED: Use week_end_date (deadline) to identify commitments for this week
-    // week_end_date stores the deadline (next Monday), which groups commitments by week
-    const { data: revokedCommitments, error: revokedError } = await supabase.from("commitments").select("id, user_id, week_start_date, week_end_date, limit_minutes, penalty_per_minute_cents, monitoring_status, monitoring_revoked_at").eq("week_end_date", deadlineStr).eq("monitoring_status", "revoked");
+    // Use timestamp range lookup to find commitments ending on the deadline date
+    const deadlineDateStart = new Date(`${deadlineStr}T00:00:00`);
+    const deadlineDateEnd = new Date(`${deadlineStr}T23:59:59.999`);
+    const { data: revokedCommitments, error: revokedError } = await supabase
+      .from("commitments")
+      .select("id, user_id, week_start_date, week_end_timestamp, limit_minutes, penalty_per_minute_cents, monitoring_status, monitoring_revoked_at")
+      .gte("week_end_timestamp", deadlineDateStart.toISOString())
+      .lte("week_end_timestamp", deadlineDateEnd.toISOString())
+      .eq("monitoring_status", "revoked");
     if (revokedError) {
       console.error("Error fetching revoked commitments:", revokedError);
       return new Response("Error fetching revoked commitments", {
@@ -65,7 +71,10 @@ Deno.serve(async (req)=>{
       const revDate = new Date(c.monitoring_revoked_at);
       // Start from the date of revocation (date-only)
       let d = new Date(toDateString(revDate));
-      const commitmentEnd = new Date(c.week_end_date || deadlineStr);
+      // Use week_end_timestamp if available, otherwise fallback to deadlineStr
+      const commitmentEnd = c.week_end_timestamp 
+        ? new Date(c.week_end_timestamp)
+        : new Date(`${deadlineStr}T23:59:59.999`);
       while(d < commitmentEnd){
         const dayStr = toDateString(d);
         // Check if there's already a daily_usage row for this day
@@ -99,8 +108,12 @@ Deno.serve(async (req)=>{
       }
     }
     // 3) Recompute user_week_penalties for this week
-    // FIXED: Use week_end_date (deadline) to identify commitments for this week
-    const { data: commitmentsRes, error: commitmentsErr } = await supabase.from("commitments").select("id, user_id").eq("week_end_date", deadlineStr);
+    // Use timestamp range lookup to find commitments ending on the deadline date
+    const { data: commitmentsRes, error: commitmentsErr } = await supabase
+      .from("commitments")
+      .select("id, user_id")
+      .gte("week_end_timestamp", deadlineDateStart.toISOString())
+      .lte("week_end_timestamp", deadlineDateEnd.toISOString());
     if (commitmentsErr) {
       console.error("Error fetching commitments for week:", commitmentsErr);
       return new Response("Error fetching commitments", {

@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import UIKit
 import os.log
 
 /// Manages local notifications for limit exceedances and approaching limits
@@ -81,7 +82,24 @@ class NotificationManager {
     func checkPermissionStatus() async -> Bool {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
-        return settings.authorizationStatus == .authorized
+        let isAuthorized = settings.authorizationStatus == .authorized
+        
+        switch settings.authorizationStatus {
+        case .authorized:
+            logger.info("✅ Notification permission: authorized")
+        case .denied:
+            logger.warning("⚠️ Notification permission: denied")
+        case .notDetermined:
+            logger.warning("⚠️ Notification permission: not determined")
+        case .provisional:
+            logger.info("ℹ️ Notification permission: provisional")
+        case .ephemeral:
+            logger.info("ℹ️ Notification permission: ephemeral")
+        @unknown default:
+            logger.warning("⚠️ Notification permission: unknown status")
+        }
+        
+        return isAuthorized
     }
     
     // MARK: - Notification Checking
@@ -94,10 +112,12 @@ class NotificationManager {
         limitMinutes: Double,
         penaltyPerMinute: Double
     ) async {
+        logger.info("🔔 checkAndNotifyIfNeeded called - usage: \(currentUsageSeconds)s, baseline: \(baselineUsageSeconds)s, limit: \(limitMinutes)min")
+        
         // Check permission first
         let hasPermission = await checkPermissionStatus()
         guard hasPermission else {
-            // Silently skip if no permission - don't spam logs
+            logger.warning("⚠️ Notification permission not granted - skipping notification check")
             return
         }
         
@@ -109,35 +129,47 @@ class NotificationManager {
         let excessMinutes = max(0, usageMinutes - limitMinutesValue)
         let currentPenalty = excessMinutes * penaltyPerMinute
         
+        logger.info("📊 Usage check - usageMinutes: \(usageMinutes), limit: \(limitMinutesValue), penalty: $\(String(format: "%.2f", currentPenalty))")
+        
         // Check for approaching limit (80-90% of limit)
         let approachingThreshold = limitMinutesValue * 0.8
         let limitReachedThreshold = limitMinutesValue
         
         if usageMinutes >= approachingThreshold && !hasNotifiedApproachingLimit {
             let minutesRemaining = max(0, limitMinutesValue - usageMinutes)
+            logger.info("🚨 Approaching limit threshold reached: \(usageMinutes) >= \(approachingThreshold), remaining: \(minutesRemaining) min")
             await sendApproachingLimitNotification(minutesRemaining: Int(minutesRemaining))
             hasNotifiedApproachingLimit = true
+        } else if usageMinutes >= approachingThreshold {
+            logger.debug("⏭️ Approaching limit already notified")
         }
         
         // Check for limit reached
         if usageMinutes >= limitReachedThreshold && !hasNotifiedLimitReached {
+            logger.info("🚨 Limit reached threshold: \(usageMinutes) >= \(limitReachedThreshold)")
             await sendLimitReachedNotification()
             hasNotifiedLimitReached = true
+        } else if usageMinutes >= limitReachedThreshold {
+            logger.debug("⏭️ Limit reached already notified")
         }
         
         // Check for first penalty ($0.50 threshold) - useful for testing and early warning
         if currentPenalty >= 0.50 && !hasNotifiedFirstPenalty {
+            logger.info("🚨 First penalty threshold reached: $\(String(format: "%.2f", currentPenalty))")
             await sendFirstPenaltyNotification(
                 exceededBy: excessMinutes,
                 currentPenalty: currentPenalty
             )
             hasNotifiedFirstPenalty = true
+        } else if currentPenalty >= 0.50 {
+            logger.debug("⏭️ First penalty already notified")
         }
         
         // Check for penalty milestones ($10 increments)
         if currentPenalty > 0 {
             let milestone = Int(currentPenalty / 10.0) // Which $10 milestone (1, 2, 3, etc.)
             if milestone > lastPenaltyMilestoneNotified {
+                logger.info("🚨 Penalty milestone reached: milestone \(milestone), penalty: $\(String(format: "%.2f", currentPenalty))")
                 await sendPenaltyMilestoneNotification(
                     exceededBy: excessMinutes,
                     currentPenalty: currentPenalty
@@ -156,19 +188,50 @@ class NotificationManager {
         content.body = "" // Titles only
         content.sound = .default
         
-        // Send immediately (trigger with 0 seconds delay)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        // Use unique identifier with timestamp to prevent conflicts
+        let uniqueId = "\(NotificationID.approachingLimit)_\(Date().timeIntervalSince1970)"
+        
+        // Use very short delay (0.2 seconds) - nil trigger doesn't work reliably in foreground
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.2, repeats: false)
         let request = UNNotificationRequest(
-            identifier: NotificationID.approachingLimit,
+            identifier: uniqueId,
             content: content,
             trigger: trigger
         )
         
         do {
-            try await UNUserNotificationCenter.current().add(request)
-            logger.info("📢 Sent approaching limit notification: \(minutesRemaining) min remaining")
+            // Check app state before adding
+            let appState = UIApplication.shared.applicationState
+            NSLog("NOTIFICATION NotificationManager: 📱 App state when adding notification: \(appState.rawValue) (0=active, 1=inactive, 2=background)")
+            
+            // Check notification settings
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            NSLog("NOTIFICATION NotificationManager: ⚙️ Notification settings - authorization: \(settings.authorizationStatus.rawValue), alert: \(settings.alertSetting.rawValue), sound: \(settings.soundSetting.rawValue)")
+            
+            // Verify delegate is set
+            if center.delegate === NotificationDelegate.shared {
+                NSLog("NOTIFICATION NotificationManager: ✅ Delegate is correctly set")
+            } else {
+                NSLog("NOTIFICATION NotificationManager: ❌ ERROR - Delegate is NOT set correctly!")
+            }
+            
+            try await center.add(request)
+            logger.info("📢 Sent approaching limit notification: \(minutesRemaining) min remaining (ID: \(uniqueId))")
+            NSLog("NOTIFICATION NotificationManager: 📢 Added approaching limit notification: \(uniqueId)")
+            
+            // Verify it was added by checking pending notifications
+            let pending = await center.pendingNotificationRequests()
+            let found = pending.contains(where: { $0.identifier == uniqueId })
+            NSLog("NOTIFICATION NotificationManager: 🔍 Verification - notification in pending list: \(found), total pending: \(pending.count)")
+            
+            // Check delivered notifications (if any)
+            let delivered = await center.deliveredNotifications()
+            NSLog("NOTIFICATION NotificationManager: 📬 Delivered notifications count: \(delivered.count)")
+            
         } catch {
             logger.error("❌ Failed to send approaching limit notification: \(error.localizedDescription)")
+            NSLog("NOTIFICATION NotificationManager: ❌ Error: \(error.localizedDescription)")
         }
     }
     
@@ -179,19 +242,35 @@ class NotificationManager {
         content.body = "" // Titles only
         content.sound = .default
         
-        // Send immediately (trigger with 0.1 seconds delay)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        // Use unique identifier with timestamp to prevent conflicts
+        let uniqueId = "\(NotificationID.limitReached)_\(Date().timeIntervalSince1970)"
+        
+        // Use very short delay (0.2 seconds) - nil trigger doesn't work reliably in foreground
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.2, repeats: false)
         let request = UNNotificationRequest(
-            identifier: NotificationID.limitReached,
+            identifier: uniqueId,
             content: content,
             trigger: trigger
         )
         
         do {
-            try await UNUserNotificationCenter.current().add(request)
-            logger.info("📢 Sent limit reached notification")
+            // Check app state before adding
+            let appState = UIApplication.shared.applicationState
+            NSLog("NOTIFICATION NotificationManager: 📱 App state when adding notification: \(appState.rawValue) (0=active, 1=inactive, 2=background)")
+            
+            let center = UNUserNotificationCenter.current()
+            try await center.add(request)
+            logger.info("📢 Sent limit reached notification (ID: \(uniqueId))")
+            NSLog("NOTIFICATION NotificationManager: 📢 Added limit reached notification: \(uniqueId)")
+            
+            // Verify it was added
+            let pending = await center.pendingNotificationRequests()
+            let found = pending.contains(where: { $0.identifier == uniqueId })
+            NSLog("NOTIFICATION NotificationManager: 🔍 Verification - notification in pending list: \(found), total pending: \(pending.count)")
+            
         } catch {
             logger.error("❌ Failed to send limit reached notification: \(error.localizedDescription)")
+            NSLog("NOTIFICATION NotificationManager: ❌ Error: \(error.localizedDescription)")
         }
     }
     
@@ -205,19 +284,24 @@ class NotificationManager {
         content.body = "" // Titles only
         content.sound = .default
         
-        // Send immediately (trigger with 0.1 seconds delay)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        // Use unique identifier with timestamp to prevent conflicts
+        let uniqueId = "\(NotificationID.firstPenalty)_\(Date().timeIntervalSince1970)"
+        
+        // Use very short delay (0.2 seconds) - nil trigger doesn't work reliably in foreground
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.2, repeats: false)
         let request = UNNotificationRequest(
-            identifier: NotificationID.firstPenalty,
+            identifier: uniqueId,
             content: content,
             trigger: trigger
         )
         
         do {
             try await UNUserNotificationCenter.current().add(request)
-            logger.info("📢 Sent first penalty notification: $\(String(format: "%.2f", currentPenalty))")
+            logger.info("📢 Sent first penalty notification: $\(String(format: "%.2f", currentPenalty)) (ID: \(uniqueId))")
+            NSLog("NOTIFICATION NotificationManager: 📢 Added first penalty notification: \(uniqueId)")
         } catch {
             logger.error("❌ Failed to send first penalty notification: \(error.localizedDescription)")
+            NSLog("NOTIFICATION NotificationManager: ❌ Error: \(error.localizedDescription)")
         }
     }
     
@@ -231,20 +315,25 @@ class NotificationManager {
         content.body = "" // Titles only
         content.sound = .default
         
-        // Send immediately (trigger with 0.1 seconds delay)
+        // Use unique identifier with timestamp to prevent conflicts
         let milestone = Int(currentPenalty / 10.0)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        let uniqueId = "\(NotificationID.penaltyMilestone)\(milestone)_\(Date().timeIntervalSince1970)"
+        
+        // Use very short delay (0.2 seconds) - nil trigger doesn't work reliably in foreground
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.2, repeats: false)
         let request = UNNotificationRequest(
-            identifier: "\(NotificationID.penaltyMilestone)\(milestone)",
+            identifier: uniqueId,
             content: content,
             trigger: trigger
         )
         
         do {
             try await UNUserNotificationCenter.current().add(request)
-            logger.info("📢 Sent penalty milestone notification: $\(String(format: "%.2f", currentPenalty))")
+            logger.info("📢 Sent penalty milestone notification: $\(String(format: "%.2f", currentPenalty)) (ID: \(uniqueId))")
+            NSLog("NOTIFICATION NotificationManager: 📢 Added penalty milestone notification: \(uniqueId)")
         } catch {
             logger.error("❌ Failed to send penalty milestone notification: \(error.localizedDescription)")
+            NSLog("NOTIFICATION NotificationManager: ❌ Error: \(error.localizedDescription)")
         }
     }
     

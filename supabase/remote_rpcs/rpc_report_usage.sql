@@ -33,7 +33,7 @@ BEGIN
     v_penalty_per_minute_cents
   FROM public.commitments c
   WHERE c.user_id = v_user_id
-    AND c.week_end_date = p_week_start_date
+    AND DATE(c.week_end_timestamp AT TIME ZONE 'America/New_York') = p_week_start_date
     AND c.status IN ('pending', 'active')
   ORDER BY c.created_at DESC
   LIMIT 1;
@@ -94,7 +94,7 @@ BEGIN
       WHERE id = v_commitment_id
     )
     AND date <= (
-      SELECT week_end_date
+      SELECT DATE(week_end_timestamp AT TIME ZONE 'America/New_York')
       FROM public.commitments 
       WHERE id = v_commitment_id
     );
@@ -126,12 +126,10 @@ BEGIN
 
   INSERT INTO public.weekly_pools (
     week_start_date,
-    week_end_date,
     total_penalty_cents,
     status
   )
   VALUES (
-    p_week_start_date,
     p_week_start_date,
     v_pool_total_cents,
     'open'

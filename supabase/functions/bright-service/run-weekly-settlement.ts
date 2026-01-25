@@ -15,7 +15,7 @@ type WeekTarget = {
 type CommitmentRow = {
   id: string;
   user_id: string;
-  week_end_date: string;
+  week_end_timestamp: string;  // REQUIRED: Primary source of truth (both modes)
   week_grace_expires_at: string | null;
   saved_payment_method_id: string | null;
   max_charge_cents: number | null;
@@ -74,13 +74,12 @@ function resolveWeekTarget(options?: { override?: string; now?: Date; isTestingM
     return { weekEndDate: override, graceDeadlineIso: graceDeadline.toISOString() };
   }
 
-  // In testing mode, use today's date in UTC as the week_end_date
-  // This matches how commitments are created in testing mode (they use UTC date)
+  // In testing mode, use today's date in UTC for lookup
+  // This matches how commitments are created in testing mode (they use UTC date for lookup)
   if (isTestingMode) {
     const now = options?.now ?? new Date();
-    // In testing mode, commitments use today's date in UTC as week_end_date
-    // (because formatDeadlineDate uses toISOString() which is UTC-based)
-    // So we need to use UTC date here too
+    // In testing mode, commitments use today's date in UTC for date-based lookup
+    // (week_end_timestamp is the precise timestamp, but we use date for grouping)
     const todayUTC = new Date(now);
     const weekEndDate = formatDate(todayUTC); // formatDate uses UTC year/month/day
     // For grace deadline calculation, we need a Date object
@@ -107,22 +106,33 @@ function resolveWeekTarget(options?: { override?: string; now?: Date; isTestingM
 
 async function fetchCommitmentsForWeek(
   supabase: ReturnType<typeof createClient>,
-  weekEndDate: string
+  weekEndDate: string  // Date string (YYYY-MM-DD) for backward compatibility
 ): Promise<CommitmentRow[]> {
+  // Convert date string to timestamp range for lookup
+  // weekEndDate is a date like "2026-01-26", we need to find all commitments
+  // where week_end_timestamp falls on that date (in ET timezone)
+  const dateStart = new Date(`${weekEndDate}T00:00:00`);
+  const dateEnd = new Date(`${weekEndDate}T23:59:59.999`);
+  
+  // Convert to UTC timestamps for database query
+  const startUTC = dateStart.toISOString();
+  const endUTC = dateEnd.toISOString();
+  
   const { data, error } = await supabase
     .from("commitments")
     .select(
       [
         "id",
         "user_id",
-        "week_end_date",
+        "week_end_timestamp",
         "week_grace_expires_at",
         "saved_payment_method_id",
         "max_charge_cents",
         "status"
       ].join(",")
     )
-    .eq("week_end_date", weekEndDate);
+    .gte("week_end_timestamp", startUTC)
+    .lte("week_end_timestamp", endUTC);
 
   if (error) throw new Error(`Failed to fetch commitments for ${weekEndDate}: ${error.message}`);
   return data ?? [];
@@ -262,42 +272,36 @@ function hasSyncedUsage(candidate: SettlementCandidate, isTestingMode?: boolean)
 }
 
 function getCommitmentWeekDeadline(candidate: SettlementCandidate): Date {
-  // week_end_date is the Monday deadline (e.g., "2025-01-13")
-  const mondayDate = new Date(`${candidate.commitment.week_end_date}T12:00:00`);
-  const mondayET = toDateInTimeZone(mondayDate, TIME_ZONE);
-  mondayET.setHours(12, 0, 0, 0);
-  return mondayET;
+  // ALIGNED WITH TESTING MODE: Always use week_end_timestamp (both modes now have it)
+  if (candidate.commitment.week_end_timestamp) {
+    return new Date(candidate.commitment.week_end_timestamp);
+  }
+  
+  // Fallback: Should not happen if data is correct
+  throw new Error(`Commitment ${candidate.commitment.id} missing week_end_timestamp`);
 }
 
 function getCommitmentGraceDeadline(candidate: SettlementCandidate, isTestingMode?: boolean): Date {
-  // Use explicit grace deadline if available
+  // Use explicit grace deadline if available (primary source of truth)
   if (candidate.commitment.week_grace_expires_at) {
     return new Date(candidate.commitment.week_grace_expires_at);
   }
   
-  // Otherwise derive from week_end_date
-  const mondayET = getCommitmentWeekDeadline(candidate);
-  
-  // Use timing helper to get grace deadline
-  return getGraceDeadline(mondayET, isTestingMode ?? false);
+  // Fallback: Calculate from deadline (should not happen if data is correct)
+  const deadline = getCommitmentWeekDeadline(candidate);
+  return getGraceDeadline(deadline, isTestingMode ?? false);
 }
 
 function isGracePeriodExpired(candidate: SettlementCandidate, reference: Date = new Date(), isTestingMode?: boolean): boolean {
-  // If explicit grace deadline is set, use it
+  // Use explicit grace deadline if available (primary source of truth)
   const explicit = candidate.commitment.week_grace_expires_at;
   if (explicit) {
     return new Date(explicit).getTime() <= reference.getTime();
   }
 
-  // Otherwise, derive grace deadline from week_end_date using timing helper
-  // week_end_date is Monday (e.g., "2025-01-13"), need to convert to Date object
-  const mondayDate = new Date(`${candidate.commitment.week_end_date}T12:00:00`);
-  const mondayET = toDateInTimeZone(mondayDate, TIME_ZONE);
-  mondayET.setHours(12, 0, 0, 0);
-  
-  // Use timing helper to get grace deadline (handles compressed vs normal mode)
-  // Pass isTestingMode parameter to ensure correct calculation
-  const graceDeadline = getGraceDeadline(mondayET, isTestingMode);
+  // Fallback: Calculate from deadline (should not happen if data is correct)
+  const deadline = getCommitmentWeekDeadline(candidate);
+  const graceDeadline = getGraceDeadline(deadline, isTestingMode ?? false);
   
   return graceDeadline.getTime() <= reference.getTime();
 }

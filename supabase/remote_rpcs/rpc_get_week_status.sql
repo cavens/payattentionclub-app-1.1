@@ -30,6 +30,8 @@ SECURITY DEFINER AS $$
 declare
   v_user_id uuid := auth.uid();
   v_week_deadline date;
+  v_week_deadline_start timestamptz;
+  v_week_deadline_end timestamptz;
   v_commitment public.commitments;
   v_user_week_pen public.user_week_penalties;
   v_pool public.weekly_pools;
@@ -38,6 +40,7 @@ begin
     raise exception 'Not authenticated' using errcode = '42501';
   end if;
 
+  -- Calculate deadline date (for backward compatibility with date parameter)
   if p_week_start_date is not null then
     v_week_deadline := p_week_start_date;
   else
@@ -47,11 +50,18 @@ begin
     end if;
   end if;
 
+  -- Convert deadline date to timestamp range for lookup
+  -- Find all commitments where week_end_timestamp falls on the same day (in ET timezone)
+  v_week_deadline_start := (v_week_deadline::timestamp AT TIME ZONE 'America/New_York') AT TIME ZONE 'UTC';
+  v_week_deadline_end := v_week_deadline_start + INTERVAL '1 day';
+
+  -- Lookup commitment using timestamp range (same day in ET timezone)
   select c.*
     into v_commitment
     from public.commitments c
     where c.user_id = v_user_id
-      and c.week_end_date = v_week_deadline
+      and c.week_end_timestamp >= v_week_deadline_start
+      and c.week_end_timestamp < v_week_deadline_end
     order by c.created_at desc
     limit 1;
 
@@ -85,15 +95,20 @@ begin
   reconciliation_reason := v_user_week_pen.reconciliation_reason;
   reconciliation_detected_at := v_user_week_pen.reconciliation_detected_at;
 
-  -- Convert week deadline + grace to Monday/Tuesday 12:00 PM ET
-  week_end_date := (v_week_deadline::timestamptz at time zone 'America/New_York')
-                   at time zone 'UTC'
-                   + interval '12 hours';
-  week_grace_expires_at :=
-    coalesce(
-      v_commitment.week_grace_expires_at,
-      week_end_date + interval '24 hours'
-    );
+  -- Use stored timestamp from commitment (primary source of truth)
+  -- If commitment found, use its week_end_timestamp; otherwise calculate from date
+  week_end_date := coalesce(
+    v_commitment.week_end_timestamp,
+    (v_week_deadline::timestamptz at time zone 'America/New_York')
+      at time zone 'UTC'
+      + interval '12 hours'
+  );
+  
+  -- Use stored grace expiration from commitment (primary source of truth)
+  week_grace_expires_at := coalesce(
+    v_commitment.week_grace_expires_at,
+    week_end_date + interval '24 hours'  -- Fallback calculation
+  );
 
   -- Return commitment settings (limit_minutes and penalty_per_minute_cents)
   limit_minutes := coalesce(v_commitment.limit_minutes, 0);

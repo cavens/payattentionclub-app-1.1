@@ -288,12 +288,19 @@ struct MonitorView: View {
             }
             
             // Check and send notifications if limits are exceeded (on MainActor)
-            await NotificationManager.shared.checkAndNotifyIfNeeded(
-                currentUsageSeconds: updatedUsageSeconds,
-                baselineUsageSeconds: updatedBaseline,
-                limitMinutes: updatedLimitMinutes,
-                penaltyPerMinute: updatedPenaltyPerMinute
-            )
+            // Must wrap in Task { @MainActor in } because we're in Task.detached context
+            NSLog("NOTIFICATION MonitorView: 🎯 About to call checkAndNotifyIfNeeded from Task { @MainActor in }")
+            Task { @MainActor in
+                NSLog("NOTIFICATION MonitorView: ✅ Inside Task { @MainActor in } - calling checkAndNotifyIfNeeded")
+                NSLog("NOTIFICATION MonitorView: 📊 Values - usage: \(updatedUsageSeconds)s, baseline: \(updatedBaseline)s, limit: \(updatedLimitMinutes)min, penalty: \(updatedPenaltyPerMinute)")
+                await NotificationManager.shared.checkAndNotifyIfNeeded(
+                    currentUsageSeconds: updatedUsageSeconds,
+                    baselineUsageSeconds: updatedBaseline,
+                    limitMinutes: updatedLimitMinutes,
+                    penaltyPerMinute: updatedPenaltyPerMinute
+                )
+                NSLog("NOTIFICATION MonitorView: ✅ checkAndNotifyIfNeeded completed")
+            }
         }
     }
     

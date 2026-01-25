@@ -33,6 +33,10 @@ DECLARE
   v_capped_actual_cents integer;
   v_week_deadline_timestamp timestamptz;
   v_week_grace_expires_at timestamptz;
+  v_week_start_ts_start timestamptz;  -- For timestamp range lookup
+  v_week_start_ts_end timestamptz;    -- For timestamp range lookup
+  v_week_ts_start timestamptz;        -- For timestamp range lookup in second loop
+  v_week_ts_end timestamptz;          -- For timestamp range lookup in second loop
   V_SETTLED_STATUSES CONSTANT text[] := ARRAY['charged_actual', 'charged_worst_case', 'refunded', 'refunded_partial'];
   V_STRIPE_MINIMUM_CENTS CONSTANT integer := 60; -- Stripe minimum charge (matches bright-service)
 BEGIN
@@ -57,6 +61,11 @@ BEGIN
         CONTINUE;
       END IF;
 
+      -- Lookup commitment using timestamp range (same day in ET timezone)
+      -- Convert v_week_start_date (date) to timestamp range
+      v_week_start_ts_start := (v_week_start_date::timestamp AT TIME ZONE 'America/New_York') AT TIME ZONE 'UTC';
+      v_week_start_ts_end := v_week_start_ts_start + INTERVAL '1 day';
+      
       SELECT 
         c.id,
         c.limit_minutes,
@@ -67,7 +76,8 @@ BEGIN
         v_penalty_per_minute_cents
       FROM public.commitments c
       WHERE c.user_id = v_user_id
-        AND c.week_end_date = v_week_start_date
+        AND c.week_end_timestamp >= v_week_start_ts_start
+        AND c.week_end_timestamp < v_week_start_ts_end
         AND c.status IN ('pending', 'active')
       ORDER BY c.created_at DESC
       LIMIT 1;
@@ -131,14 +141,19 @@ BEGIN
   FOREACH v_week IN ARRAY v_processed_weeks
   LOOP
     BEGIN
+      -- Convert v_week (date) to timestamp range for lookup
+      v_week_ts_start := (v_week::timestamp AT TIME ZONE 'America/New_York') AT TIME ZONE 'UTC';
+      v_week_ts_end := v_week_ts_start + INTERVAL '1 day';
+      
       SELECT COALESCE(SUM(penalty_cents), 0)
       INTO v_user_week_total_cents
       FROM public.daily_usage du
       JOIN public.commitments c ON du.commitment_id = c.id
       WHERE du.user_id = v_user_id
-        AND c.week_end_date = v_week
+        AND c.week_end_timestamp >= v_week_ts_start
+        AND c.week_end_timestamp < v_week_ts_end
         AND du.date >= c.week_start_date
-        AND du.date <= c.week_end_date;
+        AND du.date <= DATE(c.week_end_timestamp AT TIME ZONE 'America/New_York');
 
       v_prev_settlement_status := NULL;
       v_prev_charged_amount := 0;
@@ -167,6 +182,7 @@ BEGIN
       END;
 
       -- Get max_charge_cents (authorization amount) and timing info from the commitment
+      -- Use timestamp range lookup (v_week_ts_start and v_week_ts_end already calculated above)
       SELECT 
         max_charge_cents,
         week_end_timestamp,
@@ -177,7 +193,8 @@ BEGIN
         v_week_grace_expires_at
       FROM public.commitments
       WHERE user_id = v_user_id
-        AND week_end_date = v_week
+        AND week_end_timestamp >= v_week_ts_start
+        AND week_end_timestamp < v_week_ts_end
       LIMIT 1;
 
       -- Cap actual penalty at authorization amount (same logic as settlement)
@@ -326,12 +343,10 @@ BEGIN
 
       INSERT INTO public.weekly_pools (
         week_start_date,
-        week_end_date,
         total_penalty_cents,
         status
       )
       VALUES (
-        v_week,
         v_week,
         v_pool_total_cents,
         'open'
@@ -354,7 +369,7 @@ BEGIN
     'errors', v_errors,
     'processed_weeks', COALESCE((
       SELECT json_agg(json_build_object(
-        'week_end_date', uw.week_start_date,
+        'week_end_date', uw.week_start_date,  -- Note: This is the date string for response, not database column
         'total_penalty_cents', uw.total_penalty_cents,
         'needs_reconciliation', uw.needs_reconciliation,
         'reconciliation_delta_cents', uw.reconciliation_delta_cents

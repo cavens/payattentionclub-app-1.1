@@ -328,8 +328,8 @@ struct AuthorizationView: View {
             
             // Store commitment deadline - use backend deadline (compressed in testing mode, normal in production)
             // Parse deadlineDate from backend response
-            // In testing mode: ISO 8601 format (e.g., "2025-12-31T12:06:00.000Z")
-            // In normal mode: Date only format (e.g., "2025-12-31")
+            // Backend now always returns ISO 8601 timestamp format (e.g., "2025-12-31T12:06:00.000Z")
+            // from week_end_timestamp field (both testing and normal mode)
             let deadline: Date
             
             // Try parsing as ISO 8601 first (testing mode with full timestamp)

@@ -3,16 +3,27 @@
 -- ==============================================================================
 -- Creates a new commitment for the authenticated user.
 -- Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
+-- 
+-- ALIGNED WITH TESTING MODE: Both modes now use the same structure:
+-- - p_deadline_timestamp: Required timestamp (testing: now+4min, normal: next Monday 12:00 ET)
+-- - p_grace_duration_hours: Required grace duration (testing: 0.0167, normal: 24)
+-- - week_end_timestamp: Primary storage (not week_end_date)
 -- ==============================================================================
 
+-- Drop old function signatures first (required when changing parameter list)
+DROP FUNCTION IF EXISTS public.rpc_create_commitment(date, integer, integer, integer, jsonb, text, timestamptz);
+DROP FUNCTION IF EXISTS public.rpc_create_commitment(date, integer, integer, integer, jsonb, text);
+DROP FUNCTION IF EXISTS public.rpc_create_commitment(date, integer, integer, jsonb, text);  -- 5-param version (missing p_app_count)
+DROP FUNCTION IF EXISTS public.rpc_create_commitment(date, integer, integer, jsonb);
+
 CREATE OR REPLACE FUNCTION public.rpc_create_commitment(
-  p_deadline_date date,
   p_limit_minutes integer,
   p_penalty_per_minute_cents integer,
   p_app_count integer,  -- Explicit app count parameter (single source of truth)
   p_apps_to_limit jsonb,  -- Keep for storage in commitments table
-  p_saved_payment_method_id text DEFAULT NULL,
-  p_deadline_timestamp timestamptz DEFAULT NULL  -- Optional: precise timestamp for testing mode
+  p_deadline_timestamp timestamptz,  -- REQUIRED: Full timestamp (both modes)
+  p_grace_duration_hours numeric,  -- REQUIRED: Grace duration in hours (testing: 0.0167, normal: 24)
+  p_saved_payment_method_id text DEFAULT NULL  -- Optional: Payment method ID
 )
 RETURNS json
 LANGUAGE plpgsql
@@ -26,6 +37,7 @@ DECLARE
   v_max_charge_cents integer;
   v_commitment_id uuid;
   v_result json;
+  v_week_end_date date;  -- Derived from timestamp for weekly_pools
 BEGIN
   -- 1) Must be authenticated
   IF v_user_id IS NULL THEN
@@ -45,19 +57,14 @@ BEGIN
   -- 3) Set dates
   v_commitment_start_date := current_date;
   
-  -- If precise timestamp is provided (testing mode), use it; otherwise calculate from date (normal mode)
-  IF p_deadline_timestamp IS NOT NULL THEN
-    -- Testing mode: Use provided precise timestamp
-    v_deadline_ts := p_deadline_timestamp;
-    -- Testing mode: Grace period is 1 minute after deadline
-    v_grace_expires_at := v_deadline_ts + INTERVAL '1 minute';
-  ELSE
-    -- Normal mode: Calculate deadline from date at noon ET
-    v_deadline_ts := (p_deadline_date::timestamp AT TIME ZONE 'America/New_York') + INTERVAL '12 hours';
-    -- Normal mode: Grace period expires Tuesday 12:00 ET (1 day after Monday deadline)
-    -- Add 1 day to the deadline timestamp, preserving the 12:00 ET time
-    v_grace_expires_at := (p_deadline_date::timestamp AT TIME ZONE 'America/New_York') + INTERVAL '1 day' + INTERVAL '12 hours';
-  END IF;
+  -- Unified logic: Always use timestamp (both modes now provide it)
+  v_deadline_ts := p_deadline_timestamp;
+  
+  -- Unified grace calculation: deadline + duration (same formula, different values)
+  v_grace_expires_at := v_deadline_ts + (p_grace_duration_hours || ' hours')::interval;
+  
+  -- Derive week_end_date from timestamp for weekly_pools (if needed)
+  v_week_end_date := DATE(p_deadline_timestamp AT TIME ZONE 'America/New_York');
 
   -- 4) Use explicit p_app_count parameter (single source of truth from client)
   -- No longer extracting from JSONB arrays to avoid discrepancies
@@ -71,27 +78,24 @@ BEGIN
   );
 
   -- 6) Ensure weekly_pools entry exists (create or update to open if exists)
+  -- Use derived date from timestamp
   INSERT INTO public.weekly_pools (
     week_start_date,
-    week_end_date,
     total_penalty_cents,
     status
   )
   values (
-    p_deadline_date,
-    p_deadline_date,
+    v_week_end_date,  -- Derived from timestamp
     0,
     'open'
   )
   ON CONFLICT (week_start_date) DO UPDATE SET
-    status = 'open',
-    week_end_date = p_deadline_date;
+    status = 'open';
 
   -- 7) Create commitment
   INSERT INTO public.commitments (
     user_id,
     week_start_date,
-    week_end_date,
     week_end_timestamp,
     week_grace_expires_at,
     limit_minutes,
@@ -108,8 +112,7 @@ BEGIN
   values (
     v_user_id,
     v_commitment_start_date,
-    p_deadline_date,
-    p_deadline_timestamp,  -- Store precise timestamp if provided (testing mode), NULL otherwise
+    p_deadline_timestamp,  -- Store timestamp (required, both modes)
     v_grace_expires_at,     -- Store calculated grace period expiration
     p_limit_minutes,
     p_penalty_per_minute_cents,
@@ -134,14 +137,20 @@ END;
 $$;
 
 -- Add comment
-COMMENT ON FUNCTION public.rpc_create_commitment(date, integer, integer, integer, jsonb, text, timestamptz) IS 
+COMMENT ON FUNCTION public.rpc_create_commitment(integer, integer, integer, jsonb, timestamptz, numeric, text) IS 
 'Creates a new commitment for the authenticated user.
+ALIGNED WITH TESTING MODE: Both modes use the same structure and logic.
+
+Parameters:
+- p_deadline_timestamp: REQUIRED timestamp (testing: now+4min, normal: next Monday 12:00 ET)
+- p_grace_duration_hours: REQUIRED grace duration in hours (testing: 0.0167, normal: 24)
+
 Uses explicit p_app_count parameter (single source of truth from client).
 Uses calculate_max_charge_cents() for the max charge calculation (single source of truth).
-Accepts optional p_deadline_timestamp for precise deadline storage in testing mode.
-Calculates and stores week_grace_expires_at:
-  - Testing mode: 1 minute after deadline timestamp
-  - Normal mode: Tuesday 12:00 ET (1 day after Monday deadline).
-This ensures preview and commitment creation use the exact same formula and app count.';
+Stores week_end_timestamp as primary source of truth (week_end_date removed).
+Calculates week_grace_expires_at as: deadline_timestamp + grace_duration_hours (unified formula).
+
+This ensures preview and commitment creation use the exact same formula and app count.
+Both testing and normal mode use identical logic, only time values differ.';
 
 

@@ -17,7 +17,7 @@ if (!LOOPS_API_KEY || !LOOPS_TEMPLATE_ID) {
 type CommitmentRow = {
   id: string;
   user_id: string;
-  week_end_date: string;
+  week_end_timestamp: string;  // Primary source of truth (both modes)
   week_grace_expires_at: string | null;
 };
 
@@ -112,10 +112,14 @@ Deno.serve(async (req) => {
 
   console.log("Reminder target Monday:", mondayString);
 
+  // Use timestamp range lookup to find commitments ending on the Monday date
+  const mondayDateStart = new Date(`${mondayString}T00:00:00`);
+  const mondayDateEnd = new Date(`${mondayString}T23:59:59.999`);
   const { data: commitments, error: commitmentsError } = await supabase
     .from("commitments")
-    .select("id, user_id, week_end_date, week_grace_expires_at")
-    .eq("week_end_date", mondayString);
+    .select("id, user_id, week_end_timestamp, week_grace_expires_at")
+    .gte("week_end_timestamp", mondayDateStart.toISOString())
+    .lte("week_end_timestamp", mondayDateEnd.toISOString());
 
   if (commitmentsError) {
     console.error("Error fetching commitments:", commitmentsError);
@@ -175,7 +179,7 @@ Deno.serve(async (req) => {
 
     try {
       await sendLoopsReminder(user.email, {
-        week_end_date: commitment.week_end_date,
+        week_end_date: new Date(commitment.week_end_timestamp).toISOString().split('T')[0],  // Extract date from timestamp for metadata
         grace_deadline: graceIso,
         email: user.email
       });

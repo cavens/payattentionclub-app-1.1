@@ -8,21 +8,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-/**
- * Format a Date object as YYYY-MM-DD string (normal mode)
- * or ISO 8601 string (testing mode for precise timing)
- */
-function formatDeadlineDate(date: Date, isTestingMode: boolean): string {
-  if (isTestingMode) {
-    // In testing mode, return full ISO timestamp for precise timing
-    // Format: YYYY-MM-DDTHH:mm:ss.sssZ
-    return date.toISOString();
-  }
-  // In normal mode, return just the date (YYYY-MM-DD)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
-}
+// formatDeadlineDate function removed - no longer needed
+// Both modes now use timestamps directly via toISOString()
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -108,26 +95,33 @@ serve(async (req) => {
     const now = new Date();
     const deadline = getNextDeadline(isTestingMode, now);
     
-    const deadlineDateForRPC = formatDeadlineDate(deadline, isTestingMode).split('T')[0]; // Extract YYYY-MM-DD
-    const deadlineTimestampForRPC = isTestingMode ? formatDeadlineDate(deadline, isTestingMode) : null; // Precise timestamp for testing mode
-    const compressedDeadlineISO = isTestingMode ? formatDeadlineDate(deadline, isTestingMode) : null; // Store full ISO timestamp for response transformation
+    // Always use timestamp (both modes now use same structure)
+    const deadlineTimestamp = deadline.toISOString();
     
-    console.log(`super-service: Calculated deadline date: ${deadlineDateForRPC} (testing mode: ${isTestingMode})`);
-    console.log(`🧪 TEST 5 - COMMITMENT: Backend calculated deadline at ${new Date().toISOString()}: ${compressedDeadlineISO || deadlineDateForRPC}`);
+    // Calculate grace duration based on mode
+    // Testing mode: 1 minute = 0.0167 hours
+    // Normal mode: 24 hours
+    const TESTING_GRACE_PERIOD_MINUTES = 1;
+    const graceDurationHours = isTestingMode 
+      ? TESTING_GRACE_PERIOD_MINUTES / 60.0  // 1 minute = 0.0167 hours
+      : 24;  // 24 hours
+    
+    console.log(`super-service: Calculated deadline timestamp: ${deadlineTimestamp} (testing mode: ${isTestingMode})`);
+    console.log(`super-service: Grace duration: ${graceDurationHours} hours`);
+    console.log(`🧪 TEST 5 - COMMITMENT: Backend calculated deadline at ${new Date().toISOString()}: ${deadlineTimestamp}`);
 
     // Call the RPC function
-    // Note: deadlineDateForRPC is the deadline date (YYYY-MM-DD), not the start date
-    // The commitment starts NOW (when user commits) and ends on the deadline
+    // ALIGNED WITH TESTING MODE: Both modes now pass timestamp and grace_duration_hours
     // Parameters must match the RPC function signature order:
-    // p_deadline_date, p_limit_minutes, p_penalty_per_minute_cents, p_app_count, p_apps_to_limit, p_saved_payment_method_id, p_deadline_timestamp
+    // p_limit_minutes, p_penalty_per_minute_cents, p_app_count, p_apps_to_limit, p_saved_payment_method_id, p_deadline_timestamp, p_grace_duration_hours
     const { data, error } = await supabase.rpc('rpc_create_commitment', {
-      p_deadline_date: deadlineDateForRPC,  // Date format (YYYY-MM-DD) for RPC
       p_limit_minutes: limitMinutes,
       p_penalty_per_minute_cents: penaltyPerMinuteCents,
       p_app_count: appCount,  // Explicit app count parameter (single source of truth)
       p_apps_to_limit: appsToLimit,
-      p_saved_payment_method_id: savedPaymentMethodId || null,
-      p_deadline_timestamp: deadlineTimestampForRPC  // Precise timestamp (testing mode) or NULL (normal mode)
+      p_deadline_timestamp: deadlineTimestamp,  // Always pass timestamp (both modes)
+      p_grace_duration_hours: graceDurationHours,  // Always pass grace duration (both modes)
+      p_saved_payment_method_id: savedPaymentMethodId || null  // Optional: comes last
     })
 
     if (error) {
@@ -138,12 +132,10 @@ serve(async (req) => {
       )
     }
 
-    // In testing mode, transform the response to include full ISO timestamp for deadline
-    // The RPC returns week_end_date as a date (YYYY-MM-DD), but we need the full timestamp
-    if (isTestingMode && data && compressedDeadlineISO) {
-      // Replace week_end_date with full ISO timestamp
-      data.week_end_date = compressedDeadlineISO;
-      console.log(`super-service: Testing mode - transformed week_end_date to ISO timestamp: ${compressedDeadlineISO}`);
+    // Response now includes week_end_timestamp (both modes)
+    // No transformation needed - timestamp is already in response
+    if (data) {
+      console.log(`super-service: Commitment created with week_end_timestamp: ${data.week_end_timestamp}`);
     }
 
     // Return the JSON response

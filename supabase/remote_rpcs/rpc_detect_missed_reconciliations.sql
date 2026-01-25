@@ -46,7 +46,7 @@ BEGIN
     FROM public.user_week_penalties uwp
     LEFT JOIN public.commitments c 
       ON c.user_id = uwp.user_id 
-      AND c.week_end_date = uwp.week_start_date
+      AND DATE(c.week_end_timestamp AT TIME ZONE 'America/New_York') = uwp.week_start_date
     WHERE uwp.settlement_status = ANY(V_SETTLED_STATUSES)
       AND uwp.actual_amount_cents IS NOT NULL
       AND uwp.charged_amount_cents IS NOT NULL

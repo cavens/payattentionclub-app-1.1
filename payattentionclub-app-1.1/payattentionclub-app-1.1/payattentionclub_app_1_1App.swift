@@ -9,6 +9,19 @@ struct payattentionclub_app_1_1App: App {
     init() {
         // Initialize Stripe SDK with publishable key
         StripeAPI.defaultPublishableKey = StripeConfig.publishableKey
+        
+        // Set up notification delegate to show notifications when app is in foreground
+        // Use singleton to ensure delegate is retained
+        let center = UNUserNotificationCenter.current()
+        center.delegate = NotificationDelegate.shared
+        NSLog("NOTIFICATION App: ✅ Set NotificationDelegate.shared as UNUserNotificationCenter delegate")
+        
+        // Verify delegate is set
+        if center.delegate === NotificationDelegate.shared {
+            NSLog("NOTIFICATION App: ✅ Verified delegate is correctly set")
+        } else {
+            NSLog("NOTIFICATION App: ❌ ERROR - Delegate verification failed!")
+        }
     }
     
     @StateObject private var model = AppModel()

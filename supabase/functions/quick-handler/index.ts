@@ -40,7 +40,7 @@ type UserRow = {
 type CommitmentRow = {
   id: string;
   user_id: string;
-  week_end_date: string;
+  week_end_timestamp: string;  // Primary source of truth (both modes)
   saved_payment_method_id: string | null;
   status: string | null;
 };
@@ -148,11 +148,26 @@ async function fetchCandidates(
           .in("id", userIds),
     userIds.length === 0 || weekDates.length === 0
       ? Promise.resolve({ data: [] as CommitmentRow[] })
-      : supabase
-          .from("commitments")
-          .select("id,user_id,week_end_date,saved_payment_method_id,status")
-          .in("user_id", userIds)
-          .in("week_end_date", weekDates)
+      : (async () => {
+          // Query all commitments for these users, then filter by date extracted from timestamp
+          // This is simpler than complex OR queries with timestamp ranges
+          const { data: allCommitments, error } = await supabase
+            .from("commitments")
+            .select("id,user_id,week_end_timestamp,saved_payment_method_id,status")
+            .in("user_id", userIds);
+          
+          if (error) throw error;
+          
+          // Filter commitments where the date (extracted from week_end_timestamp) matches any week date
+          const filtered = (allCommitments ?? []).filter(c => {
+            if (!c.week_end_timestamp) return false;
+            // Extract date from timestamp (YYYY-MM-DD format)
+            const commitDateStr = new Date(c.week_end_timestamp).toISOString().split('T')[0];
+            return weekDates.includes(commitDateStr);
+          });
+          
+          return { data: filtered as CommitmentRow[], error: null };
+        })()
   ]);
 
   if (usersRes.error) {
@@ -172,7 +187,7 @@ async function fetchCandidates(
   const commitmentMap = new Map<string, CommitmentRow>();
   for (const commitment of commitmentsRes.data ?? []) {
     commitmentMap.set(
-      candidateKey(commitment.user_id, commitment.week_end_date),
+      candidateKey(commitment.user_id, new Date(commitment.week_end_timestamp).toISOString().split('T')[0]),  // Extract date from timestamp
       commitment
     );
   }

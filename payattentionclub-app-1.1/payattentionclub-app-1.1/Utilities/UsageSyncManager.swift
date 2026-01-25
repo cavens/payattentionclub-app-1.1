@@ -380,7 +380,7 @@ class UsageSyncManager {
         dateFormatter.timeZone = TimeZone.current
         let todayString = dateFormatter.string(from: now)
         
-        // Format deadline as YYYY-MM-DD for weekStartDate (must match commitment's week_end_date)
+        // Format deadline as YYYY-MM-DD for weekStartDate (extracted from commitment's week_end_timestamp)
         // In testing mode, backend uses UTC date, so we use UTC here too
         // In normal mode, backend uses ET date, so we use ET here
         let deadlineFormatter = DateFormatter()

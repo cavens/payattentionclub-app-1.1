@@ -217,8 +217,8 @@ struct CommitmentResponse: Codable, Sendable {
     /// The date when the commitment actually started (when user committed)
     /// Maps to `week_start_date` column in database (legacy naming)
     let startDate: String
-    /// The deadline when the commitment ends (next Monday before noon)
-    /// Maps to `week_end_date` column in database (legacy naming)
+    /// The deadline when the commitment ends (ISO8601 timestamp)
+    /// Maps to `week_end_timestamp` field in database (primary source of truth)
     let deadlineDate: String
     let status: String
     let maxChargeCents: Int
@@ -226,7 +226,7 @@ struct CommitmentResponse: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case commitmentId = "id"  // RPC function returns 'id' from commitments table
         case startDate = "week_start_date"  // Database column name (legacy)
-        case deadlineDate = "week_end_date"  // Database column name (legacy)
+        case deadlineDate = "week_end_timestamp"  // Timestamp field (primary source of truth)
         case status
         case maxChargeCents = "max_charge_cents"
     }

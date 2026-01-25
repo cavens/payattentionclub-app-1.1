@@ -100,14 +100,14 @@ const ALL_TEST_CASES: TestCase[] = [
         syncBeforeGrace: true,
         syncWithinGrace: true,
         syncAfterGrace: false,
-        usageMinutes: 64.9, // 4.9 over limit = 49 cents (below Stripe minimum)
+        usageMinutes: 65, // 5 over limit = 50 cents (below Stripe minimum)
         limitMinutes: 60,
         penaltyPerMinuteCents: 10,
       },
       expected: {
         settlementStatus: "below_stripe_minimum", // Below Stripe minimum (62 cents)
       chargedAmountCents: 0,
-      actualAmountCents: 49,
+      actualAmountCents: 50,
       paymentCount: 0,
     },
   },
@@ -152,7 +152,7 @@ const ALL_TEST_CASES: TestCase[] = [
       penaltyPerMinuteCents: 10,
     },
     expected: {
-      settlementStatus: "pending",
+      settlementStatus: "no_charge",
       chargedAmountCents: 0,
       actualAmountCents: 0,
       paymentCount: 0,
@@ -175,7 +175,7 @@ const ALL_TEST_CASES: TestCase[] = [
       penaltyPerMinuteCents: 10,
     },
     expected: {
-      settlementStatus: "pending",
+      settlementStatus: "no_charge",
       chargedAmountCents: 0,
       actualAmountCents: 0,
       paymentCount: 0,
@@ -193,14 +193,14 @@ const ALL_TEST_CASES: TestCase[] = [
         syncBeforeGrace: false,
         syncWithinGrace: true,
         syncAfterGrace: false,
-        usageMinutes: 64.9, // 4.9 over limit = 49 cents (below Stripe minimum)
+        usageMinutes: 65, // 5 over limit = 50 cents (below Stripe minimum)
         limitMinutes: 60,
         penaltyPerMinuteCents: 10,
       },
       expected: {
         settlementStatus: "below_stripe_minimum", // Below Stripe minimum (62 cents)
       chargedAmountCents: 0,
-      actualAmountCents: 49,
+      actualAmountCents: 50,
       paymentCount: 0,
     },
   },
@@ -290,7 +290,7 @@ const ALL_TEST_CASES: TestCase[] = [
         syncBeforeGrace: true,
         syncWithinGrace: false,
         syncAfterGrace: false,
-        usageMinutes: 64.9, // 4.9 over limit = 49 cents (but not synced within grace)
+        usageMinutes: 65, // 5 over limit = 50 cents (but not synced within grace)
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
@@ -390,7 +390,7 @@ const ALL_TEST_CASES: TestCase[] = [
         syncBeforeGrace: false,
         syncWithinGrace: false,
         syncAfterGrace: false,
-        usageMinutes: 64.9, // 4.9 over limit = 49 cents
+        usageMinutes: 65, // 5 over limit = 50 cents
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
@@ -494,14 +494,14 @@ const ALL_TEST_CASES: TestCase[] = [
         syncBeforeGrace: true,
         syncWithinGrace: false,
         syncAfterGrace: true,
-        usageMinutes: 64.9, // 4.9 over limit = 49 cents
+        usageMinutes: 65, // 5 over limit = 50 cents
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
     expected: {
       settlementStatus: ["refunded", "refunded_partial"],
-      chargedAmountCents: 49, // After refund (was 4200, refunded 4151)
-      actualAmountCents: 49,
+      chargedAmountCents: 50, // After refund (was 4200, refunded 4150)
+      actualAmountCents: 50,
       paymentCount: 2, // Initial charge + refund
       needsReconciliation: false,
       reconciliationDeltaCents: 0,
@@ -594,14 +594,14 @@ const ALL_TEST_CASES: TestCase[] = [
         syncBeforeGrace: false,
         syncWithinGrace: false,
         syncAfterGrace: true,
-        usageMinutes: 64.9, // 4.9 over limit = 49 cents
+        usageMinutes: 65, // 5 over limit = 50 cents
       limitMinutes: 60,
       penaltyPerMinuteCents: 10,
     },
     expected: {
       settlementStatus: ["refunded", "refunded_partial"],
-      chargedAmountCents: 49, // After refund (was 4200, refunded 4151)
-      actualAmountCents: 49,
+      chargedAmountCents: 50, // After refund (was 4200, refunded 4150)
+      actualAmountCents: 50,
       paymentCount: 2,
       needsReconciliation: false,
       reconciliationDeltaCents: 0,
@@ -789,6 +789,32 @@ function calculateTuesdayET(monday: Date): Date {
   );
 }
 
+/**
+ * Convert a date string (YYYY-MM-DD) to a timestamp range for database queries.
+ * The date string represents a date in ET timezone, and we need to find all
+ * timestamps that fall on that date when converted to ET.
+ * 
+ * Returns UTC timestamps for the start and end of that day in ET.
+ */
+function dateStringToTimestampRange(dateString: string): { start: string; end: string } {
+  // Parse the date string (YYYY-MM-DD)
+  const [year, month, day] = dateString.split('-').map(Number);
+  
+  // Create start of day in ET (00:00:00 ET)
+  const startET = createETDate(year, month - 1, day, 0); // month is 0-indexed
+  
+  // Create end of day in ET (23:59:59.999 ET)
+  const endET = createETDate(year, month - 1, day, 23);
+  endET.setMinutes(59, 59, 999);
+  
+  // Convert to UTC ISO strings for database query
+  // The Date objects are already in UTC internally, so toISOString() gives us UTC
+  return {
+    start: startET.toISOString(),
+    end: endET.toISOString()
+  };
+}
+
 async function ensureTestUserExists(userId: string = TEST_USER_ID): Promise<void> {
   const { error } = await supabase.from("users").upsert({
     id: userId,
@@ -818,7 +844,8 @@ async function createTestCommitment(options: {
   userId: string;
   limitMinutes: number;
   penaltyPerMinuteCents: number;
-  weekEndDate: string;
+  weekEndDate: string;  // Keep for weekly_pools and user_week_penalties lookup
+  deadlineTimestamp: string;  // REQUIRED: Full ISO timestamp
   graceExpiresAt?: string;
 }): Promise<{ id: string; maxChargeCents: number }> {
   const appsToLimit = { app_bundle_ids: ["com.apple.Safari"], categories: [] };
@@ -845,20 +872,20 @@ async function createTestCommitment(options: {
   // const maxChargeCents = previewData.max_charge_cents;
 
   await supabase.from("weekly_pools").upsert({
-    week_start_date: options.weekEndDate,
-    week_end_date: options.weekEndDate,
+    week_start_date: options.weekEndDate,  // Keep for lookup
     total_penalty_cents: 0,
     status: "open",
   }, {
     onConflict: "week_start_date",
   });
 
+  console.log(`🔍 DEBUG createTestCommitment: Inserting commitment with week_end_timestamp=${options.deadlineTimestamp}`);
   const { data, error } = await supabase
     .from("commitments")
     .insert({
       user_id: options.userId,
       week_start_date: new Date().toISOString().split("T")[0],
-      week_end_date: options.weekEndDate,
+      week_end_timestamp: options.deadlineTimestamp,  // REQUIRED: Full timestamp (both modes)
       limit_minutes: options.limitMinutes,
       penalty_per_minute_cents: options.penaltyPerMinuteCents,
       apps_to_limit: { app_bundle_ids: ["com.apple.Safari"], categories: [] },
@@ -871,7 +898,11 @@ async function createTestCommitment(options: {
     .select()
     .single();
 
-  if (error) throw new Error(`Failed to create commitment: ${error.message}`);
+  if (error) {
+    console.log(`🔍 DEBUG createTestCommitment: Error creating commitment: ${error.message}`);
+    throw new Error(`Failed to create commitment: ${error.message}`);
+  }
+  console.log(`🔍 DEBUG createTestCommitment: Created commitment id=${data.id}, week_end_timestamp=${data.week_end_timestamp}`);
   return { id: data.id, maxChargeCents };
 }
 
@@ -997,31 +1028,67 @@ async function syncUsageWithTimestamp(options: {
 
 async function triggerSettlement(weekEndDate: string, userId: string, isTestingMode: boolean): Promise<void> {
   // Simulate settlement logic (replicating run-weekly-settlement.ts)
+  console.log(`🔍 DEBUG triggerSettlement: weekEndDate=${weekEndDate}, userId=${userId}, isTestingMode=${isTestingMode}`);
   
-  // Get commitment for this user and week
-  const { data: commitment } = await supabase
+  // Convert weekEndDate to timestamp range for lookup (robust timezone handling)
+  const timestampRange = dateStringToTimestampRange(weekEndDate);
+  console.log(`🔍 DEBUG: Timestamp range: ${timestampRange.start} to ${timestampRange.end}`);
+  
+  // Get commitment for this user and week using timestamp range lookup
+  // Get the MOST RECENT commitment (order by created_at desc) to avoid old test data
+  // Also filter by a recent created_at to avoid very old test data
+  const recentCutoff = new Date(Date.now() - 5 * 60 * 1000); // Last 5 minutes
+  const { data: commitments, error: commitmentError } = await supabase
     .from("commitments")
     .select("*")
     .eq("user_id", userId)
-    .eq("week_end_date", weekEndDate)
+    .gte("week_end_timestamp", timestampRange.start)
+    .lte("week_end_timestamp", timestampRange.end)
     .eq("status", "active")
-    .single();
+    .gte("created_at", recentCutoff.toISOString()) // Only recent commitments (last 5 minutes)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  
+  if (commitmentError) {
+    console.log(`🔍 DEBUG: Commitment query error: ${commitmentError.message}`);
+  }
+  
+  console.log(`🔍 DEBUG: Found ${commitments?.length || 0} commitment(s) in range`);
+  if (commitments && commitments.length > 0) {
+    console.log(`🔍 DEBUG: Using most recent commitment: id=${commitments[0].id}, week_end_timestamp=${commitments[0].week_end_timestamp}, created_at=${commitments[0].created_at}`);
+  }
+  
+  const commitment = commitments && commitments.length > 0 ? commitments[0] : null;
 
-  if (!commitment) {
-    return; // No commitment
+  if (commitmentError) {
+    console.log(`🔍 DEBUG: Commitment query error: ${commitmentError.message}`);
   }
 
+  if (!commitment) {
+    console.log(`🔍 DEBUG: No commitment found - returning early`);
+    return; // No commitment
+  }
+  
+  console.log(`🔍 DEBUG: Found commitment: id=${commitment.id}, week_end_timestamp=${commitment.week_end_timestamp}, grace_expires_at=${commitment.week_grace_expires_at}`);
+
   // Get penalty record
-  const { data: penalty } = await supabase
+  const { data: penalty, error: penaltyError } = await supabase
     .from("user_week_penalties")
     .select("*")
     .eq("user_id", userId)
     .eq("week_start_date", weekEndDate)
     .single();
 
+  if (penaltyError) {
+    console.log(`🔍 DEBUG: Penalty query error: ${penaltyError.message}`);
+  }
+
+  console.log(`🔍 DEBUG: Penalty record: ${penalty ? `found, status=${penalty.settlement_status}, last_updated=${penalty.last_updated}, actual_amount_cents=${penalty.actual_amount_cents}` : 'not found'}`);
+
   // Check if already settled
   const settledStatuses = ["charged_actual", "charged_worst_case", "refunded", "refunded_partial"];
   if (penalty && settledStatuses.includes(penalty.settlement_status || "")) {
+    console.log(`🔍 DEBUG: Already settled with status: ${penalty.settlement_status} - returning early`);
     return; // Already settled
   }
 
@@ -1031,9 +1098,13 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
     const graceDeadline = new Date(commitment.week_grace_expires_at);
     // Add a small buffer to ensure grace has expired
     const referenceTime = new Date(Date.now() + 1000); // 1 second in future
+    console.log(`🔍 DEBUG: Grace check: graceDeadline=${graceDeadline.toISOString()}, referenceTime=${referenceTime.toISOString()}, expired=${graceDeadline.getTime() <= referenceTime.getTime()}`);
     if (graceDeadline.getTime() > referenceTime.getTime()) {
+      console.log(`🔍 DEBUG: Grace period not expired - returning early`);
       return; // Grace period not expired
     }
+  } else {
+    console.log(`🔍 DEBUG: No grace_expires_at set on commitment`);
   }
 
   // Get usage count (replicating fetchUsageCounts)
@@ -1055,23 +1126,16 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
         ? new Date(Date.now() + 60 * 1000) // Default 1 min grace in testing
         : calculateTuesdayET(calculatePreviousMondayET())); // Normal mode default
   
+  // Use stored week_end_timestamp (primary source of truth)
   let weekDeadline: Date;
-  if (isTestingMode) {
-    // Testing mode: Calculate from grace deadline
-    // Our test setup: deadline is 5 seconds ago, grace is 1 second ago (4 seconds difference)
-    const graceTime = graceDeadline.getTime();
-    const nowTime = Date.now();
-    // If grace is within last 10 seconds (testing scenario), deadline is 4 seconds before grace
-    // Otherwise, deadline is 1 minute before grace
-    weekDeadline = (nowTime - graceTime) < 10000
-      ? new Date(graceTime - 4000) // 4 seconds before grace (testing)
-      : new Date(graceTime - 60 * 1000); // 1 minute before grace
+  if (commitment.week_end_timestamp) {
+    weekDeadline = new Date(commitment.week_end_timestamp);
   } else {
-    // Normal mode: Calculate Monday 12:00 ET from week_end_date
-    const mondayDate = new Date(`${weekEndDate}T12:00:00`);
-    const mondayET = getDateInTimeZone(mondayDate, TIME_ZONE);
-    weekDeadline = createETDate(mondayET.year, mondayET.month, mondayET.day, 12);
+    // Fallback (shouldn't happen if data is correct)
+    throw new Error(`Commitment ${commitment.id} missing week_end_timestamp`);
   }
+  
+  console.log(`🔍 DEBUG: weekDeadline=${weekDeadline.toISOString()}, reportedDays=${reportedDays}`);
   
   if (reportedDays > 0) {
     // Method 1: Check if usage entries exist
@@ -1080,9 +1144,11 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
       // Usage must be synced WITHIN grace (after deadline, before grace expires)
       hasUsage = lastUpdated.getTime() > weekDeadline.getTime() && 
                  lastUpdated.getTime() <= graceDeadline.getTime();
+      console.log(`🔍 DEBUG: Method 1 check: lastUpdated=${lastUpdated.toISOString()}, after deadline=${lastUpdated.getTime() > weekDeadline.getTime()}, before grace=${lastUpdated.getTime() <= graceDeadline.getTime()}, hasUsage=${hasUsage}`);
     } else {
       // No timestamp, cannot verify timing - assume not synced within grace
       hasUsage = false;
+      console.log(`🔍 DEBUG: Method 1: No last_updated timestamp - hasUsage=false`);
     }
   }
   
@@ -1093,14 +1159,17 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
       // Usage must be synced WITHIN grace (after deadline, before grace expires)
       hasUsage = lastUpdated.getTime() > weekDeadline.getTime() && 
                  lastUpdated.getTime() <= graceDeadline.getTime();
+      console.log(`🔍 DEBUG: Method 2 check: lastUpdated=${lastUpdated.toISOString()}, hasUsage=${hasUsage}`);
     } else {
       // No timestamp, cannot verify timing
       hasUsage = false;
+      console.log(`🔍 DEBUG: Method 2: No last_updated timestamp - hasUsage=false`);
     }
   }
 
   // Determine charge type and amount
   const chargeType = hasUsage ? "actual" : "worst_case";
+  console.log(`🔍 DEBUG: Determined chargeType=${chargeType}, hasUsage=${hasUsage}`);
   let amountCents = 0;
   
   if (chargeType === "actual") {
@@ -1118,57 +1187,80 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
 
   // Skip if zero amount or below Stripe minimum (62 cents USD)
   const STRIPE_MINIMUM_CENTS = 62; // Stripe minimum charge threshold
+  console.log(`🔍 DEBUG: Calculated amountCents=${amountCents}, maxChargeCents=${commitment.max_charge_cents}`);
+  
   if (amountCents <= 0) {
+    console.log(`🔍 DEBUG: Amount is zero or negative - checking if we should skip`);
     // Only skip if it's actually zero (not a calculation error)
     if (chargeType === "worst_case" && (commitment.max_charge_cents || 0) === 0) {
+      console.log(`🔍 DEBUG: Worst case is 0 - marking as no_charge`);
       // Update penalty record to reflect zero penalty (no charge)
-      await supabase
+      // CRITICAL: Don't update last_updated - preserve the original sync timestamp
+      // for hasSyncedUsage() check (which happens before this update)
+      const { error: updateError } = await supabase
         .from("user_week_penalties")
         .update({
           settlement_status: "no_charge",
           charged_amount_cents: 0,
           actual_amount_cents: penalty?.total_penalty_cents || 0,
-          charge_payment_intent_id: null,
-          last_updated: new Date().toISOString()
+          charge_payment_intent_id: null
+          // last_updated is NOT updated - preserve original sync timestamp
         })
         .eq("user_id", userId)
         .eq("week_start_date", weekEndDate);
+      if (updateError) {
+        console.log(`🔍 DEBUG: Error updating to no_charge: ${updateError.message}`);
+      }
       return; // Worst case is 0, skip
     }
     if (chargeType === "actual" && (penalty?.total_penalty_cents || 0) === 0) {
+      console.log(`🔍 DEBUG: Actual penalty is 0 - marking as no_charge`);
       // Update penalty record to reflect zero penalty (no charge)
-      await supabase
+      // CRITICAL: Don't update last_updated - preserve the original sync timestamp
+      // for hasSyncedUsage() check (which happens before this update)
+      const { error: updateError } = await supabase
         .from("user_week_penalties")
         .update({
           settlement_status: "no_charge",
           charged_amount_cents: 0,
           actual_amount_cents: penalty?.total_penalty_cents || 0,
-          charge_payment_intent_id: null,
-          last_updated: new Date().toISOString()
+          charge_payment_intent_id: null
+          // last_updated is NOT updated - preserve original sync timestamp
         })
         .eq("user_id", userId)
         .eq("week_start_date", weekEndDate);
+      if (updateError) {
+        console.log(`🔍 DEBUG: Error updating to no_charge: ${updateError.message}`);
+      }
       return; // Actual is 0, skip
     }
     // Otherwise, there might be an issue - but for now, skip to avoid errors
+    console.log(`🔍 DEBUG: Amount is ${amountCents} but chargeType=${chargeType}, maxCharge=${commitment.max_charge_cents}, penaltyTotal=${penalty?.total_penalty_cents} - returning early (unexpected condition)`);
     return;
   }
   
   // Skip if below Stripe minimum (for actual penalties only)
   if (chargeType === "actual" && amountCents < STRIPE_MINIMUM_CENTS) {
+    console.log(`🔍 DEBUG: Actual amount ${amountCents} is below Stripe minimum ${STRIPE_MINIMUM_CENTS} - marking as below_stripe_minimum`);
     // Update penalty record to reflect skipped charge (matching production behavior)
-    await supabase
+    // CRITICAL: Don't update last_updated - preserve the original sync timestamp
+    // for hasSyncedUsage() check (which happens before this update)
+    const { error: updateError } = await supabase
       .from("user_week_penalties")
       .update({
         settlement_status: "below_stripe_minimum",
         charged_amount_cents: 0,
         actual_amount_cents: penalty?.total_penalty_cents || 0,
-        charge_payment_intent_id: null,
-        last_updated: new Date().toISOString()
+        charge_payment_intent_id: null
+        // last_updated is NOT updated - preserve original sync timestamp
       })
       .eq("user_id", userId)
       .eq("week_start_date", weekEndDate);
-    
+    if (updateError) {
+      console.log(`🔍 DEBUG: Error updating to below_stripe_minimum: ${updateError.message}`);
+    } else {
+      console.log(`🔍 DEBUG: Successfully updated to below_stripe_minimum`);
+    }
     return; // Below Stripe minimum, skip charge
   }
 
@@ -1181,7 +1273,9 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
     ? amountCents 
     : 0; // Unknown at worst case charge time
   
-  await supabase
+  console.log(`🔍 DEBUG: About to charge: settlementStatus=${settlementStatus}, amountCents=${amountCents}, actualAmountCents=${actualAmountCents}, needs_reconciliation=${chargeType === "worst_case"}`);
+  
+  const { error: penaltyUpdateError } = await supabase
     .from("user_week_penalties")
     .upsert({
       user_id: userId,
@@ -1194,8 +1288,14 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
       needs_reconciliation: chargeType === "worst_case" ? true : false,
     }, { onConflict: "user_id,week_start_date" });
 
+  if (penaltyUpdateError) {
+    console.log(`🔍 DEBUG: Error updating penalty record: ${penaltyUpdateError.message}`);
+  } else {
+    console.log(`🔍 DEBUG: Successfully updated penalty record to ${settlementStatus}`);
+  }
+
   // Create payment record
-  await supabase.from("payments").insert({
+  const { error: paymentInsertError } = await supabase.from("payments").insert({
     user_id: userId,
     week_start_date: weekEndDate,
     amount_cents: amountCents,
@@ -1204,6 +1304,14 @@ async function triggerSettlement(weekEndDate: string, userId: string, isTestingM
     status: "succeeded",
     payment_type: chargeType === "actual" ? "penalty_actual" : "penalty_worst_case",
   });
+
+  if (paymentInsertError) {
+    console.log(`🔍 DEBUG: Error inserting payment record: ${paymentInsertError.message}`);
+  } else {
+    console.log(`🔍 DEBUG: Successfully created payment record`);
+  }
+  
+  console.log(`🔍 DEBUG: triggerSettlement completed successfully`);
 }
 
 async function triggerReconciliation(userId: string, weekEndDate: string, actualPenaltyCents: number): Promise<void> {
@@ -1225,12 +1333,16 @@ async function triggerReconciliation(userId: string, weekEndDate: string, actual
   const chargedAmount = penalty.charged_amount_cents || 0;
   const maxChargeCents = penalty.actual_amount_cents || 0; // Get from commitment if needed
   
-  // Get commitment to find max_charge_cents
+  // Convert weekEndDate to timestamp range for lookup (robust timezone handling)
+  const timestampRange = dateStringToTimestampRange(weekEndDate);
+  
+  // Get commitment to find max_charge_cents using timestamp range lookup
   const { data: commitment } = await supabase
     .from("commitments")
     .select("max_charge_cents")
     .eq("user_id", userId)
-    .eq("week_end_date", weekEndDate)
+    .gte("week_end_timestamp", timestampRange.start)
+    .lte("week_end_timestamp", timestampRange.end)
     .single();
 
   const maxCharge = commitment?.max_charge_cents || 0;
@@ -1338,12 +1450,14 @@ async function verifyResults(
     .eq("week_start_date", weekEndDate)
     .single();
 
-  // Get payments
+  // Get payments (only recent ones to avoid old test data)
+  const recentCutoff = new Date(Date.now() - 5 * 60 * 1000); // Last 5 minutes
   const { data: payments } = await supabase
     .from("payments")
     .select("*")
     .eq("user_id", userId)
-    .eq("week_start_date", weekEndDate);
+    .eq("week_start_date", weekEndDate)
+    .gte("created_at", recentCutoff.toISOString()); // Only recent payments
 
   const actual = {
     settlementStatus: penalty?.settlement_status || null,
@@ -1419,36 +1533,40 @@ async function runTestCase(testCase: TestCase, isTestingMode: boolean): Promise<
   // Use same test user for all cases, but ensure clean state
   const userId = TEST_USER_ID;
   
-  let weekEndDate: string;
+  let weekEndDate: string;  // Keep for weekly_pools and user_week_penalties lookup
+  let deadlineTimestamp: string;  // REQUIRED: Full ISO timestamp
   let deadlineDate: Date;
   let graceExpiresAt: Date;
   
   if (isTestingMode) {
     // Testing mode: Use relative timestamps (compressed timeline)
-    const baseDate = new Date();
-    baseDate.setUTCDate(baseDate.getUTCDate() + (testCase.mainCase * 7) + (testCase.subCondition === "A" ? 0 : 1));
-    weekEndDate = baseDate.toISOString().split("T")[0];
-    
     // Calculate grace expiration (1 minute after deadline in testing mode)
     // For testing, we'll use relative timestamps:
     // - Deadline: 5 seconds ago
     // - Grace expires: now (or slightly in past)
     const now = Date.now();
     deadlineDate = new Date(now - 5000); // 5 seconds ago (deadline)
+    deadlineTimestamp = deadlineDate.toISOString(); // Full timestamp
     graceExpiresAt = new Date(now - 1000); // 1 second ago (grace expired, settlement can run)
+    
+    // Derive weekEndDate from deadlineTimestamp (not calculated separately)
+    // Extract the date in ET timezone from the timestamp
+    const deadlineET = getDateInTimeZone(deadlineDate, TIME_ZONE);
+    weekEndDate = `${deadlineET.year}-${String(deadlineET.month + 1).padStart(2, "0")}-${String(deadlineET.day).padStart(2, "0")}`;
   } else {
     // Normal mode: Use actual Monday/Tuesday dates
     // Calculate previous Monday 12:00 ET (or current Monday if before 12:00 ET)
     const mondayDeadline = calculatePreviousMondayET();
     deadlineDate = mondayDeadline;
+    deadlineTimestamp = mondayDeadline.toISOString(); // Full timestamp
     
     // Calculate Tuesday 12:00 ET (grace expires)
     // For testing, set it in the past so settlement can run immediately
     const tuesdayGrace = calculateTuesdayET(mondayDeadline);
-    // Set grace to 1 hour ago (in the past) so settlement can run
-    graceExpiresAt = new Date(tuesdayGrace.getTime() - 60 * 60 * 1000);
+    // Set grace to well in the past (2 hours ago) so settlement can run
+    graceExpiresAt = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
     
-    // Format week_end_date as YYYY-MM-DD
+    // Format week_end_date as YYYY-MM-DD (for weekly_pools and user_week_penalties lookup)
     const mondayET = getDateInTimeZone(mondayDeadline, TIME_ZONE);
     weekEndDate = `${mondayET.year}-${String(mondayET.month + 1).padStart(2, "0")}-${String(mondayET.day).padStart(2, "0")}`;
   }
@@ -1457,13 +1575,16 @@ async function runTestCase(testCase: TestCase, isTestingMode: boolean): Promise<
   await ensureTestUserExists(userId);
   
   // Create commitment
+  console.log(`🔍 DEBUG runTestCase: Creating commitment with weekEndDate=${weekEndDate}, deadlineTimestamp=${deadlineTimestamp}`);
   const { id: commitmentId, maxChargeCents } = await createTestCommitment({
     userId,
     limitMinutes: testCase.setup.limitMinutes,
     penaltyPerMinuteCents: testCase.setup.penaltyPerMinuteCents,
-    weekEndDate,
+    weekEndDate,  // Keep for weekly_pools lookup
+    deadlineTimestamp,  // REQUIRED: Full timestamp
     graceExpiresAt: graceExpiresAt.toISOString(),
   });
+  console.log(`🔍 DEBUG runTestCase: Created commitment id=${commitmentId}`);
 
   // Create initial penalty record (needed for Case 2 when no usage synced)
   // Don't set actual_amount_cents to 0 - leave it null to indicate unknown

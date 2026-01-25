@@ -8,20 +8,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-/**
- * Format a Date object as YYYY-MM-DD string (normal mode)
- * or ISO 8601 string (testing mode for precise timing)
- */
-function formatDeadlineDate(date: Date, isTestingMode: boolean): string {
-  if (isTestingMode) {
-    // In testing mode, return full ISO timestamp for precise timing
-    return date.toISOString();
-  }
-  // In normal mode, return just the date (YYYY-MM-DD)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
-}
+// formatDeadlineDate function removed - no longer needed
+// Both modes now use timestamps directly via toISOString()
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -74,13 +62,17 @@ serve(async (req) => {
     // Testing mode: 4 minutes from now
     // Normal mode: Next Monday 12:00 ET
     const deadline = getNextDeadline(isTestingMode);
-    const deadlineDateForRPC = formatDeadlineDate(deadline, isTestingMode).split('T')[0]; // Extract YYYY-MM-DD
-    const deadlineISO = isTestingMode ? deadline.toISOString() : null;
     
-    console.log(`preview-service: Calculated deadline date: ${deadlineDateForRPC} (testing mode: ${isTestingMode})`);
-    console.log(`🧪 TEST 5 - PREVIEW: Backend calculated deadline at ${new Date().toISOString()}: ${deadlineISO || deadlineDateForRPC}`);
+    // Always use timestamp (both modes now use same structure)
+    const deadlineTimestamp = deadline.toISOString();
+    const deadlineDateForRPC = deadlineTimestamp.split('T')[0]; // Extract YYYY-MM-DD for RPC
+    
+    console.log(`preview-service: Calculated deadline timestamp: ${deadlineTimestamp} (testing mode: ${isTestingMode})`);
+    console.log(`🧪 TEST 5 - PREVIEW: Backend calculated deadline at ${new Date().toISOString()}: ${deadlineTimestamp}`);
 
     // Call the RPC function with calculated deadline
+    // Note: rpc_preview_max_charge still uses p_deadline_date (date format)
+    // This is fine - it extracts the date component from the timestamp
     const { data, error } = await supabase.rpc('rpc_preview_max_charge', {
       p_deadline_date: deadlineDateForRPC,  // Date format (YYYY-MM-DD) for RPC
       p_limit_minutes: limitMinutes,
