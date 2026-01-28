@@ -59,17 +59,21 @@ fi
 echo "✅ Secrets check passed"
 echo ""
 
-# Step 2: Run tests
-echo "📋 Step 2: Running tests..."
-if ! ./scripts/run_all_tests.sh; then
-    echo "⚠️  Some tests failed. Continue anyway? (y/n)"
-    read -r response
-    if [ "$response" != "y" ]; then
-        echo "❌ Deployment aborted by user"
-        exit 1
+# Step 2: Run tests (skip if SKIP_TESTS=1)
+if [ "$SKIP_TESTS" = "1" ]; then
+    echo "📋 Step 2: Skipping tests (SKIP_TESTS=1)"
+else
+    echo "📋 Step 2: Running tests..."
+    if ! ./scripts/run_all_tests.sh; then
+        echo "⚠️  Some tests failed. Continue anyway? (y/n)"
+        read -r response
+        if [ "$response" != "y" ]; then
+            echo "❌ Deployment aborted by user"
+            exit 1
+        fi
     fi
+    echo "✅ Tests completed"
 fi
-echo "✅ Tests completed"
 echo ""
 
 # Step 3: Stage changes

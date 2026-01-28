@@ -33,6 +33,11 @@ struct IntroContent {
             stepNumber: 5,
             title: "Step five",
             description: "Get started today"
+        ),
+        IntroStep(
+            stepNumber: 6,
+            title: "Step six",
+            description: "Penalties go to non-profit."
         )
     ]
 }
@@ -772,6 +777,14 @@ struct IntroStepContentView: View {
                     LockAnimation()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .position(x: screenWidth / 2, y: screenHeight / 2 + 15) // Moved down 15 points
+                case 6:
+                    // Center for Humane Technology logo - last intro screen
+                    Image("CHT-logo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geometry.size.width * 0.6)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .position(x: screenWidth / 2, y: screenHeight / 2 + 15)
                 default:
                     HStack {
                         Spacer()
@@ -796,6 +809,8 @@ struct IntroStepContentView: View {
                         return "Select apps to limit"
                     case 5:
                         return "COMMIT!"
+                    case 6:
+                        return "Penalties go to non-profit."
                     default:
                         return step.description
                     }
@@ -866,7 +881,7 @@ struct IntroView: View {
                        // Fixed bottom section: Progress dots, button, and skip button
                        VStack(spacing: 20) {
                            // Progress dots
-                           ProgressDots(totalSteps: 5, currentStep: currentStepIndex)
+                           ProgressDots(totalSteps: totalSteps, currentStep: currentStepIndex)
                            
                            // Button - styled like SetupView black buttons
                            Button(action: {

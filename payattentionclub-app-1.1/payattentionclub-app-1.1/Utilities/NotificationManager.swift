@@ -130,32 +130,46 @@ class NotificationManager {
         let currentPenalty = excessMinutes * penaltyPerMinute
         
         logger.info("📊 Usage check - usageMinutes: \(usageMinutes), limit: \(limitMinutesValue), penalty: $\(String(format: "%.2f", currentPenalty))")
+        NSLog("NOTIFICATION NotificationManager: 🔍 DIAGNOSTIC - INPUT VALUES - currentUsageSeconds: \(currentUsageSeconds)s, baselineUsageSeconds: \(baselineUsageSeconds)s, limitMinutes: \(limitMinutesValue)min")
+        NSLog("NOTIFICATION NotificationManager: 🔍 DIAGNOSTIC - CALCULATED - usageMinutes: \(usageMinutes) (from \(currentUsageSeconds)s - \(baselineUsageSeconds)s), limit: \(limitMinutesValue)min, penalty: $\(String(format: "%.2f", currentPenalty))")
+        NSLog("NOTIFICATION NotificationManager: 🔍 DIAGNOSTIC - Notification flags - approaching: \(hasNotifiedApproachingLimit), limitReached: \(hasNotifiedLimitReached), firstPenalty: \(hasNotifiedFirstPenalty), lastMilestone: \(lastPenaltyMilestoneNotified)")
         
         // Check for approaching limit (80-90% of limit)
         let approachingThreshold = limitMinutesValue * 0.8
         let limitReachedThreshold = limitMinutesValue
         
+        NSLog("NOTIFICATION NotificationManager: 🔍 DIAGNOSTIC - Thresholds - approaching: \(approachingThreshold)min, limitReached: \(limitReachedThreshold)min")
+        
         if usageMinutes >= approachingThreshold && !hasNotifiedApproachingLimit {
             let minutesRemaining = max(0, limitMinutesValue - usageMinutes)
             logger.info("🚨 Approaching limit threshold reached: \(usageMinutes) >= \(approachingThreshold), remaining: \(minutesRemaining) min")
+            NSLog("NOTIFICATION NotificationManager: 🚨 SENDING approaching limit notification - usage: \(usageMinutes)min >= threshold: \(approachingThreshold)min")
             await sendApproachingLimitNotification(minutesRemaining: Int(minutesRemaining))
             hasNotifiedApproachingLimit = true
         } else if usageMinutes >= approachingThreshold {
             logger.debug("⏭️ Approaching limit already notified")
+            NSLog("NOTIFICATION NotificationManager: ⏭️ Approaching limit already notified (flag: \(hasNotifiedApproachingLimit))")
+        } else {
+            NSLog("NOTIFICATION NotificationManager: ⏭️ Approaching limit not reached yet - usage: \(usageMinutes)min < threshold: \(approachingThreshold)min")
         }
         
         // Check for limit reached
         if usageMinutes >= limitReachedThreshold && !hasNotifiedLimitReached {
             logger.info("🚨 Limit reached threshold: \(usageMinutes) >= \(limitReachedThreshold)")
+            NSLog("NOTIFICATION NotificationManager: 🚨 SENDING limit reached notification - usage: \(usageMinutes)min >= threshold: \(limitReachedThreshold)min")
             await sendLimitReachedNotification()
             hasNotifiedLimitReached = true
         } else if usageMinutes >= limitReachedThreshold {
             logger.debug("⏭️ Limit reached already notified")
+            NSLog("NOTIFICATION NotificationManager: ⏭️ Limit reached already notified (flag: \(hasNotifiedLimitReached))")
+        } else {
+            NSLog("NOTIFICATION NotificationManager: ⏭️ Limit not reached yet - usage: \(usageMinutes)min < threshold: \(limitReachedThreshold)min")
         }
         
         // Check for first penalty ($0.50 threshold) - useful for testing and early warning
         if currentPenalty >= 0.50 && !hasNotifiedFirstPenalty {
             logger.info("🚨 First penalty threshold reached: $\(String(format: "%.2f", currentPenalty))")
+            NSLog("NOTIFICATION NotificationManager: 🚨 SENDING first penalty notification - penalty: $\(String(format: "%.2f", currentPenalty))")
             await sendFirstPenaltyNotification(
                 exceededBy: excessMinutes,
                 currentPenalty: currentPenalty
@@ -163,6 +177,9 @@ class NotificationManager {
             hasNotifiedFirstPenalty = true
         } else if currentPenalty >= 0.50 {
             logger.debug("⏭️ First penalty already notified")
+            NSLog("NOTIFICATION NotificationManager: ⏭️ First penalty already notified (flag: \(hasNotifiedFirstPenalty), penalty: $\(String(format: "%.2f", currentPenalty)))")
+        } else {
+            NSLog("NOTIFICATION NotificationManager: ⏭️ First penalty not reached yet - penalty: $\(String(format: "%.2f", currentPenalty)) < $0.50")
         }
         
         // Check for penalty milestones ($10 increments)

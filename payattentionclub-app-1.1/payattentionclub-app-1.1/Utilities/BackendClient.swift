@@ -876,6 +876,14 @@ class BackendClient {
         dateFormatter.dateFormat = "yyyy-MM-dd"
         dateFormatter.timeZone = TimeZone(identifier: "America/New_York")
         let encodedDate = weekStartDate.map { dateFormatter.string(from: $0) }
+        
+        // Diagnostic logging
+        if let weekStartDate = weekStartDate {
+            NSLog("SETTLEMENT BackendClient: 🔍 fetchWeekStatus called with weekStartDate: \(weekStartDate)")
+            NSLog("SETTLEMENT BackendClient: 🔍 Converted to ET date string: \(encodedDate ?? "NULL")")
+        } else {
+            NSLog("SETTLEMENT BackendClient: 🔍 fetchWeekStatus called with weekStartDate: NULL (will use auto-detection)")
+        }
 
         let params = WeekStatusParams(p_week_start_date: encodedDate)
 
@@ -884,9 +892,11 @@ class BackendClient {
             let response: PostgrestResponse<[WeekStatusResponse]> = try await builder.execute()
             guard let first = response.value.first else {
                 NSLog("SETTLEMENT BackendClient: ⚠️ rpc_get_week_status returned no rows for \(encodedDate ?? "auto")")
+                NSLog("SETTLEMENT BackendClient: 🔍 This means no commitment was found for date: \(encodedDate ?? "auto")")
                 throw BackendError.serverError("No week status available yet. Lock in a commitment first.")
             }
             NSLog("SETTLEMENT BackendClient: ✅ Loaded week status for \(encodedDate ?? "auto")")
+            NSLog("SETTLEMENT BackendClient: 🔍 Response - limitMinutes: \(first.limitMinutes), penaltyPerMinuteCents: \(first.penaltyPerMinuteCents)")
             return first
         } catch {
             NSLog("SETTLEMENT BackendClient: ❌ Failed to load week status: \(error)")

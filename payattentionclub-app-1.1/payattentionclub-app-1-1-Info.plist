@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Pay Attention Club does not use the camera. This notice is required because a third-party payment library references camera APIs (e.g., for scanning payment cards).</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

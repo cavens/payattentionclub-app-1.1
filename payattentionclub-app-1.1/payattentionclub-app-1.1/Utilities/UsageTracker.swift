@@ -28,9 +28,16 @@ class UsageTracker {
     /// nonisolated: UserDefaults reads are thread-safe, can be called from any thread
     nonisolated func getBaselineTime() -> TimeInterval {
         guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            NSLog("USAGE UsageTracker: ⚠️ Could not access App Group UserDefaults")
             return 0.0
         }
-        return userDefaults.double(forKey: "baselineTimeSpent")
+        let baselineTimeSpent = userDefaults.double(forKey: "baselineTimeSpent")
+        let baselineThresholdSeconds = userDefaults.integer(forKey: "baselineThresholdSeconds")
+        let intervalBaselineSeconds = userDefaults.integer(forKey: "intervalBaselineSeconds")
+        
+        NSLog("USAGE UsageTracker: 🔍 getBaselineTime() - baselineTimeSpent: \(Int(baselineTimeSpent))s, baselineThresholdSeconds: \(baselineThresholdSeconds)s, intervalBaselineSeconds: \(intervalBaselineSeconds)s")
+        
+        return baselineTimeSpent
     }
     
     // MARK: - Monitor Extension Data Reading

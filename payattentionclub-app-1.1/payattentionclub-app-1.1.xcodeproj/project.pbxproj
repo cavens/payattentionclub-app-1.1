@@ -15,6 +15,10 @@
 		CD43B15E2EC7C75900BCDBB9 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B15D2EC7C75900BCDBB9 /* Supabase */; };
 		CD43B1C32EC9081D00BCDBB9 /* StripePaymentSheet in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B1C22EC9081D00BCDBB9 /* StripePaymentSheet */; };
 		CD43B1C72EC912EE00BCDBB9 /* Stripe in Frameworks */ = {isa = PBXBuildFile; productRef = CD43B1C62EC912EE00BCDBB9 /* Stripe */; };
+		CD5FCA872F29791E002D9AF8 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD5FCA862F29791E002D9AF8 /* WidgetKit.framework */; };
+		CD5FCA892F29791E002D9AF8 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD5FCA882F29791E002D9AF8 /* SwiftUI.framework */; };
+		CD5FCA982F297920002D9AF8 /* PenaltyWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CD5FCA852F29791E002D9AF8 /* PenaltyWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		CD5FCAA02F297940002D9AF8 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD5FCA862F29791E002D9AF8 /* WidgetKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -24,6 +28,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = CD43B0582EC4049D00BCDBB9;
 			remoteInfo = DeviceActivityMonitorExtension;
+		};
+		CD5FCA962F297920002D9AF8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CD43B03E2EC4044A00BCDBB9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CD5FCA842F29791E002D9AF8;
+			remoteInfo = PenaltyWidgetExtension;
 		};
 		CDC8B73C2EEA1DF600060808 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -41,6 +52,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				CD5FCA982F297920002D9AF8 /* PenaltyWidgetExtension.appex in Embed Foundation Extensions */,
 				CD43B0642EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
@@ -53,6 +65,10 @@
 		CD43B0592EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DeviceActivityMonitorExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD43B05B2EC4049D00BCDBB9 /* DeviceActivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DeviceActivity.framework; path = System/Library/Frameworks/DeviceActivity.framework; sourceTree = SDKROOT; };
 		CD43B06B2EC405B900BCDBB9 /* FamilyControls.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FamilyControls.framework; path = System/Library/Frameworks/FamilyControls.framework; sourceTree = SDKROOT; };
+		CD5FCA852F29791E002D9AF8 /* PenaltyWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PenaltyWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CD5FCA862F29791E002D9AF8 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		CD5FCA882F29791E002D9AF8 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		CD5FCA9D2F297952002D9AF8 /* PenaltyWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PenaltyWidgetExtension.entitlements; sourceTree = "<group>"; };
 		CDC8B7382EEA1DF600060808 /* payattentionclub-app-1.1Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "payattentionclub-app-1.1Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -63,6 +79,13 @@
 				Info.plist,
 			);
 			target = CD43B0582EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */;
+		};
+		CD5FCA9B2F297920002D9AF8 /* Exceptions for "PenaltyWidget" folder in "PenaltyWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CD5FCA842F29791E002D9AF8 /* PenaltyWidgetExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -78,6 +101,14 @@
 				CD43B0652EC4049D00BCDBB9 /* Exceptions for "DeviceActivityMonitorExtension" folder in "DeviceActivityMonitorExtension" target */,
 			);
 			path = DeviceActivityMonitorExtension;
+			sourceTree = "<group>";
+		};
+		CD5FCA8A2F29791E002D9AF8 /* PenaltyWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CD5FCA9B2F297920002D9AF8 /* Exceptions for "PenaltyWidget" folder in "PenaltyWidgetExtension" target */,
+			);
+			path = PenaltyWidget;
 			sourceTree = "<group>";
 		};
 		CDC8B7392EEA1DF600060808 /* payattentionclub-app-1.1Tests */ = {
@@ -103,6 +134,7 @@
 				CD43B15C2EC7C75900BCDBB9 /* Auth in Frameworks */,
 				CD43B1C32EC9081D00BCDBB9 /* StripePaymentSheet in Frameworks */,
 				CD43B1C72EC912EE00BCDBB9 /* Stripe in Frameworks */,
+				CD5FCAA02F297940002D9AF8 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -111,6 +143,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				CD43B05C2EC4049D00BCDBB9 /* DeviceActivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CD5FCA822F29791E002D9AF8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CD5FCA892F29791E002D9AF8 /* SwiftUI.framework in Frameworks */,
+				CD5FCA872F29791E002D9AF8 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -127,10 +168,12 @@
 		CD43B03D2EC4044A00BCDBB9 = {
 			isa = PBXGroup;
 			children = (
+				CD5FCA9D2F297952002D9AF8 /* PenaltyWidgetExtension.entitlements */,
 				CD43B0482EC4044A00BCDBB9 /* payattentionclub-app-1.1 */,
 				CD43B05D2EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */,
 				CDC8B7392EEA1DF600060808 /* payattentionclub-app-1.1Tests */,
 				CDC8B74C2EEA2CBD00060808 /* payattentionclub-app-1.1UITests */,
+				CD5FCA8A2F29791E002D9AF8 /* PenaltyWidget */,
 				CD43B05A2EC4049D00BCDBB9 /* Frameworks */,
 				CD43B0472EC4044A00BCDBB9 /* Products */,
 			);
@@ -142,6 +185,7 @@
 				CD43B0462EC4044A00BCDBB9 /* payattentionclub-app-1.1.app */,
 				CD43B0592EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex */,
 				CDC8B7382EEA1DF600060808 /* payattentionclub-app-1.1Tests.xctest */,
+				CD5FCA852F29791E002D9AF8 /* PenaltyWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -151,6 +195,8 @@
 			children = (
 				CD43B06B2EC405B900BCDBB9 /* FamilyControls.framework */,
 				CD43B05B2EC4049D00BCDBB9 /* DeviceActivity.framework */,
+				CD5FCA862F29791E002D9AF8 /* WidgetKit.framework */,
+				CD5FCA882F29791E002D9AF8 /* SwiftUI.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -171,6 +217,7 @@
 			);
 			dependencies = (
 				CD43B0632EC4049D00BCDBB9 /* PBXTargetDependency */,
+				CD5FCA972F297920002D9AF8 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				CD43B0482EC4044A00BCDBB9 /* payattentionclub-app-1.1 */,
@@ -206,6 +253,28 @@
 			);
 			productName = DeviceActivityMonitorExtension;
 			productReference = CD43B0592EC4049D00BCDBB9 /* DeviceActivityMonitorExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		CD5FCA842F29791E002D9AF8 /* PenaltyWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CD5FCA9C2F297920002D9AF8 /* Build configuration list for PBXNativeTarget "PenaltyWidgetExtension" */;
+			buildPhases = (
+				CD5FCA812F29791E002D9AF8 /* Sources */,
+				CD5FCA822F29791E002D9AF8 /* Frameworks */,
+				CD5FCA832F29791E002D9AF8 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CD5FCA8A2F29791E002D9AF8 /* PenaltyWidget */,
+			);
+			name = PenaltyWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = PenaltyWidgetExtension;
+			productReference = CD5FCA852F29791E002D9AF8 /* PenaltyWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 		CDC8B7372EEA1DF600060808 /* payattentionclub-app-1.1Tests */ = {
@@ -248,6 +317,9 @@
 						CreatedOnToolsVersion = 26.0.1;
 						LastSwiftMigration = 2600;
 					};
+					CD5FCA842F29791E002D9AF8 = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
 					CDC8B7372EEA1DF600060808 = {
 						CreatedOnToolsVersion = 26.0.1;
 						TestTargetID = CD43B0452EC4044A00BCDBB9;
@@ -275,6 +347,7 @@
 				CD43B0452EC4044A00BCDBB9 /* payattentionclub-app-1.1 */,
 				CD43B0582EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */,
 				CDC8B7372EEA1DF600060808 /* payattentionclub-app-1.1Tests */,
+				CD5FCA842F29791E002D9AF8 /* PenaltyWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -288,6 +361,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		CD43B0572EC4049D00BCDBB9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CD5FCA832F29791E002D9AF8 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -318,6 +398,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CD5FCA812F29791E002D9AF8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CDC8B7342EEA1DF600060808 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -332,6 +419,11 @@
 			isa = PBXTargetDependency;
 			target = CD43B0582EC4049D00BCDBB9 /* DeviceActivityMonitorExtension */;
 			targetProxy = CD43B0622EC4049D00BCDBB9 /* PBXContainerItemProxy */;
+		};
+		CD5FCA972F297920002D9AF8 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CD5FCA842F29791E002D9AF8 /* PenaltyWidgetExtension */;
+			targetProxy = CD5FCA962F297920002D9AF8 /* PBXContainerItemProxy */;
 		};
 		CDC8B73D2EEA1DF600060808 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -470,11 +562,13 @@
 				CODE_SIGN_ENTITLEMENTS = "payattentionclub-app-1.1/payattentionclub-app-1.1.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 53XBXA739T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "payattentionclub-app-1-1-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Pay Attention Club";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -485,7 +579,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.payattentionclub2.0.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -507,11 +601,13 @@
 				CODE_SIGN_ENTITLEMENTS = "payattentionclub-app-1.1/payattentionclub-app-1.1.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 53XBXA739T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "payattentionclub-app-1-1-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Pay Attention Club";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -522,7 +618,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.payattentionclub2.0.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -603,6 +699,72 @@
 			};
 			name = Release;
 		};
+		CD5FCA992F297920002D9AF8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = PenaltyWidgetExtension.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 53XBXA739T;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PenaltyWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PenaltyWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.payattentionclub2.0.app.PenaltyWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CD5FCA9A2F297920002D9AF8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = PenaltyWidgetExtension.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 53XBXA739T;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PenaltyWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PenaltyWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.payattentionclub2.0.app.PenaltyWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		CDC8B73F2EEA1DF600060808 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -673,6 +835,15 @@
 			buildConfigurations = (
 				CD43B0672EC4049D00BCDBB9 /* Debug */,
 				CD43B0682EC4049D00BCDBB9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CD5FCA9C2F297920002D9AF8 /* Build configuration list for PBXNativeTarget "PenaltyWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CD5FCA992F297920002D9AF8 /* Debug */,
+				CD5FCA9A2F297920002D9AF8 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

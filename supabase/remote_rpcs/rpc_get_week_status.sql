@@ -43,17 +43,21 @@ begin
   -- Calculate deadline date (for backward compatibility with date parameter)
   if p_week_start_date is not null then
     v_week_deadline := p_week_start_date;
+    raise notice '🔍 rpc_get_week_status: Received p_week_start_date parameter: %', p_week_start_date;
   else
     v_week_deadline := current_date + (8 - extract(dow from current_date)::int) % 7;
     if extract(dow from current_date) = 1 then
       v_week_deadline := current_date + 7;
     end if;
+    raise notice '🔍 rpc_get_week_status: No parameter provided, calculated v_week_deadline: %', v_week_deadline;
   end if;
 
   -- Convert deadline date to timestamp range for lookup
   -- Find all commitments where week_end_timestamp falls on the same day (in ET timezone)
   v_week_deadline_start := (v_week_deadline::timestamp AT TIME ZONE 'America/New_York') AT TIME ZONE 'UTC';
   v_week_deadline_end := v_week_deadline_start + INTERVAL '1 day';
+  
+  raise notice '🔍 rpc_get_week_status: Looking for commitments where week_end_timestamp between % and %', v_week_deadline_start, v_week_deadline_end;
 
   -- Lookup commitment using timestamp range (same day in ET timezone)
   select c.*
@@ -64,6 +68,12 @@ begin
       and c.week_end_timestamp < v_week_deadline_end
     order by c.created_at desc
     limit 1;
+  
+  if v_commitment.id is not null then
+    raise notice '🔍 rpc_get_week_status: ✅ Found commitment id=%, week_end_timestamp=%, limit_minutes=%', v_commitment.id, v_commitment.week_end_timestamp, v_commitment.limit_minutes;
+  else
+    raise notice '🔍 rpc_get_week_status: ⚠️ No commitment found for user_id=% with week_end_timestamp between % and %', v_user_id, v_week_deadline_start, v_week_deadline_end;
+  end if;
 
   select uwp.*
     into v_user_week_pen
@@ -113,6 +123,8 @@ begin
   -- Return commitment settings (limit_minutes and penalty_per_minute_cents)
   limit_minutes := coalesce(v_commitment.limit_minutes, 0);
   penalty_per_minute_cents := coalesce(v_commitment.penalty_per_minute_cents, 0);
+  
+  raise notice '🔍 rpc_get_week_status: Returning limit_minutes=%, penalty_per_minute_cents=%', limit_minutes, penalty_per_minute_cents;
 
   return next;
   return;

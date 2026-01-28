@@ -3,6 +3,7 @@ import Foundation
 import Combine
 import FamilyControls
 import DeviceActivity
+import WidgetKit
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -133,21 +134,30 @@ final class AppModel: ObservableObject {
             defer { isLoadingWeekStatus = false }
 
             do {
+                let deadlineDate = weekStartDateOverride ?? UsageTracker.shared.getCommitmentDeadline()
+                NSLog("APP AppModel: 🔍 refreshWeekStatus called - deadlineDate: \(deadlineDate), weekStartDateOverride: \(weekStartDateOverride?.description ?? "nil")")
+                
                 let response = try await BackendClient.shared.fetchWeekStatus(
-                    weekStartDate: weekStartDateOverride ?? UsageTracker.shared.getCommitmentDeadline()
+                    weekStartDate: deadlineDate
                 )
                 weekStatus = response
                 weekStatusError = nil
+                
+                NSLog("APP AppModel: 🔍 weekStatus received - limitMinutes: \(response.limitMinutes), penaltyPerMinuteCents: \(response.penaltyPerMinuteCents)")
                 
                 // Load commitment settings from backend (source of truth)
                 // This ensures limitMinutes and penaltyPerMinute match the actual commitment
                 if response.limitMinutes > 0 {
                     limitMinutes = Double(response.limitMinutes)
-                    NSLog("APP AppModel: Loaded limitMinutes from backend: \(response.limitMinutes) minutes")
+                    NSLog("APP AppModel: ✅ Loaded limitMinutes from backend: \(response.limitMinutes) minutes")
+                } else {
+                    NSLog("APP AppModel: ⚠️ WARNING - weekStatus.limitMinutes is 0 or missing! Current limitMinutes: \(limitMinutes)")
                 }
                 if response.penaltyPerMinuteCents > 0 {
                     penaltyPerMinute = Double(response.penaltyPerMinuteCents) / 100.0
-                    NSLog("APP AppModel: Loaded penaltyPerMinute from backend: $\(penaltyPerMinute) per minute")
+                    NSLog("APP AppModel: ✅ Loaded penaltyPerMinute from backend: $\(penaltyPerMinute) per minute")
+                } else {
+                    NSLog("APP AppModel: ⚠️ WARNING - weekStatus.penaltyPerMinuteCents is 0 or missing! Current penaltyPerMinute: \(penaltyPerMinute)")
                 }
                 
                 // Save to UserDefaults for persistence
@@ -341,6 +351,14 @@ final class AppModel: ObservableObject {
         let limitMinutes = self.limitMinutes
         let excessMinutes = max(0, usageMinutes - limitMinutes)
         currentPenalty = excessMinutes * penaltyPerMinute
+        writePenaltyToWidget(currentPenalty)
+    }
+
+    /// Write current penalty to App Group and reload widget
+    private func writePenaltyToWidget(_ penalty: Double) {
+        guard let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub2.0.app") else { return }
+        userDefaults.set(penalty, forKey: "widgetCurrentPenalty")
+        WidgetCenter.shared.reloadTimelines(ofKind: "PenaltyWidget")
     }
     
     // MARK: - Persistence

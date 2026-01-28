@@ -180,6 +180,8 @@ struct MonitorView: View {
             .onChange(of: model.weekStatus) { newStatus in
                 // Update authorization amount from week status (comes from backend commitment)
                 if let weekStatus = newStatus {
+                    NSLog("MONITOR MonitorView: 🔍 weekStatus changed - limitMinutes: \(weekStatus.limitMinutes), penaltyPerMinuteCents: \(weekStatus.penaltyPerMinuteCents)")
+                    
                     let maxChargeDollars = Double(weekStatus.userMaxChargeCents) / 100.0
                     if model.authorizationAmount != maxChargeDollars {
                         model.authorizationAmount = maxChargeDollars
@@ -190,14 +192,22 @@ struct MonitorView: View {
                     // This ensures the UI shows the correct values even after app restart
                     if weekStatus.limitMinutes > 0 && model.limitMinutes != Double(weekStatus.limitMinutes) {
                         model.limitMinutes = Double(weekStatus.limitMinutes)
-                        NSLog("MONITOR MonitorView: Updated limitMinutes from weekStatus: \(weekStatus.limitMinutes) minutes")
+                        NSLog("MONITOR MonitorView: ✅ Updated limitMinutes from weekStatus: \(weekStatus.limitMinutes) minutes (was: \(model.limitMinutes))")
+                    } else if weekStatus.limitMinutes == 0 {
+                        NSLog("MONITOR MonitorView: ⚠️ WARNING - weekStatus.limitMinutes is 0! Not updating. Current limitMinutes: \(model.limitMinutes)")
+                    } else {
+                        NSLog("MONITOR MonitorView: ⏭️ limitMinutes unchanged: \(model.limitMinutes) (weekStatus: \(weekStatus.limitMinutes))")
                     }
                     let penaltyFromBackend = Double(weekStatus.penaltyPerMinuteCents) / 100.0
                     if weekStatus.penaltyPerMinuteCents > 0 && abs(model.penaltyPerMinute - penaltyFromBackend) > 0.001 {
                         model.penaltyPerMinute = penaltyFromBackend
-                        NSLog("MONITOR MonitorView: Updated penaltyPerMinute from weekStatus: $\(penaltyFromBackend) per minute")
+                        NSLog("MONITOR MonitorView: ✅ Updated penaltyPerMinute from weekStatus: $\(penaltyFromBackend) per minute")
+                    } else if weekStatus.penaltyPerMinuteCents == 0 {
+                        NSLog("MONITOR MonitorView: ⚠️ WARNING - weekStatus.penaltyPerMinuteCents is 0! Not updating. Current penaltyPerMinute: \(model.penaltyPerMinute)")
                     }
                     model.savePersistedValues()
+                } else {
+                    NSLog("MONITOR MonitorView: ⚠️ weekStatus is nil")
                 }
             }
             .onDisappear {
@@ -251,6 +261,15 @@ struct MonitorView: View {
             let tracker = await MainActor.run { UsageTracker.shared }
             let currentTotal = tracker.getCurrentTimeSpent()
             let baseline = tracker.getBaselineTime()
+            
+            // DIAGNOSTIC: Check baselineThresholdSeconds from App Group
+            let userDefaults = UserDefaults(suiteName: "group.com.payattentionclub2.0.app")
+            let baselineThresholdSeconds = userDefaults?.integer(forKey: "baselineThresholdSeconds") ?? 0
+            let intervalBaselineSeconds = userDefaults?.integer(forKey: "intervalBaselineSeconds") ?? 0
+            
+            NSLog("MONITOR MonitorView: 🔍 BASELINE DIAGNOSTIC - baselineTimeSpent (from getBaselineTime): \(Int(baseline))s, baselineThresholdSeconds: \(baselineThresholdSeconds)s, intervalBaselineSeconds: \(intervalBaselineSeconds)s")
+            NSLog("MONITOR MonitorView: 🔍 BASELINE DIAGNOSTIC - currentTotal: \(Int(currentTotal))s, model.baselineUsageSeconds: \(await MainActor.run { model.baselineUsageSeconds })s")
+            
             let usageSeconds = Int(currentTotal) - Int(baseline)
             
             // Check if deadline has passed while viewing MonitorView
@@ -274,6 +293,17 @@ struct MonitorView: View {
             // Update UI on main thread
             let (updatedUsageSeconds, updatedBaseline, updatedLimitMinutes, updatedPenaltyPerMinute) = await MainActor.run {
                 model.currentUsageSeconds = usageSeconds
+                
+                // DIAGNOSTIC: Check if baseline should be updated
+                let actualBaseline = Int(baseline)
+                let modelBaseline = model.baselineUsageSeconds
+                if actualBaseline != modelBaseline {
+                    NSLog("MONITOR MonitorView: ⚠️ BASELINE MISMATCH - actualBaseline: \(actualBaseline)s, model.baselineUsageSeconds: \(modelBaseline)s")
+                    NSLog("MONITOR MonitorView: 🔍 Should update model.baselineUsageSeconds to \(actualBaseline)s?")
+                } else {
+                    NSLog("MONITOR MonitorView: ✅ BASELINE MATCH - both are \(actualBaseline)s")
+                }
+                
                 model.updateCurrentPenalty()
                 
                 // If deadline has passed, navigate to bulletin
@@ -284,12 +314,15 @@ struct MonitorView: View {
                     model.navigate(.bulletin)
                 }
                 
+                NSLog("MONITOR MonitorView: 🔍 RETURNING VALUES - usageSeconds: \(usageSeconds)s, model.baselineUsageSeconds: \(model.baselineUsageSeconds)s, limitMinutes: \(model.limitMinutes)min")
+                
                 return (model.currentUsageSeconds, model.baselineUsageSeconds, model.limitMinutes, model.penaltyPerMinute)
             }
             
             // Check and send notifications if limits are exceeded (on MainActor)
             // Must wrap in Task { @MainActor in } because we're in Task.detached context
             NSLog("NOTIFICATION MonitorView: 🎯 About to call checkAndNotifyIfNeeded from Task { @MainActor in }")
+            NSLog("NOTIFICATION MonitorView: 🔍 Diagnostic - limitMinutes value: \(updatedLimitMinutes)min (this is what will be used for notification thresholds)")
             Task { @MainActor in
                 NSLog("NOTIFICATION MonitorView: ✅ Inside Task { @MainActor in } - calling checkAndNotifyIfNeeded")
                 NSLog("NOTIFICATION MonitorView: 📊 Values - usage: \(updatedUsageSeconds)s, baseline: \(updatedBaseline)s, limit: \(updatedLimitMinutes)min, penalty: \(updatedPenaltyPerMinute)")
